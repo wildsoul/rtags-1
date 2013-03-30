@@ -29,6 +29,10 @@ private:
     };
     enum HandlerType {
         NoHandlerType,
+        Body,
+        Array,
+
+
         ArrayExpression,
         AssignmentExpression,
         BinaryExpression,
@@ -64,75 +68,76 @@ private:
         VariableDeclarator,
         WhileStatement
     };
+    struct State {
+        State(HandlerType t, const String &n, State *p = 0)
+            : type(t), prev(p), name(n), scope(0)
+        {}
+        ~State()
+        {
+            delete scope;
+        }
+        String indentString() const;
 
-    bool handleObject(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleIdentifier(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleArrayExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleAssignmentExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleBinaryExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleBlockStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleBreakStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleCallExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleCatchClause(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleConditionalExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleContinueStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleDoWhileStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleEmptyStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleExpressionStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleForInStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleForStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleFunctionDeclaration(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleFunctionExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleIfStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleLiteral(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleLogicalExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleMemberExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleNewExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleObjectExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleProgram(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleProperty(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleReturnStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleThisExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleThrowStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleTryStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleUnaryExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleUpdateExpression(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleVariableDeclaration(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleVariableDeclarator(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-    void handleWhileStatement(v8::Handle<v8::Object> object, const String &name, unsigned flags);
-
-    enum CreateSymbolFlag {
-        NoCreateSymbolFlag = 0x0,
-        AddToParents = 0x1,
-        IgnoreLastParent = 0x2,
-        OnlyLastParent = 0x4
+        HandlerType type;
+        State *prev;
+        String name;
+        List<String> parents;
+        Map<String, uint32_t> *scope;
     };
-    void createSymbol(v8::Handle<v8::Object> object, CursorInfo::JSCursorKind kind, unsigned flags = NoCreateSymbolFlag);
-    void handleProperties(v8::Handle<v8::Object> object, const String &name, unsigned flags);
+    bool recurse(v8::Handle<v8::Object> object, State *state, const String &name = String());
+    void handleIdentifier(v8::Handle<v8::Object> object, State *state);
+    void handleArrayExpression(v8::Handle<v8::Object> object, State *state);
+    void handleAssignmentExpression(v8::Handle<v8::Object> object, State *state);
+    void handleBinaryExpression(v8::Handle<v8::Object> object, State *state);
+    void handleBlockStatement(v8::Handle<v8::Object> object, State *state);
+    void handleBreakStatement(v8::Handle<v8::Object> object, State *state);
+    void handleCallExpression(v8::Handle<v8::Object> object, State *state);
+    void handleCatchClause(v8::Handle<v8::Object> object, State *state);
+    void handleConditionalExpression(v8::Handle<v8::Object> object, State *state);
+    void handleContinueStatement(v8::Handle<v8::Object> object, State *state);
+    void handleDoWhileStatement(v8::Handle<v8::Object> object, State *state);
+    void handleEmptyStatement(v8::Handle<v8::Object> object, State *state);
+    void handleExpressionStatement(v8::Handle<v8::Object> object, State *state);
+    void handleForInStatement(v8::Handle<v8::Object> object, State *state);
+    void handleForStatement(v8::Handle<v8::Object> object, State *state);
+    void handleFunctionDeclaration(v8::Handle<v8::Object> object, State *state);
+    void handleFunctionExpression(v8::Handle<v8::Object> object, State *state);
+    void handleIfStatement(v8::Handle<v8::Object> object, State *state);
+    void handleLiteral(v8::Handle<v8::Object> object, State *state);
+    void handleLogicalExpression(v8::Handle<v8::Object> object, State *state);
+    void handleMemberExpression(v8::Handle<v8::Object> object, State *state);
+    void handleNewExpression(v8::Handle<v8::Object> object, State *state);
+    void handleObjectExpression(v8::Handle<v8::Object> object, State *state);
+    void handleProgram(v8::Handle<v8::Object> object, State *state);
+    void handleProperty(v8::Handle<v8::Object> object, State *state);
+    void handleReturnStatement(v8::Handle<v8::Object> object, State *state);
+    void handleThisExpression(v8::Handle<v8::Object> object, State *state);
+    void handleThrowStatement(v8::Handle<v8::Object> object, State *state);
+    void handleTryStatement(v8::Handle<v8::Object> object, State *state);
+    void handleUnaryExpression(v8::Handle<v8::Object> object, State *state);
+    void handleUpdateExpression(v8::Handle<v8::Object> object, State *state);
+    void handleVariableDeclaration(v8::Handle<v8::Object> object, State *state);
+    void handleVariableDeclarator(v8::Handle<v8::Object> object, State *state);
+    void handleWhileStatement(v8::Handle<v8::Object> object, State *state);
 
-    typedef void (JSParser::*Handler)(v8::Handle<v8::Object>, const String &name, unsigned);
+    CursorInfo createSymbol(v8::Handle<v8::Object> object, State *state, CursorInfo::JSCursorKind kind);
+    void handleProperties(v8::Handle<v8::Object> object, State *state);
+
+    typedef void (JSParser::*Handler)(v8::Handle<v8::Object>, State *state);
 
     struct HandlerNode
     {
         const char *name;
-        HandlerType type;
-        Handler handler;
+        const HandlerType type;
+        const Handler handler;
     };
 
     static int compareHandler(const void *l, const void *r);
-
-    struct State {
-        HandlerType type;
-        String name;
-    };
-    List<State> mState;
 
     v8::Persistent<v8::Context> mContext;
     v8::Persistent<v8::Object> mEsprima;
     v8::Persistent<v8::Function> mParse;
     v8::Isolate *mIsolate;
-    List<Map<String, uint32_t> > mScope;
-    List<String> mParents;
     uint32_t mFileId;
     SymbolMap *mSymbols;
     SymbolNameMap *mSymbolNames;
