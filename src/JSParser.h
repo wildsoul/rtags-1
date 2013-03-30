@@ -29,10 +29,6 @@ private:
     };
     enum HandlerType {
         NoHandlerType,
-        Body,
-        Array,
-
-
         ArrayExpression,
         AssignmentExpression,
         BinaryExpression,
@@ -69,8 +65,8 @@ private:
         WhileStatement
     };
     struct State {
-        State(HandlerType t, const String &n, State *p = 0)
-            : type(t), prev(p), name(n), scope(0)
+        State(State *p = 0)
+            : prev(p), scope(0)
         {}
         ~State()
         {
@@ -78,52 +74,52 @@ private:
         }
         String indentString() const;
 
-        HandlerType type;
         State *prev;
-        String name;
-        List<String> parents;
+        String parent;
         Map<String, uint32_t> *scope;
     };
     bool recurse(v8::Handle<v8::Object> object, State *state, const String &name = String());
-    void handleIdentifier(v8::Handle<v8::Object> object, State *state);
-    void handleArrayExpression(v8::Handle<v8::Object> object, State *state);
-    void handleAssignmentExpression(v8::Handle<v8::Object> object, State *state);
-    void handleBinaryExpression(v8::Handle<v8::Object> object, State *state);
-    void handleBlockStatement(v8::Handle<v8::Object> object, State *state);
-    void handleBreakStatement(v8::Handle<v8::Object> object, State *state);
-    void handleCallExpression(v8::Handle<v8::Object> object, State *state);
-    void handleCatchClause(v8::Handle<v8::Object> object, State *state);
-    void handleConditionalExpression(v8::Handle<v8::Object> object, State *state);
-    void handleContinueStatement(v8::Handle<v8::Object> object, State *state);
-    void handleDoWhileStatement(v8::Handle<v8::Object> object, State *state);
-    void handleEmptyStatement(v8::Handle<v8::Object> object, State *state);
-    void handleExpressionStatement(v8::Handle<v8::Object> object, State *state);
-    void handleForInStatement(v8::Handle<v8::Object> object, State *state);
-    void handleForStatement(v8::Handle<v8::Object> object, State *state);
-    void handleFunctionDeclaration(v8::Handle<v8::Object> object, State *state);
-    void handleFunctionExpression(v8::Handle<v8::Object> object, State *state);
-    void handleIfStatement(v8::Handle<v8::Object> object, State *state);
-    void handleLiteral(v8::Handle<v8::Object> object, State *state);
-    void handleLogicalExpression(v8::Handle<v8::Object> object, State *state);
-    void handleMemberExpression(v8::Handle<v8::Object> object, State *state);
-    void handleNewExpression(v8::Handle<v8::Object> object, State *state);
-    void handleObjectExpression(v8::Handle<v8::Object> object, State *state);
-    void handleProgram(v8::Handle<v8::Object> object, State *state);
-    void handleProperty(v8::Handle<v8::Object> object, State *state);
-    void handleReturnStatement(v8::Handle<v8::Object> object, State *state);
-    void handleThisExpression(v8::Handle<v8::Object> object, State *state);
-    void handleThrowStatement(v8::Handle<v8::Object> object, State *state);
-    void handleTryStatement(v8::Handle<v8::Object> object, State *state);
-    void handleUnaryExpression(v8::Handle<v8::Object> object, State *state);
-    void handleUpdateExpression(v8::Handle<v8::Object> object, State *state);
-    void handleVariableDeclaration(v8::Handle<v8::Object> object, State *state);
-    void handleVariableDeclarator(v8::Handle<v8::Object> object, State *state);
-    void handleWhileStatement(v8::Handle<v8::Object> object, State *state);
+    void handleIdentifier(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleArrayExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleAssignmentExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleBinaryExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleBlockStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleBreakStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleCallExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleCatchClause(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleConditionalExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleContinueStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleDoWhileStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleEmptyStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleExpressionStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleForInStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleForStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleFunctionDeclaration(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleFunctionExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleIfStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleLiteral(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleLogicalExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleMemberExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleNewExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleObjectExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleProgram(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleProperty(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleReturnStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleThisExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleThrowStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleTryStatement(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleUnaryExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleUpdateExpression(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleVariableDeclaration(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleVariableDeclarator(v8::Handle<v8::Object> object, State *state, const String &name);
+    void handleWhileStatement(v8::Handle<v8::Object> object, State *state, const String &name);
 
+    CursorInfo handleKeyType(v8::Handle<v8::Object> object, State *state, const String &name, CursorInfo::JSCursorKind kind);
     CursorInfo createSymbol(v8::Handle<v8::Object> object, State *state, CursorInfo::JSCursorKind kind);
+    void handleValueType(v8::Handle<v8::Object> object, State *state, const String &name, const String &key);
     void handleProperties(v8::Handle<v8::Object> object, State *state);
 
-    typedef void (JSParser::*Handler)(v8::Handle<v8::Object>, State *state);
+    typedef void (JSParser::*Handler)(v8::Handle<v8::Object>, State *state, const String &name);
 
     struct HandlerNode
     {
