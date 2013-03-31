@@ -82,7 +82,7 @@ static v8::Handle<T> get(v8::Handle<v8::Array> object, int index)
     }
 }
 
-static String listProperties(v8::Handle<v8::Object> obj)
+static inline String listProperties(v8::Handle<v8::Object> obj)
 {
     List<String> ret;
     if (!obj.IsEmpty() && obj->IsObject()) {
@@ -116,23 +116,13 @@ static inline bool operator!=(v8::Handle<v8::String> l, const char *r)
     return !operator==(l, r);
 }
 
-String JSParser::State::indentString() const
-{
-    int indent = 0;
-    const State *s = prev;
-    while (s) {
-        ++indent;
-        s = s->prev;
-    }
-    return String(indent * 2, ' ');
-}
-
 JSParser::JSParser()
-    : mIsolate(0), mFileId(0), mSymbols(0), mSymbolNames(0), mErrors(0)
+    : mIsolate(0), mFileId(0), mRoot(0), mSymbols(0), mSymbolNames(0), mErrors(0)
 {}
 
 JSParser::~JSParser()
 {
+    delete mRoot;
     {
         const v8::Isolate::Scope isolateScope(mIsolate);
 #ifdef V8_DISPOSE_REQUIRES_ARG
@@ -222,9 +212,11 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
     if (!result.IsEmpty() && result->IsObject()) {
         if (json)
             *json = toCString(toJSON(result));
-        State state;
-        state.createScope();
-        recurse(get<v8::Object>(result->ToObject(), "body"), &state);
+        mRoot = recurse(result, 0, String());
+        if (mRoot) {
+            error() << mRoot->dump();
+            visit(mRoot);
+        }
     } else if (errors) {
         *errors = "Failed to parse";
     }
@@ -237,438 +229,180 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
     return true;
 }
 
-CursorInfo JSParser::createSymbol(v8::Handle<v8::Object> object, State *state)
+Node *JSParser::recurse(v8::Handle<v8::Value> value, Node *parent, const String &name)
 {
     v8::HandleScope handleScope;
-    v8::Context::Scope scope(mContext);
-    v8::Handle<v8::String> name;
-    v8::Handle<v8::Array> range;
-    v8::Handle<v8::String> type = get<v8::String>(object, "type");
-    if (type == "Identifier") {
-        name = get<v8::String>(object, "name");
-        range = get<v8::Array>(object, "range");
-    } else if (type == "MemberExpression") {
-        v8::Handle<v8::Object> obj = get<v8::Object>(object, "object");
-        CursorInfo o = createSymbol(obj, state);
-        if (o.isNull()) {
-            error() << "Got null from object" << toJSON(obj);
+    Node *ret = 0;
+    if (value.IsEmpty()) {
+        ret = new Node(parent, Node::Type_Null, name);
+    } else if (value->IsArray()) {
+        v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(value);
+        ArrayNode *node = new ArrayNode(parent, name);
+        node->nodes.resize(array->Length());
+        for (int i=0; i<node->nodes.size(); ++i) {
+            node->nodes[i] = recurse(array->Get(i), node);
         }
-        // assert(!o.isNull());
-        v8::Handle<v8::Object> property = get<v8::Object>(object, "property");
-        State s(state);
-        s.parent = o.symbolName;
-        return createSymbol(property, &s);
-    } else if (type == "Literal") {
-        return CursorInfo();
-    } else {
-        error() << "Unknown object passed to createSymbol" << toJSON(object, true);
-        return CursorInfo();
-    }
-    if (name.IsEmpty()) {
-        error() << "Bullshit object for createSymbol" << toJSON(object);
-        return CursorInfo();
-    }
-    assert(!range.IsEmpty() && range->Length() == 2);
-    const uint32_t offset = get<v8::Integer>(range, 0)->Value();
-    const uint32_t length = get<v8::Integer>(range, 1)->Value() - offset;
-    CursorInfo c;
-    const Location loc(mFileId, offset);
-    const String symbolName(toCString(name), name->Length());
 
-    if (state->parent.isEmpty()) {
-        c.symbolName = symbolName;
+        ret = node;
+    } else if (value->IsObject()) {
+        v8::Handle<v8::Object> object = v8::Handle<v8::Object>::Cast(value);
+        v8::Handle<v8::Array> properties = object->GetOwnPropertyNames();
+
+        ObjectNode *node = new ObjectNode(parent, name);
+        for (unsigned i=0; i<properties->Length(); ++i) {
+            v8::Handle<v8::String> key = get<v8::String>(properties, i);
+            String k = toCString(key);
+            node->nodes[k] = recurse(get<v8::Object>(object, key), node, k);
+        }
+        ret = node;
+    } else if (value->IsInt32()) {
+        ret = new IntegerNode(parent, v8::Handle<v8::Integer>::Cast(value)->Value(), name);
+    } else if (value->IsString()) {
+        ret = new StringNode(parent, *v8::String::Utf8Value(v8::Handle<v8::String>::Cast(value)), name);
+    } else if (value->IsTrue()) {
+        ret = new Node(parent, Node::Type_True, name);
+    } else if (value->IsFalse()) {
+        ret = new Node(parent, Node::Type_False, name);
     } else {
-        c.symbolName = state->parent + '.' + symbolName;
+        error() << "Unknown object type" << toJSON(value);
+        return 0;
     }
-    c.symbolLength = length;
-    c.kind = CursorInfo::JSVariable;
-    {
-        State *s = state;
-        while (s) {
-            if (s->scope) {
-                uint32_t targetOffset = s->scope->value(c.symbolName, UINT_MAX);
-                // error() << "looking for" << c.symbolName << "in" << s->scope->keys() << (targetOffset != UINT_MAX);
-                if (targetOffset != UINT_MAX) {
-                    const Location target(mFileId, targetOffset);
-                    c.targets.insert(target);
-                    if (mSymbols) {
-                        assert(mSymbols->contains(target));
-                        (*mSymbols)[target].references.insert(loc);
-                    }
-                    c.kind = CursorInfo::JSReference;
+    if (!parent) {
+        ret->scope = new Map<String, int>;
+    }
+    return ret;
+}
+
+void JSParser::createObject(ObjectNode *node)
+{
+    Node *nameNode = node->child("name");
+    assert(nameNode && nameNode->type == Node::Type_String);
+    const String name = nameNode->toString();
+    Node *rangeNode = node->child("range");
+    assert(rangeNode && rangeNode->type == Node::Type_Array && rangeNode->count() == 2);
+    const int offset = rangeNode->child(0)->toInteger();
+    const int length = rangeNode->child(1)->toInteger() - offset;
+    int indent = 0;
+    Map<String, int> *scope = 0;
+    for (Node *n = node; n; n = n->parent) {
+        if (!scope && n->scope)
+            scope = n->scope;
+        ++indent;
+    }
+    assert(scope);
+
+    int kind = -1;
+    bool weak = false;
+    String symbolName;
+    const String type = node->parent->objectType();
+    if (node->name == "id" && type == "VariableDeclarator") {
+        kind = CursorInfo::JSVariable;
+    } else if (type == "FunctionDeclaration") {
+        kind = CursorInfo::JSFunction;
+    } else if (type == "CallExpression") {
+        kind = CursorInfo::JSReference;
+    } else if (type == "MemberExpression") {
+        if (node->name == "object") {
+            kind = CursorInfo::JSReference;
+        } else if (node->name == "property") {
+            weak = true;
+            kind = CursorInfo::JSVariable;
+            // error() << "Fiske\n" << node->parent->dump();
+            if (!node->parent->child("object")) {
+                printf("[%s] %s:%d: if (!node->parent->child(\"object\")) { [after]\n", __func__, __FILE__, __LINE__);
+            } else if (!node->parent->child("object")->child("name")) {
+                error() << "tasken\n" << node->parent->child("object")->dump();
+                printf("[%s] %s:%d: } else if (!node->parent->child(\"object\")->child(\"name\")) { [after]\n", __func__, __FILE__, __LINE__);
+            } else {
+                symbolName = node->parent->child("object")->child("name")->toString();
+                symbolName += '.';
+            }
+        }
+    } else if (type == "AssignmentExpression") {
+        if (node->name == "left") {
+            weak = true;
+            kind = CursorInfo::JSVariable;
+        } else if (node->name == "right") {
+            kind = CursorInfo::JSReference;
+        }
+    } else if (type == "Property") {
+        if (node->name == "key") {
+            error() << "got property key" << node->parent->parent->parent->objectType()
+                    << node->parent->parent->parent->name;
+            if (node->parent->parent
+                && node->parent->parent->parent
+                && node->parent->parent->parent->parent
+                && node->parent->parent->parent->objectType() == "ObjectExpression"
+                && node->parent->parent->parent->name == "init"
+                && node->parent->parent->parent->parent->objectType() == "VariableDeclarator") {
+                // fy faen!
+                // error() << node->parent->parent->parent->dump();
+                symbolName = node->parent->parent->parent->parent->child("id")->child("name")->toString();
+                symbolName += ".";
+            }
+            weak = true;
+            kind = CursorInfo::JSVariable;
+        }
+    }
+    if (kind == -1) {
+        error() << "Unhandled identifier:\n" << node->parent->dump(0);
+        return;
+    }
+    symbolName += name;
+    const Location loc(mFileId, offset);
+    if (mSymbols) {
+        CursorInfo info;
+        if (kind == CursorInfo::JSReference || weak) {
+            for (Map<String, int>::const_iterator it = scope->begin(); it != scope->end(); ++it) {
+                if (it->first == symbolName) {
+                    kind = CursorInfo::JSReference;
+                    const Location target(mFileId, it->second);
+                    (*mSymbols)[target].references.insert(loc);
+                    info.targets.insert(target);
                     break;
                 }
             }
-            s = s->prev;
         }
+        info.kind = kind;
+        info.symbolName = symbolName;
+        info.symbolLength = length;
+        (*mSymbols)[loc] = info;
     }
-    if (mSymbols)
-        (*mSymbols)[loc] = c;
-    if (c.kind != CursorInfo::JSReference) {
-        if (mSymbolNames) {
-            (*mSymbolNames)[c.symbolName].insert(loc);
-            if (symbolName != c.symbolName)
-                (*mSymbolNames)[symbolName].insert(loc);
-        }
-        Map<String, uint32_t> *scope = 0;
-        State *s = state;
-        while (s) {
-            if (s->scope) {
-                scope = s->scope;
-                break;
-            }
-            s = s->prev;
-        }
-        assert(scope);
-
-        (*scope)[c.symbolName] = offset;
-    }
-    warning() << state->indentString() << "+++ adding" << c.kindSpelling() << c.symbolName << "at" << loc << "scope";
-    return c;
-}
-
-int JSParser::compareHandler(const void *l, const void *r)
-{
-    const HandlerNode *left = reinterpret_cast<const HandlerNode*>(l);
-    const HandlerNode *right = reinterpret_cast<const HandlerNode*>(r);
-    assert(left->name);
-    assert(right->name);
-    return strcmp(left->name, right->name);
-}
-
-bool JSParser::recurse(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    if (object.IsEmpty())
-        return false;
-
-    assert(name != "body" || state->scope);
-
-    if (object->IsArray()) {
-        v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(object);
-        for (unsigned i=0; i<array->Length(); ++i) {
-            recurse(get<v8::Object>(array, i), state);
-        }
-    } else if (object->IsObject()) {
-        v8::Handle<v8::String> objectType = get<v8::String>(object, "type");
-        if (!objectType.IsEmpty()) {
-            assert(objectType->IsString());
-            static const HandlerNode handlers[] = {
-                { "ArrayExpression", ArrayExpression, &JSParser::handleArrayExpression },
-                { "AssignmentExpression", AssignmentExpression, &JSParser::handleAssignmentExpression },
-                { "BinaryExpression", BinaryExpression, &JSParser::handleBinaryExpression },
-                { "BlockStatement", BlockStatement, &JSParser::handleBlockStatement },
-                { "BreakStatement", BreakStatement, &JSParser::handleBreakStatement },
-                { "CallExpression", CallExpression, &JSParser::handleCallExpression },
-                { "CatchClause", CatchClause, &JSParser::handleCatchClause },
-                { "ConditionalExpression", ConditionalExpression, &JSParser::handleConditionalExpression },
-                { "ContinueStatement", ContinueStatement, &JSParser::handleContinueStatement },
-                { "DoWhileStatement", DoWhileStatement, &JSParser::handleDoWhileStatement },
-                { "EmptyStatement", EmptyStatement, &JSParser::handleEmptyStatement },
-                { "ExpressionStatement", ExpressionStatement, &JSParser::handleExpressionStatement },
-                { "ForInStatement", ForInStatement, &JSParser::handleForInStatement },
-                { "ForStatement", ForStatement, &JSParser::handleForStatement },
-                { "FunctionDeclaration", FunctionDeclaration, &JSParser::handleFunctionDeclaration },
-                { "FunctionExpression", FunctionExpression, &JSParser::handleFunctionExpression },
-                { "Identifier", Identifier, &JSParser::handleIdentifier },
-                { "IfStatement", IfStatement, &JSParser::handleIfStatement },
-                { "Literal", Literal, &JSParser::handleLiteral },
-                { "LogicalExpression", LogicalExpression, &JSParser::handleLogicalExpression },
-                { "MemberExpression", MemberExpression, &JSParser::handleMemberExpression },
-                { "NewExpression", NewExpression, &JSParser::handleNewExpression },
-                { "ObjectExpression", ObjectExpression, &JSParser::handleObjectExpression },
-                { "Program", Program, &JSParser::handleProgram },
-                { "Property", Property, &JSParser::handleProperty },
-                { "ReturnStatement", ReturnStatement, &JSParser::handleReturnStatement },
-                { "ThisExpression", ThisExpression, &JSParser::handleThisExpression },
-                { "ThrowStatement", ThrowStatement, &JSParser::handleThrowStatement },
-                { "TryStatement", TryStatement, &JSParser::handleTryStatement },
-                { "UnaryExpression", UnaryExpression, &JSParser::handleUnaryExpression },
-                { "UpdateExpression", UpdateExpression, &JSParser::handleUpdateExpression },
-                { "VariableDeclaration", VariableDeclaration, &JSParser::handleVariableDeclaration },
-                { "VariableDeclarator", VariableDeclarator, &JSParser::handleVariableDeclarator },
-                { "WhileStatement", WhileStatement, &JSParser::handleWhileStatement },
-                { 0, NoHandlerType, 0 }
-            };
-            const v8::String::Utf8Value str(objectType);
-            const HandlerNode node = { *str, NoHandlerType, 0 };
-            enum { NodeSize = sizeof(HandlerNode) };
-            const HandlerNode *res = reinterpret_cast<const HandlerNode*>(bsearch(&node, handlers,
-                                                                                  (sizeof(handlers) - NodeSize) / NodeSize,
-                                                                                  NodeSize, &JSParser::compareHandler));
-            assert(res);
-            assert(res->name);
-            (this->*res->handler)(object, state, res->name);
-        }
-    }
-
-    return true;
-}
-
-void JSParser::handleValueType(v8::Handle<v8::Object> object, State *state, const String &name, const String &key)
-{
-    v8::Handle<v8::String> objectType = get<v8::String>(object, "type");
-    if (objectType == "Identifier" || objectType == "MemberExpression") {
-        State s(state);
-        createSymbol(object, state);
-    } else if (objectType == "ObjectExpression") {
-        State s(state);
-        s.parent = key;
-        handleObjectExpression(object, &s, "init");
-    } else if (objectType != "Literal") {
-        error() << "Unhandled" << name << objectType;
-    }
-}
-
-void JSParser::handleProperties(v8::Handle<v8::Object> object, State *state)
-{
-    v8::Handle<v8::Array> properties = object->GetOwnPropertyNames();
-
-    for (unsigned i=0; i<properties->Length(); ++i) {
-        v8::Handle<v8::String> key = get<v8::String>(properties, i);
-        v8::Handle<v8::Object> value = get<v8::Object>(object, key);
-        if (!value.IsEmpty()) {
-            const v8::String::Utf8Value utf8(key);
-            recurse(value, state, *utf8);
-        }
-    }
-}
-
-
-void JSParser::handleIdentifier(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "Identifier" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleArrayExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ArrayExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleAssignmentExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    v8::HandleScope scope;
-    warning() << state->indentString() << "AssignmentExpression" << name << listProperties(object);
-    v8::Handle<v8::Object> left = get<v8::Object>(object, "left");
-    v8::Handle<v8::String> leftType = get<v8::String>(left, "type");
-    CursorInfo info;
-    if (leftType == "Identifier" || leftType == "MemberExpression") {
-        info = createSymbol(left, state);
-    } else {
-        error() << "unknown left side assignment expression" << toJSON(left);
-        return;
+    if (kind != CursorInfo::JSReference)
+        (*scope)[symbolName] = offset;
+    if (mSymbolNames) {
+        (*mSymbolNames)[symbolName].insert(loc);
+        if (symbolName != name)
+            (*mSymbolNames)[name].insert(loc);
     }
     
-    v8::Handle<v8::Object> right = get<v8::Object>(object, "right");
-    if (!right.IsEmpty()) {
-        handleValueType(right, state, "right", info.symbolName);
+}
+
+void JSParser::visit(Node *node)
+{
+    if (node) {
+        switch (node->type) {
+        case Node::Type_Object:
+            // error() << "visiting" << node->objectType();
+            if (node->objectType() == "Identifier") {
+                createObject(static_cast<ObjectNode*>(node));
+            } else {
+                const Map<String, Node*>::const_iterator end = node->end();
+                Map<String, Node*>::const_iterator it = node->begin();
+                while (it != end) {
+                    visit(it->second);
+                    ++it;
+                }
+            }
+            break;
+        case Node::Type_Array: {
+            const int count = node->count();
+            for (int i=0; i<count; ++i) {
+                visit(node->child(i));
+            }
+            break; }
+        default:
+            break;
+        }
     }
-}
-
-void JSParser::handleBinaryExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "BinaryExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleBlockStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "BlockStatement" << name << listProperties(object);
-    // no scope for a block in this retarded-ass language
-    handleProperties(object, state);
-}
-
-void JSParser::handleBreakStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "BreakStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleCallExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "CallExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleCatchClause(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "CatchClause" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleConditionalExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ConditionalExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleContinueStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ContinueStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleDoWhileStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "DoWhileStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleEmptyStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "EmptyStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleExpressionStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ExpressionStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleForInStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ForInStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleForStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ForStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleFunctionDeclaration(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "FunctionDeclaration" << name << listProperties(object);
-    State s(state);
-    s.createScope();
-    handleProperties(object, &s);
-}
-
-void JSParser::handleFunctionExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "FunctionExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleIfStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "IfStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleLiteral(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "Literal" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleLogicalExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "LogicalExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleMemberExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "MemberExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleNewExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "NewExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleObjectExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ObjectExpression" << name << listProperties(object);
-    v8::HandleScope scope;
-    v8::Handle<v8::Array> properties = get<v8::Array>(object, "properties");
-    for (unsigned i=0; i<properties->Length(); ++i) {
-        handleProperty(get<v8::Object>(properties, i), state, name);
-    }
-}
-
-void JSParser::handleProgram(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "Program" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleProperty(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    v8::HandleScope scope;
-    warning() << state->indentString() << "Property" << name << listProperties(object);
-
-    // error() << "getting property" << state->parent;
-    const CursorInfo info = createSymbol(get<v8::Object>(object, "key"), state);
-    v8::Handle<v8::Object> value = get<v8::Object>(object, "value");
-    if (!value.IsEmpty()) {
-        State s(state);
-        handleValueType(value, &s, "value", info.symbolName);
-    }
-}
-
-void JSParser::handleReturnStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ReturnStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleThisExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ThisExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleThrowStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "ThrowStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleTryStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "TryStatement" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleUnaryExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "UnaryExpression" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleUpdateExpression(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    const CursorInfo info = createSymbol(get<v8::Object>(object, "argument"), state);
-    warning() << state->indentString() << "UpdateExpression" << name << listProperties(object);
-    // handleProperties(object, state);
-}
-
-void JSParser::handleVariableDeclaration(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "VariableDeclaration" << name << listProperties(object);
-    handleProperties(object, state);
-}
-
-void JSParser::handleVariableDeclarator(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    v8::HandleScope scope;
-    warning() << state->indentString() << "VariableDeclarator" << name << listProperties(object);
-    const CursorInfo info = createSymbol(get<v8::Object>(object, "id"), state);
-    v8::Handle<v8::Object> init = get<v8::Object>(object, "init");
-    if (!init.IsEmpty()) {
-        handleValueType(init, state, "init", info.symbolName);
-    }
-}
-
-void JSParser::handleWhileStatement(v8::Handle<v8::Object> object, State *state, const String &name)
-{
-    warning() << state->indentString() << "WhileStatement" << name << listProperties(object);
-    handleProperties(object, state);
 }
