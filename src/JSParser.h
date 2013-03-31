@@ -114,7 +114,7 @@ private:
     void handleVariableDeclarator(v8::Handle<v8::Object> object, State *state, const String &name);
     void handleWhileStatement(v8::Handle<v8::Object> object, State *state, const String &name);
 
-    CursorInfo handleKeyType(v8::Handle<v8::Object> object, State *state, const String &name, CursorInfo::JSCursorKind kind);
+    // CursorInfo handleKeyType(v8::Handle<v8::Object> object, State *state, const String &name, CursorInfo::JSCursorKind kind);
     CursorInfo createSymbol(v8::Handle<v8::Object> object, State *state, CursorInfo::JSCursorKind kind);
     void handleValueType(v8::Handle<v8::Object> object, State *state, const String &name, const String &key);
     void handleProperties(v8::Handle<v8::Object> object, State *state);

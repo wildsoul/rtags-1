@@ -5,7 +5,7 @@
 
 #define toCString(str) *v8::String::Utf8Value(str)
 
-static v8::Handle<v8::String> toJSON(v8::Handle<v8::Value> obj, bool pretty)
+static v8::Handle<v8::String> toJSON(v8::Handle<v8::Value> obj, bool pretty = true)
 {
     v8::HandleScope scope;
 
@@ -31,7 +31,7 @@ Log operator<<(Log log, v8::Handle<v8::String> string)
 
 Log operator<<(Log log, v8::Handle<v8::Value> value)
 {
-    log << toCString(toJSON(value, true));
+    log << toCString(toJSON(value));
     return log;
 }
 
@@ -221,7 +221,7 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
     mErrors = errors;
     if (!result.IsEmpty() && result->IsObject()) {
         if (json)
-            *json = toCString(toJSON(result, true));
+            *json = toCString(toJSON(result));
         State state;
         state.scope = new Map<String, uint32_t>;
         recurse(get<v8::Object>(result->ToObject(), "body"), &state);
@@ -237,16 +237,15 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
     return true;
 }
 
-CursorInfo JSParser::handleKeyType(v8::Handle<v8::Object> object, State *state, const String &name, CursorInfo::JSCursorKind kind)
-{
-    v8::Handle<v8::String> type = get<v8::String>(object, "type");
-    if (type == "Identifier") {
-        return createSymbol(object, state, kind);
-    } else if (type == "MemberExpression") {
+// CursorInfo JSParser::handleKeyType(v8::Handle<v8::Object> object, State *state, const String &name, CursorInfo::JSCursorKind kind)
+// {
+//     v8::Handle<v8::String> type = get<v8::String>(object, "type");
+//     if (type == "Identifier") {
+//         return createSymbol(object, state, kind);
+//     } else if (type == "MemberExpression") {
 
-    }
-
-}
+//     }
+// }
 
 CursorInfo JSParser::createSymbol(v8::Handle<v8::Object> object, State *state, CursorInfo::JSCursorKind kind)
 {
@@ -259,12 +258,18 @@ CursorInfo JSParser::createSymbol(v8::Handle<v8::Object> object, State *state, C
         name = get<v8::String>(object, "name");
         range = get<v8::Array>(object, "range");
     } else if (type == "MemberExpression") {
-        v8::Handle<v8::Object> obj = (get<v8::Object>(object, "object"), state);
-        v8::Handle<v8::Object> property = (get<v8::Object>(object, "property"), state);
-
+        v8::Handle<v8::Object> obj = get<v8::Object>(object, "object");
+        CursorInfo o = createSymbol(obj, state, CursorInfo::JSWeakVariable);
+        v8::Handle<v8::Object> property = get<v8::Object>(object, "property");
+        State s(state);
+        s.parent = o.symbolName;
+        return createSymbol(property, &s, CursorInfo::JSWeakVariable);
+    } else {
+        error() << "Unknown object passed to createSymbol" << toJSON(object, true);
+        return CursorInfo();
     }
     if (name.IsEmpty()) {
-        error() << "Bullshit object for createSymbol" << toJSON(object, true);
+        error() << "Bullshit object for createSymbol" << toJSON(object);
         return CursorInfo();
     }
     assert(!range.IsEmpty() && range->Length() == 2);
@@ -340,12 +345,10 @@ bool JSParser::recurse(v8::Handle<v8::Object> object, State *state, const String
     if (object.IsEmpty())
         return false;
 
+    assert(name != "body" || state->scope);
+
     if (object->IsArray()) {
         v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(object);
-        if (name == "body") {
-            assert(!state->scope);
-            state->scope = new Map<String, uint32_t>();
-        }
         for (unsigned i=0; i<array->Length(); ++i) {
             recurse(get<v8::Object>(array, i), state);
         }
@@ -408,7 +411,7 @@ bool JSParser::recurse(v8::Handle<v8::Object> object, State *state, const String
 void JSParser::handleValueType(v8::Handle<v8::Object> object, State *state, const String &name, const String &key)
 {
     v8::Handle<v8::String> objectType = get<v8::String>(object, "type");
-    if (objectType == "Identifier") {
+    if (objectType == "Identifier" || objectType == "MemberExpression") {
         State s(state);
         createSymbol(object, state, CursorInfo::JSReference);
     } else if (objectType == "ObjectExpression") {
@@ -418,7 +421,6 @@ void JSParser::handleValueType(v8::Handle<v8::Object> object, State *state, cons
     } else {
         error() << "Unhandled" << name << objectType;
     }
-
 }
 
 void JSParser::handleProperties(v8::Handle<v8::Object> object, State *state)
@@ -455,10 +457,11 @@ void JSParser::handleAssignmentExpression(v8::Handle<v8::Object> object, State *
     v8::Handle<v8::Object> left = get<v8::Object>(object, "left");
     v8::Handle<v8::String> leftType = get<v8::String>(left, "type");
     CursorInfo info;
-    if (leftType == "Identifier") {
-        info = createSymbol(left, state, CursorInfo::JSVariable);
-    } else if (type == "MemberExpression") {
+    if (leftType == "Identifier" || leftType == "MemberExpression") {
         info = createSymbol(left, state, CursorInfo::JSWeakVariable);
+    } else {
+        error() << "unknown left side assignment expression" << toJSON(left);
+        return;
     }
     
     v8::Handle<v8::Object> right = get<v8::Object>(object, "right");
@@ -476,7 +479,9 @@ void JSParser::handleBinaryExpression(v8::Handle<v8::Object> object, State *stat
 void JSParser::handleBlockStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
     error() << state->indentString() << "BlockStatement" << name << listProperties(object);
-    handleProperties(object, state);
+    State s(state);
+    s.scope = new Map<String, uint32_t>;
+    handleProperties(object, &s);
 }
 
 void JSParser::handleBreakStatement(v8::Handle<v8::Object> object, State *state, const String &name)
@@ -606,7 +611,8 @@ void JSParser::handleProperty(v8::Handle<v8::Object> object, State *state, const
     const CursorInfo info = createSymbol(get<v8::Object>(object, "key"), state, CursorInfo::JSVariable);
     v8::Handle<v8::Object> value = get<v8::Object>(object, "value");
     if (!value.IsEmpty()) {
-        handleValueType(value, state, "value", info.symbolName);
+        State s(state);
+        handleValueType(value, &s, "value", info.symbolName);
     }
 }
 
@@ -642,8 +648,9 @@ void JSParser::handleUnaryExpression(v8::Handle<v8::Object> object, State *state
 
 void JSParser::handleUpdateExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
+    const CursorInfo info = createSymbol(get<v8::Object>(object, "argument"), state, CursorInfo::JSWeakVariable);
     error() << state->indentString() << "UpdateExpression" << name << listProperties(object);
-    handleProperties(object, state);
+    // handleProperties(object, state);
 }
 
 void JSParser::handleVariableDeclaration(v8::Handle<v8::Object> object, State *state, const String &name)
