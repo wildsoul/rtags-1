@@ -250,10 +250,16 @@ CursorInfo JSParser::createSymbol(v8::Handle<v8::Object> object, State *state)
     } else if (type == "MemberExpression") {
         v8::Handle<v8::Object> obj = get<v8::Object>(object, "object");
         CursorInfo o = createSymbol(obj, state);
+        if (o.isNull()) {
+            error() << "Got null from object" << toJSON(obj);
+        }
+        // assert(!o.isNull());
         v8::Handle<v8::Object> property = get<v8::Object>(object, "property");
         State s(state);
         s.parent = o.symbolName;
         return createSymbol(property, &s);
+    } else if (type == "Literal") {
+        return CursorInfo();
     } else {
         error() << "Unknown object passed to createSymbol" << toJSON(object, true);
         return CursorInfo();
@@ -317,7 +323,7 @@ CursorInfo JSParser::createSymbol(v8::Handle<v8::Object> object, State *state)
 
         (*scope)[c.symbolName] = offset;
     }
-    error() << state->indentString() << "+++ adding" << c.kindSpelling() << c.symbolName << "at" << loc << "scope";
+    warning() << state->indentString() << "+++ adding" << c.kindSpelling() << c.symbolName << "at" << loc << "scope";
     return c;
 }
 
@@ -408,7 +414,7 @@ void JSParser::handleValueType(v8::Handle<v8::Object> object, State *state, cons
         State s(state);
         s.parent = key;
         handleObjectExpression(object, &s, "init");
-    } else {
+    } else if (objectType != "Literal") {
         error() << "Unhandled" << name << objectType;
     }
 }
@@ -430,20 +436,20 @@ void JSParser::handleProperties(v8::Handle<v8::Object> object, State *state)
 
 void JSParser::handleIdentifier(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "Identifier" << name << listProperties(object);
+    warning() << state->indentString() << "Identifier" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleArrayExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ArrayExpression" << name << listProperties(object);
+    warning() << state->indentString() << "ArrayExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleAssignmentExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
     v8::HandleScope scope;
-    error() << state->indentString() << "AssignmentExpression" << name << listProperties(object);
+    warning() << state->indentString() << "AssignmentExpression" << name << listProperties(object);
     v8::Handle<v8::Object> left = get<v8::Object>(object, "left");
     v8::Handle<v8::String> leftType = get<v8::String>(left, "type");
     CursorInfo info;
@@ -462,80 +468,80 @@ void JSParser::handleAssignmentExpression(v8::Handle<v8::Object> object, State *
 
 void JSParser::handleBinaryExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "BinaryExpression" << name << listProperties(object);
+    warning() << state->indentString() << "BinaryExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleBlockStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "BlockStatement" << name << listProperties(object);
+    warning() << state->indentString() << "BlockStatement" << name << listProperties(object);
     // no scope for a block in this retarded-ass language
     handleProperties(object, state);
 }
 
 void JSParser::handleBreakStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "BreakStatement" << name << listProperties(object);
+    warning() << state->indentString() << "BreakStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleCallExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "CallExpression" << name << listProperties(object);
+    warning() << state->indentString() << "CallExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleCatchClause(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "CatchClause" << name << listProperties(object);
+    warning() << state->indentString() << "CatchClause" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleConditionalExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ConditionalExpression" << name << listProperties(object);
+    warning() << state->indentString() << "ConditionalExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleContinueStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ContinueStatement" << name << listProperties(object);
+    warning() << state->indentString() << "ContinueStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleDoWhileStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "DoWhileStatement" << name << listProperties(object);
+    warning() << state->indentString() << "DoWhileStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleEmptyStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "EmptyStatement" << name << listProperties(object);
+    warning() << state->indentString() << "EmptyStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleExpressionStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ExpressionStatement" << name << listProperties(object);
+    warning() << state->indentString() << "ExpressionStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleForInStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ForInStatement" << name << listProperties(object);
+    warning() << state->indentString() << "ForInStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleForStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ForStatement" << name << listProperties(object);
+    warning() << state->indentString() << "ForStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleFunctionDeclaration(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "FunctionDeclaration" << name << listProperties(object);
+    warning() << state->indentString() << "FunctionDeclaration" << name << listProperties(object);
     State s(state);
     s.createScope();
     handleProperties(object, &s);
@@ -543,43 +549,43 @@ void JSParser::handleFunctionDeclaration(v8::Handle<v8::Object> object, State *s
 
 void JSParser::handleFunctionExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "FunctionExpression" << name << listProperties(object);
+    warning() << state->indentString() << "FunctionExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleIfStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "IfStatement" << name << listProperties(object);
+    warning() << state->indentString() << "IfStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleLiteral(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "Literal" << name << listProperties(object);
+    warning() << state->indentString() << "Literal" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleLogicalExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "LogicalExpression" << name << listProperties(object);
+    warning() << state->indentString() << "LogicalExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleMemberExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "MemberExpression" << name << listProperties(object);
+    warning() << state->indentString() << "MemberExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleNewExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "NewExpression" << name << listProperties(object);
+    warning() << state->indentString() << "NewExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleObjectExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ObjectExpression" << name << listProperties(object);
+    warning() << state->indentString() << "ObjectExpression" << name << listProperties(object);
     v8::HandleScope scope;
     v8::Handle<v8::Array> properties = get<v8::Array>(object, "properties");
     for (unsigned i=0; i<properties->Length(); ++i) {
@@ -589,14 +595,14 @@ void JSParser::handleObjectExpression(v8::Handle<v8::Object> object, State *stat
 
 void JSParser::handleProgram(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "Program" << name << listProperties(object);
+    warning() << state->indentString() << "Program" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleProperty(v8::Handle<v8::Object> object, State *state, const String &name)
 {
     v8::HandleScope scope;
-    error() << state->indentString() << "Property" << name << listProperties(object);
+    warning() << state->indentString() << "Property" << name << listProperties(object);
 
     // error() << "getting property" << state->parent;
     const CursorInfo info = createSymbol(get<v8::Object>(object, "key"), state);
@@ -609,51 +615,51 @@ void JSParser::handleProperty(v8::Handle<v8::Object> object, State *state, const
 
 void JSParser::handleReturnStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ReturnStatement" << name << listProperties(object);
+    warning() << state->indentString() << "ReturnStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleThisExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ThisExpression" << name << listProperties(object);
+    warning() << state->indentString() << "ThisExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleThrowStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "ThrowStatement" << name << listProperties(object);
+    warning() << state->indentString() << "ThrowStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleTryStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "TryStatement" << name << listProperties(object);
+    warning() << state->indentString() << "TryStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleUnaryExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "UnaryExpression" << name << listProperties(object);
+    warning() << state->indentString() << "UnaryExpression" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleUpdateExpression(v8::Handle<v8::Object> object, State *state, const String &name)
 {
     const CursorInfo info = createSymbol(get<v8::Object>(object, "argument"), state);
-    error() << state->indentString() << "UpdateExpression" << name << listProperties(object);
+    warning() << state->indentString() << "UpdateExpression" << name << listProperties(object);
     // handleProperties(object, state);
 }
 
 void JSParser::handleVariableDeclaration(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "VariableDeclaration" << name << listProperties(object);
+    warning() << state->indentString() << "VariableDeclaration" << name << listProperties(object);
     handleProperties(object, state);
 }
 
 void JSParser::handleVariableDeclarator(v8::Handle<v8::Object> object, State *state, const String &name)
 {
     v8::HandleScope scope;
-    error() << state->indentString() << "VariableDeclarator" << name << listProperties(object);
+    warning() << state->indentString() << "VariableDeclarator" << name << listProperties(object);
     const CursorInfo info = createSymbol(get<v8::Object>(object, "id"), state);
     v8::Handle<v8::Object> init = get<v8::Object>(object, "init");
     if (!init.IsEmpty()) {
@@ -663,6 +669,6 @@ void JSParser::handleVariableDeclarator(v8::Handle<v8::Object> object, State *st
 
 void JSParser::handleWhileStatement(v8::Handle<v8::Object> object, State *state, const String &name)
 {
-    error() << state->indentString() << "WhileStatement" << name << listProperties(object);
+    warning() << state->indentString() << "WhileStatement" << name << listProperties(object);
     handleProperties(object, state);
 }
