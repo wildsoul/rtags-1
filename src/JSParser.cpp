@@ -213,7 +213,7 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
             *json = toCString(toJSON(result));
         mRoot = recurse(result, 0, String());
         if (mRoot) {
-            error() << mRoot->dump(0, false, "rangevalueraw");
+            error() << mRoot->dump(0, false, String());
             // error() << mRoot->dump();
             visit(mRoot);
         }

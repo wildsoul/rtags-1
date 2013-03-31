@@ -125,7 +125,7 @@ struct ArrayNode : public Node
                 if (name == "range") {
                     ret += nodes.at(i)->dump(indent + 1, true, filter);
                     if (i + 1 < nodes.size())
-                        ret += " ,";
+                        ret += ", ";
                 } else {
                     ret += nodes.at(i)->dump(indent + 1, false, filter);
                     if (i + 1 < nodes.size())
