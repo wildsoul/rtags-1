@@ -213,7 +213,7 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
             *json = toCString(toJSON(result));
         mRoot = recurse(result, 0, String());
         if (mRoot) {
-            error() << toJSON(result);
+            error() << mRoot->dump(0, false, "rangevalueraw");
             // error() << mRoot->dump();
             visit(mRoot);
         }
@@ -376,7 +376,7 @@ void JSParser::createObject(ObjectNode *node)
             if (!node->parent->child("object")) {
                 printf("[%s] %s:%d: if (!node->parent->child(\"object\")) { [after]\n", __func__, __FILE__, __LINE__);
             } else if (!node->parent->child("object")->child("name")) {
-                error() << "tasken\n" << node->parent->child("object")->dump();
+                error() << "tasken\n" << node->parent->child("object")->dump(0, false, String());
                 printf("[%s] %s:%d: } else if (!node->parent->child(\"object\")->child(\"name\")) { [after]\n", __func__, __FILE__, __LINE__);
             } else {
                 symbolName = node->parent->child("object")->child("name")->toString();
@@ -415,7 +415,7 @@ void JSParser::createObject(ObjectNode *node)
         break;
     }
     if (kind == -1) {
-        error() << "Unhandled identifier:\n" << node->parent->dump(0);
+        error() << "Unhandled identifier:\n" << node->parent->dump(0, false, String());
         return;
     }
     symbolName += name;

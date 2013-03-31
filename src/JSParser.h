@@ -34,7 +34,7 @@ struct Node
     virtual String toString() const { return String(); }
     virtual int toInteger() const { return -1; }
 
-    virtual String dump(int indent = 0, bool ignoreFirstIndent = false) const
+    virtual String dump(int indent, bool ignoreFirstIndent, const String &filter) const
     {
         String ret;
         if (!ignoreFirstIndent)
@@ -108,7 +108,7 @@ struct ArrayNode : public Node
         for (int i=0; i<nodes.size(); ++i)
             delete nodes.at(i);
     }
-    virtual String dump(int indent, bool ignoreFirstIndent) const
+    virtual String dump(int indent, bool ignoreFirstIndent, const String &filter) const
     {
         String ret;
         if (!ignoreFirstIndent)
@@ -123,11 +123,11 @@ struct ArrayNode : public Node
             }
             for (int i=0; i<nodes.size(); ++i) {
                 if (name == "range") {
-                    ret += nodes.at(i)->dump(indent + 1, true);
+                    ret += nodes.at(i)->dump(indent + 1, true, filter);
                     if (i + 1 < nodes.size())
                         ret += " ,";
                 } else {
-                    ret += nodes.at(i)->dump(indent + 1, false);
+                    ret += nodes.at(i)->dump(indent + 1, false, filter);
                     if (i + 1 < nodes.size())
                         ret += ',';
                     ret += "\n";
@@ -160,7 +160,7 @@ struct ObjectNode : public Node
     virtual Map<String, Node*>::const_iterator begin() const { return nodes.begin(); }
     virtual Map<String, Node*>::const_iterator end() const { return nodes.end(); }
     virtual Node *child(const String &key) const { return nodes.value(key); }
-    virtual String dump(int indent, bool ignoreFirstIndent) const
+    virtual String dump(int indent, bool ignoreFirstIndent, const String &filter) const
     {
         String ret;
         if (!ignoreFirstIndent)
@@ -171,12 +171,15 @@ struct ObjectNode : public Node
             ret += "{\n";
             Map<String, Node*>::const_iterator it = nodes.begin();
             while (it != nodes.end()) {
-                ret += String((indent + 1) * 2, ' ') + "\"" + it->first + "\": " + (it->second ? it->second->dump(indent + 1, true) : String());
-                if (++it != nodes.end())
-                    ret += ',';
-                ret += "\n";
+                if (!filter.contains(it->first)) {
+                    ret += String((indent + 1) * 4, ' ') + "\"" + it->first + "\": " + (it->second ? it->second->dump(indent + 1, true, filter) : String());
+                    if (it != nodes.end())
+                        ret += ',';
+                    ret += "\n";
+                }
+                ++it;
             }
-            ret += String(std::max(0, indent - 1) * 4, ' ');
+            ret += String(std::max(0, indent) * 4, ' ');
             ret += '}';
         }
         return ret;
@@ -193,7 +196,7 @@ struct IntegerNode : public Node
     {}
 
     virtual int toInteger() const { return value; }
-    virtual String dump(int indent, bool ignoreFirstIndent) const
+    virtual String dump(int indent, bool ignoreFirstIndent, const String &) const
     {
         String ret;
         if (!ignoreFirstIndent)
@@ -213,7 +216,7 @@ struct StringNode : public Node
     {}
 
     virtual String toString() const { return value; }
-    virtual String dump(int indent, bool ignoreFirstIndent) const
+    virtual String dump(int indent, bool ignoreFirstIndent, const String &) const
     {
         String ret;
         if (!ignoreFirstIndent)
