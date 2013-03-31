@@ -190,7 +190,6 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
         tmp = path.readAll();
     const String &c = contents.isEmpty() ? tmp : contents;
     if (c.isEmpty()) {
-        printf("[%s] %s:%d: if (c.isEmpty()) { [after]\n", __func__, __FILE__, __LINE__);
         return false;
     }
     v8::Handle<v8::Value> args[2];
@@ -230,6 +229,20 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
     return true;
 }
 
+struct ObjectTypeNode {
+    const char *name;
+    const Node::ObjectType type;
+};
+
+static int compareNode(const void *l, const void *r)
+{
+    const ObjectTypeNode *left = reinterpret_cast<const ObjectTypeNode*>(l);
+    const ObjectTypeNode *right = reinterpret_cast<const ObjectTypeNode*>(r);
+    assert(left->name);
+    assert(right->name);
+    return strcmp(left->name, right->name);
+}
+
 Node *JSParser::recurse(v8::Handle<v8::Value> value, Node *parent, const String &name)
 {
     v8::HandleScope handleScope;
@@ -250,6 +263,53 @@ Node *JSParser::recurse(v8::Handle<v8::Value> value, Node *parent, const String 
         v8::Handle<v8::Array> properties = object->GetOwnPropertyNames();
 
         ObjectNode *node = new ObjectNode(parent, name);
+
+        static const ObjectTypeNode handlers[] = {
+            { "ArrayExpression", Node::ArrayExpression },
+            { "AssignmentExpression", Node::AssignmentExpression },
+            { "BinaryExpression", Node::BinaryExpression },
+            { "BlockStatement", Node::BlockStatement },
+            { "BreakStatement", Node::BreakStatement },
+            { "CallExpression", Node::CallExpression },
+            { "CatchClause", Node::CatchClause },
+            { "ConditionalExpression", Node::ConditionalExpression },
+            { "ContinueStatement", Node::ContinueStatement },
+            { "DoWhileStatement", Node::DoWhileStatement },
+            { "EmptyStatement", Node::EmptyStatement },
+            { "ExpressionStatement", Node::ExpressionStatement },
+            { "ForInStatement", Node::ForInStatement },
+            { "ForStatement", Node::ForStatement },
+            { "FunctionDeclaration", Node::FunctionDeclaration },
+            { "FunctionExpression", Node::FunctionExpression },
+            { "Identifier", Node::Identifier },
+            { "IfStatement", Node::IfStatement },
+            { "Literal", Node::Literal },
+            { "LogicalExpression", Node::LogicalExpression },
+            { "MemberExpression", Node::MemberExpression },
+            { "NewExpression", Node::NewExpression },
+            { "ObjectExpression", Node::ObjectExpression },
+            { "Program", Node::Program },
+            { "Property", Node::Property },
+            { "ReturnStatement", Node::ReturnStatement },
+            { "ThisExpression", Node::ThisExpression },
+            { "ThrowStatement", Node::ThrowStatement },
+            { "TryStatement", Node::TryStatement },
+            { "UnaryExpression", Node::UnaryExpression },
+            { "UpdateExpression", Node::UpdateExpression },
+            { "VariableDeclaration", Node::VariableDeclaration },
+            { "VariableDeclarator", Node::VariableDeclarator },
+            { "WhileStatement", Node::WhileStatement },
+            { 0, Node::None }
+        };
+        const v8::Handle<v8::String> objectType = get<v8::String>(object, "type");
+        const v8::String::Utf8Value str(objectType);
+        const ObjectTypeNode n = { *str, Node::None };
+        const void *result = bsearch(&n, handlers,
+                                     (sizeof(handlers) - sizeof(ObjectTypeNode)) / sizeof(ObjectTypeNode),
+                                     sizeof(ObjectTypeNode), &compareNode);
+        const ObjectTypeNode *res = reinterpret_cast<const ObjectTypeNode*>(result);
+        assert(res);
+        node->objectType = res->type;
         for (unsigned i=0; i<properties->Length(); ++i) {
             v8::Handle<v8::String> key = get<v8::String>(properties, i);
             String k = toCString(key);
@@ -283,26 +343,30 @@ void JSParser::createObject(ObjectNode *node)
     assert(rangeNode && rangeNode->type == Node::Type_Array && rangeNode->count() == 2);
     const int offset = rangeNode->child(0)->toInteger();
     const int length = rangeNode->child(1)->toInteger() - offset;
-    int indent = 0;
     Map<String, int> *scope = 0;
     for (Node *n = node; n; n = n->parent) {
-        if (!scope && n->scope)
+        if (!scope && n->scope) {
             scope = n->scope;
-        ++indent;
+            break;
+        }
     }
     assert(scope);
 
     int kind = -1;
     bool weak = false;
     String symbolName;
-    const String type = node->parent->objectType();
-    if (node->name == "id" && type == "VariableDeclarator") {
-        kind = CursorInfo::JSVariable;
-    } else if (type == "FunctionDeclaration") {
+    switch (node->parent->objectType) {
+    case Node::VariableDeclarator:
+        if (node->name == "id")
+            kind = CursorInfo::JSVariable;
+        break;
+    case Node::FunctionDeclaration:
         kind = CursorInfo::JSFunction;
-    } else if (type == "CallExpression") {
+        break;
+    case Node::CallExpression:
         kind = CursorInfo::JSReference;
-    } else if (type == "MemberExpression") {
+        break;
+    case Node::MemberExpression:
         if (node->name == "object") {
             kind = CursorInfo::JSReference;
         } else if (node->name == "property") {
@@ -319,23 +383,25 @@ void JSParser::createObject(ObjectNode *node)
                 symbolName += '.';
             }
         }
-    } else if (type == "AssignmentExpression") {
+        break;
+    case Node::AssignmentExpression:
         if (node->name == "left") {
             weak = true;
             kind = CursorInfo::JSVariable;
         } else if (node->name == "right") {
             kind = CursorInfo::JSReference;
         }
-    } else if (type == "Property") {
+        break;
+    case Node::Property:
         if (node->name == "key") {
-            error() << "got property key" << node->parent->parent->parent->objectType()
+            error() << "got property key" << node->parent->parent->parent->objectTypeString()
                     << node->parent->parent->parent->name;
             if (node->parent->parent
                 && node->parent->parent->parent
                 && node->parent->parent->parent->parent
-                && node->parent->parent->parent->objectType() == "ObjectExpression"
+                && node->parent->parent->parent->objectTypeString() == "ObjectExpression"
                 && node->parent->parent->parent->name == "init"
-                && node->parent->parent->parent->parent->objectType() == "VariableDeclarator") {
+                && node->parent->parent->parent->parent->objectTypeString() == "VariableDeclarator") {
                 // fy faen!
                 // error() << node->parent->parent->parent->dump();
                 symbolName = node->parent->parent->parent->parent->child("id")->child("name")->toString();
@@ -344,6 +410,9 @@ void JSParser::createObject(ObjectNode *node)
             weak = true;
             kind = CursorInfo::JSVariable;
         }
+        break;
+    default:
+        break;
     }
     if (kind == -1) {
         error() << "Unhandled identifier:\n" << node->parent->dump(0);
@@ -385,7 +454,7 @@ void JSParser::visit(Node *node)
         switch (node->type) {
         case Node::Type_Object:
             // error() << "visiting" << node->objectType();
-            if (node->objectType() == "Identifier") {
+            if (node->objectType == Node::Identifier) {
                 createObject(static_cast<ObjectNode*>(node));
             } else {
                 const Map<String, Node*>::const_iterator end = node->end();

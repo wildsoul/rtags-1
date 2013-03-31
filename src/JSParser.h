@@ -23,7 +23,7 @@ struct Node
         Type_Integer,
         Type_String
     };
-    Node(Node *p, Type t, const String &n) : parent(p), type(t), name(n), scope(0) {}
+    Node(Node *p, Type t, const String &n) : parent(p), type(t), objectType(None), name(n), scope(0) {}
     virtual ~Node() { delete scope; }
 
     virtual Node *child(int i) const { return 0; }
@@ -48,15 +48,54 @@ struct Node
         return ret;
     }
 
-    String objectType() const
+    String objectTypeString() const
     {
         if (Node *n = child("type"))
             return n->toString();
         return String();
     }
+    
+    enum ObjectType {
+        None,
+        ArrayExpression,
+        AssignmentExpression,
+        BinaryExpression,
+        BlockStatement,
+        BreakStatement,
+        CallExpression,
+        CatchClause,
+        ConditionalExpression,
+        ContinueStatement,
+        DoWhileStatement,
+        EmptyStatement,
+        ExpressionStatement,
+        ForInStatement,
+        ForStatement,
+        FunctionDeclaration,
+        FunctionExpression,
+        Identifier,
+        IfStatement,
+        Literal,
+        LogicalExpression,
+        MemberExpression,
+        NewExpression,
+        ObjectExpression,
+        Program,
+        Property,
+        ReturnStatement,
+        ThisExpression,
+        ThrowStatement,
+        TryStatement,
+        UnaryExpression,
+        UpdateExpression,
+        VariableDeclaration,
+        VariableDeclarator,
+        WhileStatement
+    };
 
     Node *parent;
     const Type type;
+    ObjectType objectType;
     const String name;
     Map<String, int> *scope;
 };
