@@ -72,6 +72,11 @@ private:
         {
             delete scope;
         }
+        void createScope()
+        {
+            assert(!scope);
+            scope = new Map<String, uint32_t>;
+        }
         String indentString() const;
 
         State *prev;
@@ -114,8 +119,7 @@ private:
     void handleVariableDeclarator(v8::Handle<v8::Object> object, State *state, const String &name);
     void handleWhileStatement(v8::Handle<v8::Object> object, State *state, const String &name);
 
-    // CursorInfo handleKeyType(v8::Handle<v8::Object> object, State *state, const String &name, CursorInfo::JSCursorKind kind);
-    CursorInfo createSymbol(v8::Handle<v8::Object> object, State *state, CursorInfo::JSCursorKind kind);
+    CursorInfo createSymbol(v8::Handle<v8::Object> object, State *state);
     void handleValueType(v8::Handle<v8::Object> object, State *state, const String &name, const String &key);
     void handleProperties(v8::Handle<v8::Object> object, State *state);
 
