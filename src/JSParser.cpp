@@ -445,7 +445,7 @@ void JSParser::createObject(ObjectNode *node)
         if (symbolName != name)
             (*mSymbolNames)[name].insert(loc);
     }
-    
+
 }
 
 void JSParser::visit(Node *node)

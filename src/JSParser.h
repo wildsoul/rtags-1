@@ -54,7 +54,7 @@ struct Node
             return n->toString();
         return String();
     }
-    
+
     enum ObjectType {
         None,
         ArrayExpression,
