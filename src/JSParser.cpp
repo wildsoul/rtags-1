@@ -473,6 +473,16 @@ static std::string generateName(const v8::Handle<v8::Object>& node, int* level, 
     v8::HandleScope handleScope;
     std::string result;
 
+    bool computed = false;
+    {
+        v8::Handle<v8::String> compString = v8::String::New("computed");
+        if (node->Has(compString)) {
+            v8::Handle<v8::Boolean> comp = node->Get(compString)->ToBoolean();
+            assert(!comp.IsEmpty() && comp->IsBoolean());
+            computed = comp->Value();
+        }
+    }
+
     v8::Handle<v8::String> objString = v8::String::New("object");
     if (node->Has(objString)) {
         result = generateName(v8::Handle<v8::Object>::Cast(node->Get(objString)), level, start, end);
@@ -480,13 +490,15 @@ static std::string generateName(const v8::Handle<v8::Object>& node, int* level, 
             return result;
     }
 
-    v8::Handle<v8::String> propString = v8::String::New("property");
-    if (node->Has(propString)) {
-        if (!result.empty())
-            result += '.';
-        result += generateName(v8::Handle<v8::Object>::Cast(node->Get(propString)), level, start, end);
-        if (!*level)
-            return result;
+    if (!computed) {
+        v8::Handle<v8::String> propString = v8::String::New("property");
+        if (node->Has(propString)) {
+            if (!result.empty())
+                result += '.';
+            result += generateName(v8::Handle<v8::Object>::Cast(node->Get(propString)), level, start, end);
+            if (!*level)
+                return result;
+        }
     }
 
     std::string nodeName;
