@@ -221,7 +221,6 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
     if (!result.IsEmpty() && result->IsObject()) {
         if (json)
             *json = toCString(toJSON(result));
-        mLevel = 0;
         recurse(result);
         assert(mScopes.empty());
     }
@@ -315,8 +314,8 @@ static inline JSScope::NodeType typeStringToType(const char* str)
     return JSScope::None;
 }
 
-JSScope::JSScope(NodeType type, int level)
-    : mType(type), mLevel(level)
+JSScope::JSScope(NodeType type)
+    : mType(type), mObjectsAdded(0)
 {
 }
 
@@ -359,6 +358,18 @@ JSScope* JSParser::findDeclarationScope(VarType type, JSScope* start)
     return 0;
 }
 
+JSScope* JSParser::findScope(JSScope::NodeType type)
+{
+    std::deque<JSScope>::reverse_iterator it = mScopes.rbegin();
+    const std::deque<JSScope>::const_reverse_iterator end = mScopes.rend();
+    while (it != end) {
+        if (it->mType == type)
+            return &*it;
+        ++it;
+    }
+    return 0;
+}
+
 Declaration* JSParser::findDeclaration(const std::string& name)
 {
     std::deque<JSScope>::reverse_iterator scope = mScopes.rbegin();
@@ -385,12 +396,10 @@ void JSParser::recurse(const v8::Handle<v8::Value>& node)
 {
     if (node.IsEmpty())
         return;
-    ++mLevel;
     if (node->IsArray())
         recurse(v8::Handle<v8::Array>::Cast(node));
     else if (node->IsObject())
         recurse(v8::Handle<v8::Object>::Cast(node));
-    --mLevel;
 }
 
 void JSParser::recurse(const v8::Handle<v8::Array>& node)
@@ -474,6 +483,31 @@ static void addObject(JSScope* scope, const std::deque<std::string>& objects, in
     scope->addDeclaration(CursorInfo::JSVariable, name, start, end);
 }
 
+static int addObjects(const std::string& name, std::deque<std::string>& objects)
+{
+    std::string n = name;
+    size_t dot = n.find('.');
+    int added = 0;
+    while (dot != std::string::npos) {
+        const std::string sub = n.substr(0, dot);
+        if (!sub.empty()) {
+            objects.push_back(sub);
+            ++added;
+        }
+        if (dot + 1 < n.size()) {
+            n = n.substr(dot + 1);
+            dot = n.find('.');
+        } else {
+            dot = std::string::npos;
+        }
+    }
+    if (!n.empty()) {
+        objects.push_back(n);
+        ++added;
+    }
+    return added;
+}
+
 void JSParser::recurse(const v8::Handle<v8::Object>& node)
 {
     assert(!node.IsEmpty() && ((node->IsObject() && !node->IsArray()) || node->IsNull()));
@@ -490,7 +524,7 @@ void JSParser::recurse(const v8::Handle<v8::Object>& node)
             v8::String::Utf8Value str(type);
             nodeType = typeStringToType(*str);
             if (nodeType != JSScope::None) {
-                mScopes.push_back(JSScope(nodeType, mLevel));
+                mScopes.push_back(JSScope(nodeType));
                 typePushed = true;
             }
         }
@@ -528,12 +562,26 @@ void JSParser::recurse(const v8::Handle<v8::Object>& node)
                 // found reference!
             }
         }
+        if (!scope) {
+            Declaration* decl = findDeclaration(expr);
+            if (!decl) {
+                // not declared, we need to bind this to the global scope
+                scope = &mScopes.front();
+                assert(scope->mType == JSScope::Program);
+            } else {
+                scope = decl->scope;
+            }
+        }
         assert(scope);
         Declaration* decl = findDeclaration(expr);
         if (!decl) {
             scope->addDeclaration(CursorInfo::JSVariable, expr, start, end);
         } else {
             decl->refs.push_back(std::make_pair(start, end));
+        }
+        JSScope* objectScope = findScope(JSScope::ExpressionStatement);
+        if (objectScope) {
+            objectScope->mObjectsAdded += addObjects(expr, mObjects);
         }
         further = false;
         break; }
@@ -626,6 +674,11 @@ void JSParser::recurse(const v8::Handle<v8::Object>& node)
             } else {
                 decl->refs.push_back(std::make_pair(nodeStart, nodeEnd));
             }
+            JSScope* objectScope = findScope(JSScope::ExpressionStatement);
+            if (objectScope) {
+                objectScope->mObjectsAdded += 1;
+                mObjects.push_back(nodeName);
+            }
         }
         break; }
     default:
@@ -648,7 +701,11 @@ void JSParser::recurse(const v8::Handle<v8::Object>& node)
     }
 
     if (typePushed) {
-        syncScope(mScopes.back());
+        JSScope& current = mScopes.back();
+        syncScope(current);
+        for (int i = 0; i < current.mObjectsAdded; ++i) {
+            mObjects.pop_back();
+        }
         mScopes.pop_back();
     }
 }

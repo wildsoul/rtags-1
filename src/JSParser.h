@@ -30,14 +30,14 @@ struct JSScope
                     ReturnStatement, ExpressionStatement, AssignmentExpression, CallExpression, Program, MemberExpression,
                     ObjectExpression };
 
-    JSScope(NodeType type, int level);
+    JSScope(NodeType type);
     ~JSScope();
 
     void addDeclaration(CursorInfo::JSCursorKind kind, const std::string& name, int start, int end);
 
     std::deque<Declaration> mDeclarations;
     NodeType mType;
-    int mLevel;
+    int mObjectsAdded;
 };
 
 class JSParser
@@ -66,6 +66,7 @@ private:
     void parseIdentifiers(const v8::Handle<v8::Object>& obj);
 
     JSScope* findDeclarationScope(VarType type, JSScope* start = 0);
+    JSScope* findScope(JSScope::NodeType type);
     Declaration* findDeclaration(const std::string& name);
 
     std::deque<JSScope> mScopes;
@@ -77,7 +78,6 @@ private:
     v8::Persistent<v8::Function> mParse;
     v8::Isolate *mIsolate;
     uint32_t mFileId;
-    int mLevel;
 
     SymbolMap* mSymbols;
     SymbolNameMap* mSymbolNames;
