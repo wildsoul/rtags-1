@@ -250,6 +250,7 @@ static void addNamePermutations(SymbolNameMap& symbolNames, std::string name, co
 
 void JSParser::syncScope(const JSScope& scope)
 {
+    //error() << "syncing scope" << scope.mType;
     std::deque<Declaration>::const_reverse_iterator decl = scope.mDeclarations.rbegin();
     const std::deque<Declaration>::const_reverse_iterator declEnd = scope.mDeclarations.rend();
     while (decl != declEnd) {
@@ -286,6 +287,8 @@ static inline JSScope::NodeType typeStringToType(const char* str)
 {
     if (!strcmp(str, "FunctionDeclaration"))
         return JSScope::FunctionDeclaration;
+    if (!strcmp(str, "FunctionExpression"))
+        return JSScope::FunctionExpression;
     if (!strcmp(str, "BlockStatement"))
         return JSScope::BlockStatement;
     if (!strcmp(str, "VariableDeclaration"))
@@ -344,6 +347,7 @@ JSScope* JSParser::findDeclarationScope(VarType type, JSScope* start)
             // fall through for Let
         case JSScope::Program:
         case JSScope::FunctionDeclaration:
+        case JSScope::FunctionExpression:
             if (!foundStart) {
                 if (&*it == start)
                     foundStart = true;
@@ -413,7 +417,9 @@ void JSParser::recurse(const v8::Handle<v8::Array>& node)
 
 static bool parseIdentifier(const v8::Handle<v8::Object>& obj, std::string& name, int& start, int& end)
 {
-    assert(!obj.IsEmpty() && obj->IsObject());
+    assert(!obj.IsEmpty() && (obj->IsObject() || obj->IsNull()));
+    if (obj->IsNull())
+        return false;
     v8::Handle<v8::String> nameString = v8::String::New("name");
     if (obj->Has(nameString)) {
         v8::Handle<v8::String> rangeString = v8::String::New("range");
@@ -524,6 +530,7 @@ void JSParser::recurse(const v8::Handle<v8::Object>& node)
             v8::String::Utf8Value str(type);
             nodeType = typeStringToType(*str);
             if (nodeType != JSScope::None) {
+                //error() << "adding scope" << *str << nodeType;
                 mScopes.push_back(JSScope(nodeType));
                 typePushed = true;
             }
@@ -637,6 +644,7 @@ void JSParser::recurse(const v8::Handle<v8::Object>& node)
         addDeclarations(vartype, decls);
         further = false;
         break; }
+    case JSScope::FunctionExpression:
     case JSScope::FunctionDeclaration: {
         v8::Handle<v8::String> idStr = v8::String::New("id");
         if (node->Has(idStr)) {
@@ -673,11 +681,6 @@ void JSParser::recurse(const v8::Handle<v8::Object>& node)
                 scope->addDeclaration(CursorInfo::JSVariable, nodeName, nodeStart, nodeEnd);
             } else {
                 decl->refs.push_back(std::make_pair(nodeStart, nodeEnd));
-            }
-            JSScope* objectScope = findScope(JSScope::ExpressionStatement);
-            if (objectScope) {
-                objectScope->mObjectsAdded += 1;
-                mObjects.push_back(nodeName);
             }
         }
         break; }

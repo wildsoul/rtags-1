@@ -28,7 +28,7 @@ struct JSScope
 {
     enum NodeType { None, FunctionDeclaration, BlockStatement, VariableDeclaration, VariableDeclarator, Identifier, Literal,
                     ReturnStatement, ExpressionStatement, AssignmentExpression, CallExpression, Program, MemberExpression,
-                    ObjectExpression };
+                    ObjectExpression, FunctionExpression };
 
     JSScope(NodeType type);
     ~JSScope();
