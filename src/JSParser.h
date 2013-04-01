@@ -34,6 +34,7 @@ struct JSScope
     ~JSScope();
 
     void addDeclaration(CursorInfo::JSCursorKind kind, const std::string& name, int start, int end);
+    Declaration* findDeclaration(const std::string& name);
 
     std::deque<Declaration> mDeclarations;
     NodeType mType;

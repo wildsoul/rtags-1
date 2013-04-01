@@ -248,6 +248,16 @@ static void addNamePermutations(SymbolNameMap& symbolNames, std::string name, co
     }
 }
 
+static std::string stripDots(const std::string& name)
+{
+    const size_t lastDot = name.rfind('.');
+    if (lastDot == std::string::npos)
+        return name;
+    if (lastDot + 1 >= name.size())
+        return std::string();
+    return name.substr(lastDot + 1);
+}
+
 void JSParser::syncScope(const JSScope& scope)
 {
     //error() << "syncing scope" << scope.mType;
@@ -257,10 +267,10 @@ void JSParser::syncScope(const JSScope& scope)
         const Declaration& declaration = *decl;
         CursorInfo info;
         info.kind = declaration.kind;
-        info.symbolName = declaration.name;
+        info.symbolName = stripDots(declaration.name);
         info.start = declaration.start;
         info.end = declaration.end;
-        info.symbolLength = declaration.name.size(); // ### probably wrong
+        info.symbolLength = info.symbolName.size(); // ### probably wrong
         Location loc(mFileId, info.start);
         info.targets.insert(loc);
         CursorInfo refInfo = info;
@@ -326,8 +336,28 @@ JSScope::~JSScope()
 {
 }
 
+Declaration* JSScope::findDeclaration(const std::string& name)
+{
+    std::deque<Declaration>::reverse_iterator decl = mDeclarations.rbegin();
+    const std::deque<Declaration>::const_reverse_iterator declEnd = mDeclarations.rend();
+    while (decl != declEnd) {
+        if (decl->name == name)
+            return &*decl;
+        ++decl;
+    }
+    return 0;
+}
+
 void JSScope::addDeclaration(CursorInfo::JSCursorKind kind, const std::string& name, int start, int end)
 {
+    {
+        Declaration* decl = findDeclaration(name);
+        if (decl) {
+            decl->start = start;
+            decl->end = end;
+            return;
+        }
+    }
     Declaration decl = { this, kind, name, start, end };
     mDeclarations.push_back(decl);
 }
