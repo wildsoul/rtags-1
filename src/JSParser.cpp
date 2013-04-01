@@ -209,10 +209,10 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
     mSymbolNames = symbolNames;
     mErrors = errors;
     if (!result.IsEmpty() && result->IsObject()) {
-        if (json)
-            *json = toCString(toJSON(result));
         mRoot = recurse(result, 0, String());
         if (mRoot) {
+            if (json)
+                *json = mRoot->dump(0, false, String());
             error() << mRoot->dump(0, false, String());
             // error() << mRoot->dump();
             visit(mRoot);
