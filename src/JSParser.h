@@ -9,181 +9,35 @@
 #include <rct/Path.h>
 #include <rct/String.h>
 #include <v8.h>
+#include <deque>
 
-struct ArrayNode;
-struct ObjectNode;
-struct Node
+struct JSScope;
+
+struct Declaration
 {
-    enum Type {
-        Type_Null,
-        Type_False,
-        Type_True,
-        Type_Object,
-        Type_Array,
-        Type_Integer,
-        Type_String
-    };
-    Node(Node *p, Type t, const String &n) : parent(p), type(t), name(n), scope(0) {}
-    virtual ~Node() { delete scope; }
+    JSScope* scope;
+    CursorInfo::JSCursorKind kind;
+    std::string name;
+    int start;
+    int end;
 
-    virtual Node *child(int i) const { return 0; }
-    virtual int count() const { return 0; }
-    virtual Map<String, Node*>::const_iterator begin() const { assert(0); return Map<String, Node*>::const_iterator(); }
-    virtual Map<String, Node*>::const_iterator end() const { assert(0); return Map<String, Node*>::const_iterator(); }
-    virtual Node *child(const String &key) const { return 0; }
-    virtual String toString() const { return String(); }
-    virtual int toInteger() const { return -1; }
-
-    virtual String dump(int indent = 0, bool ignoreFirstIndent = false) const
-    {
-        String ret;
-        if (!ignoreFirstIndent)
-            ret = String(indent * 4, ' ');
-        switch (type) {
-        case Type_Null: ret += "null"; break;
-        case Type_True: ret += "true"; break;
-        case Type_False: ret += "false"; break;
-        default: assert(0); break;
-        }
-        return ret;
-    }
-
-    String objectType() const
-    {
-        if (Node *n = child("type"))
-            return n->toString();
-        return String();
-    }
-
-    Node *parent;
-    const Type type;
-    const String name;
-    Map<String, int> *scope;
+    std::deque<std::pair<int, int> > refs;
 };
 
-struct ArrayNode : public Node
+struct JSScope
 {
-    ArrayNode(Node *parent, const String &name) : Node(parent, Type_Array, name) {}
-    virtual ~ArrayNode()
-    {
-        for (int i=0; i<nodes.size(); ++i)
-            delete nodes.at(i);
-    }
-    virtual String dump(int indent, bool ignoreFirstIndent) const
-    {
-        String ret;
-        if (!ignoreFirstIndent)
-            ret = String(indent * 4, ' ');
-        if (nodes.isEmpty()) {
-            ret += "[]";
-        } else {
-            if (name == "range") {
-                ret += "[ ";
-            } else {
-                ret += "[\n";
-            }
-            for (int i=0; i<nodes.size(); ++i) {
-                if (name == "range") {
-                    ret += nodes.at(i)->dump(indent + 1, true);
-                    if (i + 1 < nodes.size())
-                        ret += " ,";
-                } else {
-                    ret += nodes.at(i)->dump(indent + 1, false);
-                    if (i + 1 < nodes.size())
-                        ret += ',';
-                    ret += "\n";
-                }
-            }
-            if (name == "range") {
-                ret += " ]";
-            } else {
-                ret += String(indent * 4, ' ');
-                ret += ']';
-            }
-        }
-        return ret;
-    }
-    virtual int count() const { return nodes.size(); }
-    virtual Node *child(int i) const { return nodes.value(i); }
+    enum NodeType { None, FunctionDeclaration, BlockStatement, VariableDeclaration, VariableDeclarator, Identifier, Literal,
+                    ReturnStatement, ExpressionStatement, AssignmentExpression, CallExpression, Program, MemberExpression,
+                    ObjectExpression };
 
-    List<Node*> nodes;
-};
+    JSScope(NodeType type, int level);
+    ~JSScope();
 
-struct ObjectNode : public Node
-{
-    ObjectNode(Node *parent, const String &name) : Node(parent, Type_Object, name) {}
-    virtual ~ObjectNode()
-    {
-        for (Map<String, Node*>::const_iterator it = nodes.begin(); it != nodes.end(); ++it)
-            delete it->second;
-    }
-    virtual int count() const { return nodes.size(); }
-    virtual Map<String, Node*>::const_iterator begin() const { return nodes.begin(); }
-    virtual Map<String, Node*>::const_iterator end() const { return nodes.end(); }
-    virtual Node *child(const String &key) const { return nodes.value(key); }
-    virtual String dump(int indent, bool ignoreFirstIndent) const
-    {
-        String ret;
-        if (!ignoreFirstIndent)
-            ret = String(indent * 4, ' ');
-        if (nodes.isEmpty()) {
-            ret += "{}";
-        } else {
-            ret += "{\n";
-            Map<String, Node*>::const_iterator it = nodes.begin();
-            while (it != nodes.end()) {
-                ret += String((indent + 1) * 2, ' ') + "\"" + it->first + "\": " + (it->second ? it->second->dump(indent + 1, true) : String());
-                if (++it != nodes.end())
-                    ret += ',';
-                ret += "\n";
-            }
-            ret += String(std::max(0, indent - 1) * 4, ' ');
-            ret += '}';
-        }
-        return ret;
-    }
+    void addDeclaration(CursorInfo::JSCursorKind kind, const std::string& name, int start, int end);
 
-
-    Map<String, Node*> nodes;
-};
-
-struct IntegerNode : public Node
-{
-    IntegerNode(Node *parent, int val, const String &name)
-        : Node(parent, Type_Integer, name), value(val)
-    {}
-
-    virtual int toInteger() const { return value; }
-    virtual String dump(int indent, bool ignoreFirstIndent) const
-    {
-        String ret;
-        if (!ignoreFirstIndent)
-            ret = String(indent * 4, ' ');
-        ret += String::number(value);
-        return ret;
-    }
-
-    const int value;
-};
-
-
-struct StringNode : public Node
-{
-    StringNode(Node *parent, const String &val, const String &name)
-        : Node(parent, Type_String, name), value(val)
-    {}
-
-    virtual String toString() const { return value; }
-    virtual String dump(int indent, bool ignoreFirstIndent) const
-    {
-        String ret;
-        if (!ignoreFirstIndent)
-            ret = String(indent * 4, ' ');
-        ret += "\"" + value + "\""; // escape ###
-        return ret;
-    }
-
-    const String value;
+    std::deque<Declaration> mDeclarations;
+    NodeType mType;
+    int mLevel;
 };
 
 class JSParser
@@ -198,20 +52,36 @@ public:
                SymbolNameMap *symbolNames,
                String *errors,
                String *json = 0);
+
 private:
-    Node *recurse(v8::Handle<v8::Value> value, Node *parent, const String &name = String());
-    void visit(Node *node);
-    void createObject(ObjectNode *node);
+    void syncScope(const JSScope& scope);
+    void recurse(const v8::Handle<v8::Value>& node);
+    void recurse(const v8::Handle<v8::Array>& node);
+    void recurse(const v8::Handle<v8::Object>& node);
+    bool parentScopeIs(JSScope::NodeType type, int level = 1) const;
+
+    enum VarType { UnknownVar, Var, Let };
+    void addDeclarations(VarType type, const v8::Handle<v8::Array>& decls);
+    void addDeclaration(JSScope* scope, CursorInfo::JSCursorKind kind, const v8::Handle<v8::Object>& obj);
+    void parseIdentifiers(const v8::Handle<v8::Object>& obj);
+
+    JSScope* findDeclarationScope(VarType type, JSScope* start = 0);
+    Declaration* findDeclaration(const std::string& name);
+
+    std::deque<JSScope> mScopes;
+    std::deque<std::string> mObjects;
+    JSScope* mObjectScope;
 
     v8::Persistent<v8::Context> mContext;
     v8::Persistent<v8::Object> mEsprima;
     v8::Persistent<v8::Function> mParse;
     v8::Isolate *mIsolate;
     uint32_t mFileId;
-    Node *mRoot;
-    SymbolMap *mSymbols;
-    SymbolNameMap *mSymbolNames;
-    String *mErrors;
+    int mLevel;
+
+    SymbolMap* mSymbols;
+    SymbolNameMap* mSymbolNames;
+    String* mErrors;
 };
 
 

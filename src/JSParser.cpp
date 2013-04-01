@@ -117,12 +117,11 @@ static inline bool operator!=(v8::Handle<v8::String> l, const char *r)
 }
 
 JSParser::JSParser()
-    : mIsolate(0), mFileId(0), mRoot(0), mSymbols(0), mSymbolNames(0), mErrors(0)
+    : mIsolate(0), mFileId(0)
 {}
 
 JSParser::~JSParser()
 {
-    delete mRoot;
     {
         const v8::Isolate::Scope isolateScope(mIsolate);
 #ifdef V8_DISPOSE_REQUIRES_ARG
@@ -146,6 +145,11 @@ JSParser::~JSParser()
 
 bool JSParser::init()
 {
+    mSymbols = 0;
+    mSymbolNames = 0;
+    mErrors = 0;
+    mObjectScope = 0;
+
     mIsolate = v8::Isolate::New();
     const v8::Isolate::Scope isolateScope(mIsolate);
     v8::HandleScope handleScope;
@@ -181,6 +185,10 @@ bool JSParser::init()
 bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbols, SymbolNameMap *symbolNames,
                      String *errors, String *json)
 {
+    mSymbols = symbols;
+    mSymbolNames = symbolNames;
+    mErrors = errors;
+
     const v8::Isolate::Scope isolateScope(mIsolate);
     mFileId = Location::insertFile(path);
     v8::HandleScope handleScope;
@@ -191,6 +199,11 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
     const String &c = contents.isEmpty() ? tmp : contents;
     if (c.isEmpty()) {
         printf("[%s] %s:%d: if (c.isEmpty()) { [after]\n", __func__, __FILE__, __LINE__);
+
+        mSymbols = 0;
+        mSymbolNames = 0;
+        mErrors = 0;
+
         return false;
     }
     v8::Handle<v8::Value> args[2];
@@ -205,205 +218,486 @@ bool JSParser::parse(const Path &path, const String &contents, SymbolMap *symbol
     assert(!args[0].IsEmpty() && args[0]->IsString());
     assert(!args[1].IsEmpty() && args[1]->IsObject());
     v8::Handle<v8::Value> result = mParse->Call(mEsprima, 2, args);
-
-    mSymbols = symbols;
-    mSymbolNames = symbolNames;
-    mErrors = errors;
     if (!result.IsEmpty() && result->IsObject()) {
         if (json)
             *json = toCString(toJSON(result));
-        mRoot = recurse(result, 0, String());
-        if (mRoot) {
-            error() << toJSON(result);
-            // error() << mRoot->dump();
-            visit(mRoot);
-        }
-    } else if (errors) {
-        *errors = "Failed to parse";
+        mLevel = 0;
+        recurse(result);
+        assert(mScopes.empty());
     }
-    // for (Map<int, CursorInfo>::const_iterator it = symbols.begin(); it != symbols.end(); ++it) {
-    //     error() << String::format<64>("%s,%d", path.constData(), it->first) << it->second;
-    // }
+
     mSymbols = 0;
     mSymbolNames = 0;
     mErrors = 0;
+
     return true;
 }
 
-Node *JSParser::recurse(v8::Handle<v8::Value> value, Node *parent, const String &name)
+static void addNamePermutations(SymbolNameMap& symbolNames, std::string name, const Set<Location>& locs)
 {
-    v8::HandleScope handleScope;
-    Node *ret = 0;
-    if (value.IsEmpty()) {
-        ret = new Node(parent, Node::Type_Null, name);
-    } else if (value->IsArray()) {
-        v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(value);
-        ArrayNode *node = new ArrayNode(parent, name);
-        node->nodes.resize(array->Length());
-        for (int i=0; i<node->nodes.size(); ++i) {
-            node->nodes[i] = recurse(array->Get(i), node);
+    assert(!name.empty());
+    symbolNames[name] = locs;
+    size_t dot = name.find('.');
+    while (dot != std::string::npos) {
+        name = name.substr(dot + 1);
+        if (!name.empty()) {
+            symbolNames[name] = locs;
+            dot = name.find('.');
+        } else {
+            dot = std::string::npos;
         }
-
-        ret = node;
-    } else if (value->IsObject()) {
-        v8::Handle<v8::Object> object = v8::Handle<v8::Object>::Cast(value);
-        v8::Handle<v8::Array> properties = object->GetOwnPropertyNames();
-
-        ObjectNode *node = new ObjectNode(parent, name);
-        for (unsigned i=0; i<properties->Length(); ++i) {
-            v8::Handle<v8::String> key = get<v8::String>(properties, i);
-            String k = toCString(key);
-            node->nodes[k] = recurse(get<v8::Object>(object, key), node, k);
-        }
-        ret = node;
-    } else if (value->IsInt32()) {
-        ret = new IntegerNode(parent, v8::Handle<v8::Integer>::Cast(value)->Value(), name);
-    } else if (value->IsString()) {
-        ret = new StringNode(parent, *v8::String::Utf8Value(v8::Handle<v8::String>::Cast(value)), name);
-    } else if (value->IsTrue()) {
-        ret = new Node(parent, Node::Type_True, name);
-    } else if (value->IsFalse()) {
-        ret = new Node(parent, Node::Type_False, name);
-    } else {
-        error() << "Unknown object type" << toJSON(value);
-        return 0;
     }
-    if (!parent) {
-        ret->scope = new Map<String, int>;
-    }
-    return ret;
 }
 
-void JSParser::createObject(ObjectNode *node)
+void JSParser::syncScope(const JSScope& scope)
 {
-    Node *nameNode = node->child("name");
-    assert(nameNode && nameNode->type == Node::Type_String);
-    const String name = nameNode->toString();
-    Node *rangeNode = node->child("range");
-    assert(rangeNode && rangeNode->type == Node::Type_Array && rangeNode->count() == 2);
-    const int offset = rangeNode->child(0)->toInteger();
-    const int length = rangeNode->child(1)->toInteger() - offset;
-    int indent = 0;
-    Map<String, int> *scope = 0;
-    for (Node *n = node; n; n = n->parent) {
-        if (!scope && n->scope)
-            scope = n->scope;
-        ++indent;
-    }
-    assert(scope);
-
-    int kind = -1;
-    bool weak = false;
-    String symbolName;
-    const String type = node->parent->objectType();
-    if (node->name == "id" && type == "VariableDeclarator") {
-        kind = CursorInfo::JSVariable;
-    } else if (type == "FunctionDeclaration") {
-        kind = CursorInfo::JSFunction;
-    } else if (type == "CallExpression") {
-        kind = CursorInfo::JSReference;
-    } else if (type == "MemberExpression") {
-        if (node->name == "object") {
-            kind = CursorInfo::JSReference;
-        } else if (node->name == "property") {
-            weak = true;
-            kind = CursorInfo::JSVariable;
-            // error() << "Fiske\n" << node->parent->dump();
-            if (!node->parent->child("object")) {
-                printf("[%s] %s:%d: if (!node->parent->child(\"object\")) { [after]\n", __func__, __FILE__, __LINE__);
-            } else if (!node->parent->child("object")->child("name")) {
-                error() << "tasken\n" << node->parent->child("object")->dump();
-                printf("[%s] %s:%d: } else if (!node->parent->child(\"object\")->child(\"name\")) { [after]\n", __func__, __FILE__, __LINE__);
-            } else {
-                symbolName = node->parent->child("object")->child("name")->toString();
-                symbolName += '.';
-            }
-        }
-    } else if (type == "AssignmentExpression") {
-        if (node->name == "left") {
-            weak = true;
-            kind = CursorInfo::JSVariable;
-        } else if (node->name == "right") {
-            kind = CursorInfo::JSReference;
-        }
-    } else if (type == "Property") {
-        if (node->name == "key") {
-            error() << "got property key" << node->parent->parent->parent->objectType()
-                    << node->parent->parent->parent->name;
-            if (node->parent->parent
-                && node->parent->parent->parent
-                && node->parent->parent->parent->parent
-                && node->parent->parent->parent->objectType() == "ObjectExpression"
-                && node->parent->parent->parent->name == "init"
-                && node->parent->parent->parent->parent->objectType() == "VariableDeclarator") {
-                // fy faen!
-                // error() << node->parent->parent->parent->dump();
-                symbolName = node->parent->parent->parent->parent->child("id")->child("name")->toString();
-                symbolName += ".";
-            }
-            weak = true;
-            kind = CursorInfo::JSVariable;
-        }
-    }
-    if (kind == -1) {
-        error() << "Unhandled identifier:\n" << node->parent->dump(0);
-        return;
-    }
-    symbolName += name;
-    const Location loc(mFileId, offset);
-    if (mSymbols) {
+    std::deque<Declaration>::const_reverse_iterator decl = scope.mDeclarations.rbegin();
+    const std::deque<Declaration>::const_reverse_iterator declEnd = scope.mDeclarations.rend();
+    while (decl != declEnd) {
+        const Declaration& declaration = *decl;
         CursorInfo info;
-        if (kind == CursorInfo::JSReference || weak) {
-            for (Map<String, int>::const_iterator it = scope->begin(); it != scope->end(); ++it) {
-                if (it->first == symbolName) {
-                    kind = CursorInfo::JSReference;
-                    const Location target(mFileId, it->second);
-                    (*mSymbols)[target].references.insert(loc);
-                    info.targets.insert(target);
-                    break;
-                }
-            }
+        info.kind = declaration.kind;
+        info.symbolName = declaration.name;
+        info.start = declaration.start;
+        info.end = declaration.end;
+        info.symbolLength = declaration.name.size(); // ### probably wrong
+        Location loc(mFileId, info.start);
+        info.targets.insert(loc);
+        CursorInfo refInfo = info;
+        refInfo.kind = CursorInfo::JSReference;
+        std::deque<std::pair<int, int> >::const_iterator ref = declaration.refs.begin();
+        const std::deque<std::pair<int, int> >::const_iterator refEnd = declaration.refs.end();
+        while (ref != refEnd) {
+            Location refLoc(mFileId, ref->first);
+            info.references.insert(refLoc);
+            (*mSymbols)[refLoc] = refInfo;
+            ++ref;
         }
-        info.kind = kind;
-        info.symbolName = symbolName;
-        info.symbolLength = length;
         (*mSymbols)[loc] = info;
+        Set<Location> locs;
+        locs.insert(loc);
+
+        addNamePermutations(*mSymbolNames, info.symbolName, locs);
+
+        ++decl;
     }
-    if (kind != CursorInfo::JSReference)
-        (*scope)[symbolName] = offset;
-    if (mSymbolNames) {
-        (*mSymbolNames)[symbolName].insert(loc);
-        if (symbolName != name)
-            (*mSymbolNames)[name].insert(loc);
-    }
-    
 }
 
-void JSParser::visit(Node *node)
+static inline JSScope::NodeType typeStringToType(const char* str)
 {
-    if (node) {
-        switch (node->type) {
-        case Node::Type_Object:
-            // error() << "visiting" << node->objectType();
-            if (node->objectType() == "Identifier") {
-                createObject(static_cast<ObjectNode*>(node));
+    if (!strcmp(str, "FunctionDeclaration"))
+        return JSScope::FunctionDeclaration;
+    if (!strcmp(str, "BlockStatement"))
+        return JSScope::BlockStatement;
+    if (!strcmp(str, "VariableDeclaration"))
+        return JSScope::VariableDeclaration;
+    if (!strcmp(str, "VariableDeclarator"))
+        return JSScope::VariableDeclarator;
+    if (!strcmp(str, "Identifier"))
+        return JSScope::Identifier;
+    if (!strcmp(str, "Literal"))
+        return JSScope::Literal;
+    if (!strcmp(str, "ReturnStatement"))
+        return JSScope::ReturnStatement;
+    if (!strcmp(str, "ExpressionStatement"))
+        return JSScope::ExpressionStatement;
+    if (!strcmp(str, "AssignmentExpression"))
+        return JSScope::AssignmentExpression;
+    if (!strcmp(str, "CallExpression"))
+        return JSScope::CallExpression;
+    if (!strcmp(str, "Program"))
+        return JSScope::Program;
+    if (!strcmp(str, "MemberExpression"))
+        return JSScope::MemberExpression;
+    if (!strcmp(str, "ObjectExpression"))
+        return JSScope::ObjectExpression;
+    //error() << "Unrecognized scope type" << str;
+    return JSScope::None;
+}
+
+JSScope::JSScope(NodeType type, int level)
+    : mType(type), mLevel(level)
+{
+}
+
+JSScope::~JSScope()
+{
+}
+
+void JSScope::addDeclaration(CursorInfo::JSCursorKind kind, const std::string& name, int start, int end)
+{
+    Declaration decl = { this, kind, name, start, end };
+    mDeclarations.push_back(decl);
+}
+
+JSScope* JSParser::findDeclarationScope(VarType type, JSScope* start)
+{
+    bool foundStart = (start == 0);
+    std::deque<JSScope>::reverse_iterator it = mScopes.rbegin();
+    const std::deque<JSScope>::const_reverse_iterator end = mScopes.rend();
+    while (it != end) {
+        switch (it->mType) {
+        case JSScope::BlockStatement:
+            if (type == Var) {
+                ++it;
+                continue;
+            }
+            // fall through for Let
+        case JSScope::Program:
+        case JSScope::FunctionDeclaration:
+            if (!foundStart) {
+                if (&*it == start)
+                    foundStart = true;
             } else {
-                const Map<String, Node*>::const_iterator end = node->end();
-                Map<String, Node*>::const_iterator it = node->begin();
-                while (it != end) {
-                    visit(it->second);
-                    ++it;
-                }
+                return &*it;
             }
-            break;
-        case Node::Type_Array: {
-            const int count = node->count();
-            for (int i=0; i<count; ++i) {
-                visit(node->child(i));
-            }
-            break; }
         default:
             break;
         }
+        ++it;
     }
+    return 0;
+}
+
+Declaration* JSParser::findDeclaration(const std::string& name)
+{
+    std::deque<JSScope>::reverse_iterator scope = mScopes.rbegin();
+    const std::deque<JSScope>::const_reverse_iterator scopeEnd = mScopes.rend();
+    while (scope != scopeEnd) {
+        std::deque<Declaration>::reverse_iterator decl = scope->mDeclarations.rbegin();
+        const std::deque<Declaration>::const_reverse_iterator declEnd = scope->mDeclarations.rend();
+        while (decl != declEnd) {
+            if (decl->name == name)
+                return &*decl;
+            ++decl;
+        }
+        ++scope;
+    }
+    return 0;
+}
+
+bool JSParser::parentScopeIs(JSScope::NodeType type, int level) const
+{
+    return mScopes.size() > static_cast<unsigned>(level) && mScopes[mScopes.size() - (level + 1)].mType == type;
+}
+
+void JSParser::recurse(const v8::Handle<v8::Value>& node)
+{
+    if (node.IsEmpty())
+        return;
+    ++mLevel;
+    if (node->IsArray())
+        recurse(v8::Handle<v8::Array>::Cast(node));
+    else if (node->IsObject())
+        recurse(v8::Handle<v8::Object>::Cast(node));
+    --mLevel;
+}
+
+void JSParser::recurse(const v8::Handle<v8::Array>& node)
+{
+    v8::HandleScope handleScope;
+    const uint32_t len = node->Length();
+    for (uint32_t i = 0; i < len; ++i) {
+        recurse(node->Get(i));
+    }
+}
+
+static bool parseIdentifier(const v8::Handle<v8::Object>& obj, std::string& name, int& start, int& end)
+{
+    assert(!obj.IsEmpty() && obj->IsObject());
+    v8::Handle<v8::String> nameString = v8::String::New("name");
+    if (obj->Has(nameString)) {
+        v8::Handle<v8::String> rangeString = v8::String::New("range");
+        if (obj->Has(rangeString)) {
+            v8::Handle<v8::Array> range = v8::Handle<v8::Array>::Cast(obj->Get(rangeString));
+            assert(!range.IsEmpty() && range->IsArray());
+            assert(range->Length() == 2);
+            start = v8::Handle<v8::Integer>::Cast(range->Get(0))->Value();
+            end = v8::Handle<v8::Integer>::Cast(range->Get(1))->Value();
+            name = *(v8::String::Utf8Value(obj->Get(nameString)));
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::string generateName(const v8::Handle<v8::Object>& node, int* level, int* start, int* end)
+{
+    assert(!node.IsEmpty() && node->IsObject());
+
+    v8::HandleScope handleScope;
+    std::string result;
+
+    v8::Handle<v8::String> objString = v8::String::New("object");
+    if (node->Has(objString)) {
+        result = generateName(v8::Handle<v8::Object>::Cast(node->Get(objString)), level, start, end);
+        if (!*level)
+            return result;
+    }
+
+    v8::Handle<v8::String> propString = v8::String::New("property");
+    if (node->Has(propString)) {
+        if (!result.empty())
+            result += '.';
+        result += generateName(v8::Handle<v8::Object>::Cast(node->Get(propString)), level, start, end);
+        if (!*level)
+            return result;
+    }
+
+    std::string nodeName;
+    int nodeStart, nodeEnd;
+    if (parseIdentifier(node, nodeName, nodeStart, nodeEnd)) {
+        --*level;
+
+        *start = nodeStart;
+        *end = nodeEnd;
+
+        if (!result.empty())
+            result += '.';
+        result += nodeName;
+    }
+    return result;
+}
+
+static void addObject(JSScope* scope, const std::deque<std::string>& objects, int start, int end)
+{
+    std::string name;
+    std::deque<std::string>::const_iterator obj = objects.begin();
+    const std::deque<std::string>::const_iterator objEnd = objects.end();
+    while (obj != objEnd) {
+        if (!name.empty())
+            name += '.';
+        name += *obj;
+        ++obj;
+    }
+    assert(!name.empty());
+    scope->addDeclaration(CursorInfo::JSVariable, name, start, end);
+}
+
+void JSParser::recurse(const v8::Handle<v8::Object>& node)
+{
+    assert(!node.IsEmpty() && ((node->IsObject() && !node->IsArray()) || node->IsNull()));
+    if (node->IsNull())
+        return;
+
+    v8::HandleScope handleScope;
+    v8::Handle<v8::String> typeString = v8::String::New("type");
+    bool typePushed = false;
+    JSScope::NodeType nodeType = JSScope::None;
+    if (node->Has(typeString)) {
+        v8::Handle<v8::Value> type = node->Get(typeString);
+        if (type->IsString()) {
+            v8::String::Utf8Value str(type);
+            nodeType = typeStringToType(*str);
+            if (nodeType != JSScope::None) {
+                mScopes.push_back(JSScope(nodeType, mLevel));
+                typePushed = true;
+            }
+        }
+    }
+
+    bool further = true;
+
+    // stuff
+    switch (nodeType) {
+    case JSScope::MemberExpression: {
+        int level = -1, start, end;
+        std::string expr = generateName(node, &level, &start, &end);
+        int cnt = abs(level) - 2;
+        assert(cnt >= 0);
+        JSScope* scope = 0;
+        for (int i = 0; i < cnt; ++i) {
+            level = i + 1;
+            int substart, subend;
+            std::string subexpr = generateName(node, &level, &substart, &subend);
+            Declaration* decl = findDeclaration(subexpr);
+            if (!scope) {
+                if (!decl) {
+                    // not declared, we need to bind this to the global scope
+                    scope = &mScopes.front();
+                    assert(scope->mType == JSScope::Program);
+                } else {
+                    scope = decl->scope;
+                }
+            }
+            assert(scope);
+            if (!decl) {
+                scope->addDeclaration(CursorInfo::JSVariable, subexpr, substart, subend);
+            } else {
+                decl->refs.push_back(std::make_pair(substart, subend));
+                // found reference!
+            }
+        }
+        assert(scope);
+        Declaration* decl = findDeclaration(expr);
+        if (!decl) {
+            scope->addDeclaration(CursorInfo::JSVariable, expr, start, end);
+        } else {
+            decl->refs.push_back(std::make_pair(start, end));
+        }
+        further = false;
+        break; }
+    case JSScope::ObjectExpression: {
+        v8::Handle<v8::String> propStr = v8::String::New("properties");
+        if (node->Has(propStr)) {
+            v8::Handle<v8::String> keyStr = v8::String::New("key");
+            v8::Handle<v8::String> valueStr = v8::String::New("value");
+            v8::Handle<v8::Array> props = v8::Handle<v8::Array>::Cast(node->Get(propStr));
+            assert(!props.IsEmpty() && props->IsArray());
+            const uint32_t len = props->Length();
+            for (uint32_t i = 0; i < len; ++i) {
+                v8::Handle<v8::Object> sub = v8::Handle<v8::Object>::Cast(props->Get(i));
+                assert(!sub.IsEmpty() && sub->IsObject());
+                if (sub->Has(keyStr)) {
+                    v8::Handle<v8::Object> key = v8::Handle<v8::Object>::Cast(sub->Get(keyStr));
+                    assert(!key.IsEmpty() && key->IsObject());
+                    std::string nodeName;
+                    int nodeStart, nodeEnd;
+                    if (parseIdentifier(key, nodeName, nodeStart, nodeEnd)) {
+                        JSScope* scope = mObjectScope;
+                        if (!scope) {
+                            scope = &mScopes.front();
+                            assert(scope->mType == JSScope::Program);
+                        }
+                        mObjects.push_back(nodeName);
+                        addObject(scope, mObjects, nodeStart, nodeEnd);
+                        if (sub->Has(valueStr)) {
+                            recurse(v8::Handle<v8::Object>::Cast(sub->Get(valueStr)));
+                        }
+                        mObjects.pop_back();
+                    }
+                }
+            }
+        }
+        break; }
+    case JSScope::VariableDeclaration: {
+        v8::Handle<v8::String> declStr = v8::String::New("declarations");
+        v8::Handle<v8::String> kindStr = v8::String::New("kind");
+        if (!node->Has(declStr) || !node->Has(kindStr))
+            break;
+        v8::Handle<v8::Array> decls = v8::Handle<v8::Array>::Cast(node->Get(declStr));
+        assert(!decls.IsEmpty() && decls->IsArray());
+        v8::Handle<v8::String> kind = v8::Handle<v8::String>::Cast(node->Get(kindStr));
+        assert(!kind.IsEmpty() && kind->IsString());
+        v8::String::Utf8Value k(kind);
+        VarType vartype = UnknownVar;
+        if (!strcmp(*k, "var"))
+            vartype = Var;
+        else if (!strcmp(*k, "let"))
+            vartype = Let;
+        assert(vartype != UnknownVar);
+        addDeclarations(vartype, decls);
+        further = false;
+        break; }
+    case JSScope::FunctionDeclaration: {
+        v8::Handle<v8::String> idStr = v8::String::New("id");
+        if (node->Has(idStr)) {
+            // this is the function name, this should be declared in the parent scope of the function scope
+            JSScope* scope = findDeclarationScope(Var);
+            assert(scope);
+            // now get the parent scope
+            scope = findDeclarationScope(Var, scope);
+            assert(scope);
+            addDeclaration(scope, CursorInfo::JSFunction, v8::Handle<v8::Object>::Cast(node->Get(idStr)));
+        }
+        v8::Handle<v8::String> paramsStr = v8::String::New("params");
+        if (node->Has(paramsStr)) {
+            // function arguments should be bound to the function scope
+            v8::Handle<v8::Array> params = v8::Handle<v8::Array>::Cast(node->Get(paramsStr));
+            assert(!params.IsEmpty() && params->IsArray());
+            const uint32_t len = params->Length();
+
+            JSScope* scope = findDeclarationScope(Var);
+            assert(scope);
+            for (uint32_t i = 0; i < len; ++i) {
+                addDeclaration(scope, CursorInfo::JSVariable, v8::Handle<v8::Object>::Cast(params->Get(i)));
+            }
+        }
+        break; }
+    case JSScope::Identifier: {
+        std::string nodeName;
+        int nodeStart, nodeEnd;
+        if (parseIdentifier(node, nodeName, nodeStart, nodeEnd)) {
+            Declaration* decl = findDeclaration(nodeName);
+            if (!decl) { // add to global scope;
+                JSScope* scope = &mScopes.front();
+                assert(scope->mType == JSScope::Program);
+                scope->addDeclaration(CursorInfo::JSVariable, nodeName, nodeStart, nodeEnd);
+            } else {
+                decl->refs.push_back(std::make_pair(nodeStart, nodeEnd));
+            }
+        }
+        break; }
+    default:
+        break;
+    }
+
+    if (further) {
+        v8::Handle<v8::Array> properties = node->GetOwnPropertyNames();
+        if (!properties.IsEmpty()) {
+            const uint32_t len = properties->Length();
+            for (uint32_t i = 0; i < len; ++i) {
+                v8::Handle<v8::Value> key = properties->Get(i);
+                v8::Handle<v8::Value> prop = node->Get(key);
+                if (!prop.IsEmpty() && prop->IsObject()) {
+                    v8::String::Utf8Value keyStr(key);
+                    recurse(prop);
+                }
+            }
+        }
+    }
+
+    if (typePushed) {
+        syncScope(mScopes.back());
+        mScopes.pop_back();
+    }
+}
+
+void JSParser::addDeclarations(VarType type, const v8::Handle<v8::Array>& decls)
+{
+    v8::HandleScope handleScope;
+    JSScope* scope = findDeclarationScope(type);
+    assert(scope);
+
+    v8::Handle<v8::String> idStr = v8::String::New("id");
+    v8::Handle<v8::String> initStr = v8::String::New("init");
+
+    const uint32_t len = decls->Length();
+    for (uint32_t i = 0; i < len; ++i) {
+        v8::Handle<v8::Object> obj = v8::Handle<v8::Object>::Cast(decls->Get(i));
+        assert(!obj.IsEmpty() && obj->IsObject());
+        assert(obj->Has(idStr));
+        v8::Handle<v8::Object> sub = v8::Handle<v8::Object>::Cast(obj->Get(idStr));
+        addDeclaration(scope, CursorInfo::JSVariable, sub);
+        if (obj->Has(initStr)) {
+            bool setScope = false;
+            if (!mObjectScope) {
+                mObjectScope = scope;
+                setScope = true;
+            }
+            mObjects.push_back(*(v8::String::Utf8Value(sub->Get(v8::String::New("name")))));
+            parseIdentifiers(v8::Handle<v8::Object>::Cast(obj->Get(initStr)));
+            mObjects.pop_back();
+            if (setScope)
+                mObjectScope = 0;
+        }
+    }
+}
+
+void JSParser::addDeclaration(JSScope* scope, CursorInfo::JSCursorKind kind, const v8::Handle<v8::Object>& obj)
+{
+    assert(scope);
+    std::string nodeName;
+    int nodeStart, nodeEnd;
+    if (parseIdentifier(obj, nodeName, nodeStart, nodeEnd)) {
+        scope->addDeclaration(kind, nodeName, nodeStart, nodeEnd);
+    }
+}
+
+void JSParser::parseIdentifiers(const v8::Handle<v8::Object>& obj)
+{
+    assert(!obj.IsEmpty() && (obj->IsNull() || obj->IsObject()));
+    if (obj->IsNull())
+        return;
+    recurse(obj);
 }
