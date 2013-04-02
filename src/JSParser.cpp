@@ -350,6 +350,7 @@ Declaration* JSScope::findDeclaration(const std::string& name)
 
 void JSScope::addDeclaration(CursorInfo::JSCursorKind kind, const std::string& name, int start, int end)
 {
+    assert(!name.empty());
     {
         Declaration* decl = findDeclaration(name);
         if (decl) {
@@ -589,6 +590,14 @@ void JSParser::recurse(const v8::Handle<v8::Object>& node)
     case JSScope::MemberExpression: {
         int level = -1, start, end;
         std::string expr = generateName(node, &level, &start, &end);
+        if (expr.empty()) {
+            // this is likely due to a computed expression with a non-member expression property
+            // recurse over the property instead
+            v8::Handle<v8::String> propStr = v8::String::New("property");
+            if (node->Has(propStr))
+                recurse(v8::Handle<v8::Object>::Cast(node->Get(propStr)));
+            break;
+        }
         int cnt = abs(level) - 2;
         assert(cnt >= 0);
         JSScope* scope = 0;
