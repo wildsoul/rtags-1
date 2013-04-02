@@ -490,15 +490,17 @@ static std::string generateName(const v8::Handle<v8::Object>& node, int* level, 
             return result;
     }
 
-    if (!computed) {
-        v8::Handle<v8::String> propString = v8::String::New("property");
-        if (node->Has(propString)) {
+    v8::Handle<v8::String> propString = v8::String::New("property");
+    if (node->Has(propString)) {
+        if (!computed) {
             if (!result.empty())
                 result += '.';
-            result += generateName(v8::Handle<v8::Object>::Cast(node->Get(propString)), level, start, end);
-            if (!*level)
-                return result;
+        } else {
+            result.clear();
         }
+        result += generateName(v8::Handle<v8::Object>::Cast(node->Get(propString)), level, start, end);
+        if (!*level)
+            return result;
     }
 
     std::string nodeName;
@@ -573,6 +575,7 @@ void JSParser::recurse(const v8::Handle<v8::Object>& node)
             nodeType = typeStringToType(*str);
             if (nodeType != JSScope::None) {
                 //error() << "adding scope" << *str << nodeType;
+                //error() << toCString(toJSON(node));
                 mScopes.push_back(JSScope(nodeType));
                 typePushed = true;
             }
