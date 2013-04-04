@@ -422,23 +422,34 @@
           (t (message "RTags: No enum here") nil))))
 
 (defun rtags-buffer-is-multibyte ()
-  (string-match "\\butf-" (symbol-name buffer-file-coding-system)))
+  (string-match "\\butf\\b" (symbol-name buffer-file-coding-system)))
+
+(defun rtags-buffer-is-dos()
+  (string-match "\\bdos\\b" (symbol-name buffer-file-coding-system)))
+
+(defun rtags-carriage-returns ()
+  (if (rtags-buffer-is-dos)
+      (1- (line-number-at-pos))
+    0)
+  )
 
 (defun rtags-offset (&optional p)
-  (save-excursion
-    (if p
-        (goto-char p)
-      (if (rtags-buffer-is-multibyte)
-          (let ((prev (buffer-local-value enable-multibyte-characters (current-buffer)))
-                (loc (local-variable-p enable-multibyte-characters))
-                (pos))
-            (set-buffer-multibyte nil)
-            (setq pos (1- (point)))
-            (set-buffer-multibyte prev)
-            (unless loc
-              (kill-local-variable enable-multibyte-characters))
-            pos)
-        (1- (point))))))
+  (let (carriagereturns)
+    (save-excursion
+      (if p
+          (goto-char p)
+        (setq carriagereturns (rtags-carriage-returns))
+        (if (rtags-buffer-is-multibyte)
+            (let ((prev (buffer-local-value enable-multibyte-characters (current-buffer)))
+                  (loc (local-variable-p enable-multibyte-characters))
+                  (pos))
+              (set-buffer-multibyte nil)
+              (setq pos (1- (point)))
+              (set-buffer-multibyte prev)
+              (unless loc
+                (kill-local-variable enable-multibyte-characters))
+              (+ pos carriagereturns))
+          (+ (1- (point)) carriagereturns))))))
 
 (defun rtags-goto-offset (pos)
   (interactive "NOffset: ")
@@ -737,7 +748,7 @@ return t if rtags is allowed to modify this file"
         (location (rtags-current-location))
         (context (rtags-current-symbol t)))
     (with-temp-buffer
-      (rtags-call-rc path "-N" "-f" location "-t" context)
+      (rtags-call-rc path "-N" "-f" location "-t" context (if (rtags-buffer-is-dos) "-l"))
       (setq rtags-last-request-not-indexed nil)
       (cond ((= (point-min) (point-max))
              (message "RTags: No target") nil)
