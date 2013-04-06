@@ -13,7 +13,6 @@ public:
     FollowLocationJob(const Location &loc, const QueryMessage &query, const shared_ptr<Project> &project);
 protected:
     virtual void execute();
-    bool process(const SymbolMap &map);
 private:
     const Location location;
 };

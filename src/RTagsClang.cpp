@@ -83,35 +83,8 @@ String cursorToString(CXCursor cursor, unsigned flags)
     return ret;
 }
 
-SymbolMap::const_iterator findCursorInfo(const SymbolMap &map, const Location &location, const String &context,
-                                         const SymbolMap *errors, bool *foundInErrors, int search)
+static inline SymbolMap::const_iterator findCursorInfo(const SymbolMap &map, const Location &location, const String &context, int search)
 {
-    if (foundInErrors)
-        *foundInErrors = false;
-    if (map.isEmpty() && !errors)
-        return map.end();
-    if (errors) {
-        SymbolMap::const_iterator ret = findCursorInfo(map, location, context, 0, 0, 1);
-        if (ret != map.end())
-            return ret;
-        ret = findCursorInfo(*errors, location, context, 0, 0, 1);
-        if (ret != errors->end()) {
-            if (foundInErrors)
-                *foundInErrors = true;
-            return ret;
-        }
-        ret = findCursorInfo(map, location, context);
-        if (ret != map.end())
-            return ret;
-        ret = findCursorInfo(*errors, location, context);
-        if (ret != errors->end()) {
-            if (foundInErrors)
-                *foundInErrors = true;
-            return ret;
-        }
-        return map.end();
-    }
-
     if (context.isEmpty()) {
         SymbolMap::const_iterator it = map.lower_bound(location);
         if (it != map.end() && it->first == location) {
@@ -160,6 +133,39 @@ SymbolMap::const_iterator findCursorInfo(const SymbolMap &map, const Location &l
         }
     }
     return map.end();
+}
+
+SymbolMap::const_iterator findCursorInfo(const SymbolMap &map, const Location &location, const String &context,
+                                         const SymbolMap *errors, bool *foundInErrors)
+{
+    enum { Search = 128 };
+    if (foundInErrors)
+        *foundInErrors = false;
+    if (map.isEmpty() && !errors)
+        return map.end();
+    if (errors) {
+        SymbolMap::const_iterator ret = findCursorInfo(map, location, context, 1);
+        if (ret != map.end())
+            return ret;
+        ret = findCursorInfo(*errors, location, context, 1);
+        if (ret != errors->end()) {
+            if (foundInErrors)
+                *foundInErrors = true;
+            return ret;
+        }
+        ret = findCursorInfo(map, location, context, Search);
+        if (ret != map.end())
+            return ret;
+        ret = findCursorInfo(*errors, location, context, Search);
+        if (ret != errors->end()) {
+            if (foundInErrors)
+                *foundInErrors = true;
+            return ret;
+        }
+        return map.end();
+    } else {
+        return findCursorInfo(map, location, context, Search);
+    }
 }
 
 static CXChildVisitResult findFirstChildVisitor(CXCursor cursor, CXCursor, CXClientData data)

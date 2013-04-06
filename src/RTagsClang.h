@@ -37,9 +37,9 @@ enum CursorToStringFlags {
     AllCursorToStringFlags = IncludeUSR|IncludeRange
 };
 String cursorToString(CXCursor cursor, unsigned = DefaultCursorToStringFlags);
-enum { DefaultSearch = 128 };
-SymbolMap::const_iterator findCursorInfo(const SymbolMap &map, const Location &location, const String &context = String(),
-                                         const SymbolMap *errors = 0, bool *foundInErrors = 0, int search = DefaultSearch);
+SymbolMap::const_iterator findCursorInfo(const SymbolMap &map, const Location &location,
+                                         const String &context = String(),
+                                         const SymbolMap *errors = 0, bool *foundInErrors = 0);
 
 struct Filter
 {

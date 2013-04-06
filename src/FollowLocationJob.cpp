@@ -9,34 +9,37 @@ FollowLocationJob::FollowLocationJob(const Location &loc, const QueryMessage &qu
 {
 }
 
+void foobar()
+{
+
+}
+
 void FollowLocationJob::execute()
 {
+    foobar(true);
     Scope<const SymbolMap&> scope = project()->lockSymbolsForRead();
     if (scope.isNull())
         return;
-    if (process(scope.data()))
+    Scope<const ErrorSymbolMap&> errorScope = project()->lockErrorSymbolsForRead();
+    if (errorScope.isNull())
         return;
 
-     Scope<const ErrorSymbolMap&> errorScope = project()->lockErrorSymbolsForRead();
-     if (errorScope.isNull())
-         return;
-     const ErrorSymbolMap &errors = errorScope.data();
-     const ErrorSymbolMap::const_iterator e = errors.find(location.fileId());
-     if (e == errors.end())
-         return;
-     const bool ok = process(e->second);
-     warning() << "Trying in errors" << context() << location << ok;
-}
+    const ErrorSymbolMap::const_iterator e = errorScope.data().find(location.fileId());
 
-bool FollowLocationJob::process(const SymbolMap &map)
-{
-    SymbolMap::const_iterator it = RTags::findCursorInfo(map, location, context());
+    bool foundInError = false;
+    SymbolMap::const_iterator it = RTags::findCursorInfo(scope.data(), location, context(),
+                                                         e == errorScope.data().end() ? 0 : &e->second, &foundInError);
+    const SymbolMap &map = foundInError ? scope.data() : e->second;
     if (it == map.end())
-        return false;
+        return;
+
+    if (foundInError) {
+        error() << "Found it in errors" << location << it->second;
+    }
 
     const CursorInfo &cursorInfo = it->second;
     if (cursorInfo.isClass() && cursorInfo.isDefinition())
-        return true;
+        return;
 
     Location loc;
     CursorInfo target = cursorInfo.bestTarget(map, &loc);
@@ -66,12 +69,10 @@ bool FollowLocationJob::process(const SymbolMap &map)
                 const CursorInfo decl = target.bestTarget(map, &declLoc);
                 if (!declLoc.isNull()) {
                     write(declLoc);
-                    return true;;
+                    return;;
                 }
             }
             write(loc);
-            return true;
         }
     }
-    return false;
 }
