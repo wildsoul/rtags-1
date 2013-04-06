@@ -83,10 +83,34 @@ String cursorToString(CXCursor cursor, unsigned flags)
     return ret;
 }
 
-SymbolMap::const_iterator findCursorInfo(const SymbolMap &map, const Location &location, const String &context)
+SymbolMap::const_iterator findCursorInfo(const SymbolMap &map, const Location &location, const String &context,
+                                         const SymbolMap *errors, bool *foundInErrors, int search)
 {
-    if (map.isEmpty())
+    if (foundInErrors)
+        *foundInErrors = false;
+    if (map.isEmpty() && !errors)
         return map.end();
+    if (errors) {
+        SymbolMap::const_iterator ret = findCursorInfo(map, location, context, 0, 0, 1);
+        if (ret != map.end())
+            return ret;
+        ret = findCursorInfo(*errors, location, context, 0, 0, 1);
+        if (ret != errors->end()) {
+            if (foundInErrors)
+                *foundInErrors = true;
+            return ret;
+        }
+        ret = findCursorInfo(map, location, context);
+        if (ret != map.end())
+            return ret;
+        ret = findCursorInfo(*errors, location, context);
+        if (ret != errors->end()) {
+            if (foundInErrors)
+                *foundInErrors = true;
+            return ret;
+        }
+        return map.end();
+    }
 
     if (context.isEmpty()) {
         SymbolMap::const_iterator it = map.lower_bound(location);
@@ -109,7 +133,7 @@ SymbolMap::const_iterator findCursorInfo(const SymbolMap &map, const Location &l
         --f;
     SymbolMap::const_iterator b = f;
 
-    for (int j=0; j<128; ++j) {
+    for (int j=0; j<search; ++j) {
         if (f != map.end()) {
             if (location.fileId() != f->first.fileId()) {
                 if (b == map.begin())

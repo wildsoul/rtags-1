@@ -14,17 +14,29 @@ void FollowLocationJob::execute()
     Scope<const SymbolMap&> scope = project()->lockSymbolsForRead();
     if (scope.isNull())
         return;
-
-    const SymbolMap &map = scope.data();
-    error() << context();
-    const SymbolMap::const_iterator it = RTags::findCursorInfo(map, location, context());
-
-    if (it == map.end())
+    if (process(scope.data()))
         return;
+
+     Scope<const ErrorSymbolMap&> errorScope = project()->lockErrorSymbolsForRead();
+     if (errorScope.isNull())
+         return;
+     const ErrorSymbolMap &errors = errorScope.data();
+     const ErrorSymbolMap::const_iterator e = errors.find(location.fileId());
+     if (e == errors.end())
+         return;
+     const bool ok = process(e->second);
+     warning() << "Trying in errors" << context() << location << ok;
+}
+
+bool FollowLocationJob::process(const SymbolMap &map)
+{
+    SymbolMap::const_iterator it = RTags::findCursorInfo(map, location, context());
+    if (it == map.end())
+        return false;
 
     const CursorInfo &cursorInfo = it->second;
     if (cursorInfo.isClass() && cursorInfo.isDefinition())
-        return;
+        return true;
 
     Location loc;
     CursorInfo target = cursorInfo.bestTarget(map, &loc);
@@ -54,10 +66,12 @@ void FollowLocationJob::execute()
                 const CursorInfo decl = target.bestTarget(map, &declLoc);
                 if (!declLoc.isNull()) {
                     write(declLoc);
-                    return;
+                    return true;;
                 }
             }
             write(loc);
+            return true;
         }
     }
+    return false;
 }
