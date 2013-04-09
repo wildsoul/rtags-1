@@ -90,14 +90,15 @@ IndexerJob::IndexerJob(const shared_ptr<Project> &project, Type type,
                        const SourceInformation &sourceInformation)
     : Job(0, project), mType(type), mSourceInformation(sourceInformation),
       mFileId(Location::insertFile(sourceInformation.sourceFile)),
-      mUnits(sourceInformation.builds.size()), mTimer(StopWatch::Microsecond), mParseTime(0), mStarted(false)
+      mUnits(sourceInformation.builds.size()), mTimer(StopWatch::Microsecond), mParseTime(0), mStarted(false),
+      mRParse(false)
 {
 }
 IndexerJob::IndexerJob(const QueryMessage &msg, const shared_ptr<Project> &project,
                        const SourceInformation &sourceInformation)
     : Job(msg, WriteUnfiltered|WriteBuffered|QuietJob, project), mType(Dump), mSourceInformation(sourceInformation),
       mFileId(Location::insertFile(sourceInformation.sourceFile)), mUnits(sourceInformation.builds.size()),
-      mTimer(StopWatch::Microsecond), mParseTime(0), mStarted(false)
+      mTimer(StopWatch::Microsecond), mParseTime(0), mStarted(false), mRParse(false)
 {
 }
 
