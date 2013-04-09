@@ -58,10 +58,11 @@ public:
     bool isAborted() const { MutexLocker lock(&mMutex); return mAborted; }
     void abort() { MutexLocker lock(&mMutex); mAborted = true; }
     String context() const { return mContext; }
-protected:
+    Mutex &mutex() const { return mMutex; }
+    bool &aborted() { return mAborted; }
+private:
     mutable Mutex mMutex;
     bool mAborted;
-private:
     bool writeRaw(const String &out, unsigned flags);
     int mId, mMinOffset, mMaxOffset;
     unsigned mJobFlags;
