@@ -12,6 +12,8 @@
 #include <ASTVisitor.h>
 #include <AST.h>
 #include <Control.h>
+#include <Symbols.h>
+#include <Literals.h>
 
 // #define TIMINGS_ENABLED
 #ifdef TIMINGS_ENABLED
@@ -1262,6 +1264,265 @@ bool IndexerJob::diagnose(int build)
     return !isAborted();
 }
 
+bool IndexerJob::visit(int build)
+{
+    TIMING();
+    if (!mUnits.at(build).second) {
+        abort();
+        return false;
+    }
+    clang_getInclusions(mUnits.at(build).second, IndexerJob::inclusionVisitor, this);
+    if (isAborted())
+        return false;
+
+    clang_visitChildren(clang_getTranslationUnitCursor(mUnits.at(build).second),
+                        IndexerJob::indexVisitor, this);
+    if (isAborted())
+        return false;
+    if (testLog(VerboseDebug)) {
+        VerboseVisitorUserData u = { 0, "<VerboseVisitor " + mClangLines.at(build) + ">\n", this };
+        clang_visitChildren(clang_getTranslationUnitCursor(mUnits.at(build).second),
+                            IndexerJob::verboseVisitor, &u);
+        u.out += "</VerboseVisitor " + mClangLines.at(build) + ">";
+        if (getenv("RTAGS_INDEXERJOB_DUMP_TO_FILE")) {
+            char buf[1024];
+            snprintf(buf, sizeof(buf), "/tmp/%s.log", mSourceInformation.sourceFile.fileName());
+            FILE *f = fopen(buf, "w");
+            assert(f);
+            fwrite(u.out.constData(), 1, u.out.size(), f);
+            fclose(f);
+        } else {
+            logDirect(VerboseDebug, u.out);
+        }
+    }
+    return !isAborted();
+}
+
+void IndexerJob::execute()
+{
+    mTimer.start();
+    TIMING();
+    if (isAborted())
+        return;
+    mData.reset(new IndexData);
+    if (mSourceInformation.isJS()) {
+        executeJS();
+    } else {
+        executeCPP();
+    }
+}
+
+void IndexerJob::executeJS()
+{
+    TIMING();
+    const String contents = mSourceInformation.sourceFile.readAll(1024 * 1024 * 100);
+    if (contents.isEmpty()) {
+        error() << "Can't open" << mSourceInformation.sourceFile << "for reading";
+        return;
+    }
+
+    JSParser parser;
+    if (!parser.init()) {
+        error() << "Can't init JSParser for" << mSourceInformation.sourceFile;
+        return;
+    }
+    if (isAborted())
+        return;
+    String errors; // ### what to do about this one?
+    String dump;
+    if (!parser.parse(mSourceInformation.sourceFile, contents, &mData->symbols, &mData->symbolNames,
+                      &errors, mType == Dump ? &dump : 0)) {
+        error() << "Can't parse" << mSourceInformation.sourceFile;
+    }
+    mParseTime = time(0);
+
+    if (mType == Dump) {
+        dump += "\n";
+        {
+            Log stream(&dump);
+            stream << "symbols:\n";
+            for (Map<Location, CursorInfo>::const_iterator it = mData->symbols.begin(); it != mData->symbols.end(); ++it) {
+                stream << it->first << it->second.toString(0) << '\n';
+            }
+
+            stream << "symbolnames:\n";
+            for (Map<String, Set<Location> >::const_iterator it = mData->symbolNames.begin(); it != mData->symbolNames.end(); ++it) {
+                stream << it->first << it->second << '\n';
+            }
+
+            assert(id() != -1);
+        }
+        write(dump);
+
+        mData->symbols.clear();
+        mData->symbolNames.clear();
+    } else {
+        mData->dependencies[mFileId].insert(mFileId);
+        mData->message = String::format<128>("%s in %dms. (%d syms, %d symNames, %d refs)",
+                                             mSourceInformation.sourceFile.toTilde().constData(),
+                                             static_cast<int>(mTimer.elapsed()) / 1000, mData->symbols.size(), mData->symbolNames.size(), mData->references.size());
+        shared_ptr<Project> p = project();
+        if (p) {
+            shared_ptr<IndexerJob> job = static_pointer_cast<IndexerJob>(shared_from_this());
+            p->onJobFinished(job);
+        }
+    }
+}
+
+void IndexerJob::executeCPP()
+{
+    TIMING();
+    if (mType == Dump) {
+        assert(id() != -1);
+        if (shared_ptr<Project> p = project()) {
+            for (int i=0; i<mSourceInformation.builds.size(); ++i) {
+                parse(i);
+                if (mUnits.at(i).second) {
+                    DumpUserData u = { 0, this, !(queryFlags() & QueryMessage::NoContext) };
+                    clang_visitChildren(clang_getTranslationUnitCursor(mUnits.at(i).second),
+                                        IndexerJob::dumpVisitor, &u);
+                }
+            }
+        }
+    } else {
+        {
+            MutexLocker lock(&mMutex);
+            mStarted = true;
+        }
+        int unitCount = 0;
+        const int buildCount = mSourceInformation.builds.size();
+        for (int i=0; i<buildCount; ++i) {
+            if (!parse(i)) {
+                goto end;
+            }
+            if (mUnits.at(i).second)
+                ++unitCount;
+        }
+        mParseTime = time(0);
+
+        for (int i=0; i<buildCount; ++i) {
+            if (!visit(i) || !diagnose(i))
+                goto end;
+        }
+        {
+            mData->message = mSourceInformation.sourceFile.toTilde();
+            if (buildCount > 1)
+                mData->message += String::format<16>(" (%d builds)", buildCount);
+            if (!unitCount) {
+                mData->message += " error";
+            } else if (unitCount != buildCount) {
+                mData->message += String::format<16>(" (%d errors, %d ok)", buildCount - unitCount, unitCount);
+            }
+            mData->message += String::format<16>(" in %dms. ", static_cast<int>(mTimer.elapsed()) / 1000);
+            if (unitCount) {
+                mData->message += String::format<128>("(%d syms, %d symNames, %d refs, %d deps, %d files)",
+                                                      mData->symbols.size(), mData->symbolNames.size(), mData->references.size(),
+                                                      mData->dependencies.size(), mVisitedFiles.size());
+            } else if (mData->dependencies.size()) {
+                mData->message += String::format<16>("(%d deps)", mData->dependencies.size());
+            }
+            if (mType == Dirty)
+                mData->message += " (dirty)";
+        }
+  end:
+        shared_ptr<Project> p = project();
+        if (p) {
+            shared_ptr<IndexerJob> job = static_pointer_cast<IndexerJob>(shared_from_this());
+            p->onJobFinished(job);
+        }
+    }
+    for (int i=0; i<mUnits.size(); ++i) {
+        if (mUnits.at(i).first)
+            clang_disposeIndex(mUnits.at(i).first);
+        if (mUnits.at(i).second)
+            clang_disposeTranslationUnit(mUnits.at(i).second);
+    }
+    mUnits.clear();
+}
+
+CXChildVisitResult IndexerJob::verboseVisitor(CXCursor cursor, CXCursor, CXClientData userData)
+{
+    VerboseVisitorUserData *u = reinterpret_cast<VerboseVisitorUserData*>(userData);
+    Location loc = u->job->createLocation(cursor);
+    if (loc.fileId()) {
+        CXCursor ref = clang_getCursorReferenced(cursor);
+
+        VerboseVisitorUserData *u = reinterpret_cast<VerboseVisitorUserData*>(userData);
+        if (u->indent >= 0)
+            u->out += String(u->indent, ' ');
+        u->out += RTags::cursorToString(cursor);
+        if (clang_equalCursors(ref, cursor)) {
+            u->out += " refs self";
+        } else if (!clang_equalCursors(ref, nullCursor)) {
+            u->out += " refs " + RTags::cursorToString(ref);
+        }
+
+        if (loc.fileId() && u->job->mVisitedFiles.contains(loc.fileId())) {
+            if (u->job->mData->references.contains(loc)) {
+                u->out += " used as reference\n";
+            } else if (u->job->mData->symbols.contains(loc)) {
+                u->out += " used as cursor\n";
+            } else {
+                u->out += " not used\n";
+            }
+        } else {
+            u->out += " not indexed\n";
+        }
+    }
+    if (u->indent >= 0) {
+        u->indent += 2;
+        clang_visitChildren(cursor, IndexerJob::verboseVisitor, userData);
+        u->indent -= 2;
+        return CXChildVisit_Continue;
+    } else {
+        return CXChildVisit_Recurse;
+    }
+}
+
+CXChildVisitResult IndexerJob::dumpVisitor(CXCursor cursor, CXCursor, CXClientData userData)
+{
+    DumpUserData *dump = reinterpret_cast<DumpUserData*>(userData);
+    assert(dump);
+    assert(dump->job);
+    Location loc = dump->job->createLocation(cursor);
+    if (loc.fileId()) {
+        CXCursor ref = clang_getCursorReferenced(cursor);
+        String out;
+        out.reserve(256);
+        int col = -1;
+        if (dump->showContext) {
+            out.append(loc.context(&col));
+            if (col != -1) {
+                out.append(String::format<32>(" // %d, %d: ", col, dump->indentLevel));
+            } else {
+                out.append(String::format<32>(" // %d: ", dump->indentLevel));
+            }
+        } else {
+            out.append(String(dump->indentLevel * 2, ' '));
+        }
+        out.append(RTags::cursorToString(cursor, RTags::AllCursorToStringFlags));
+        out.append(" " + typeName(cursor) + " ");
+        if (clang_equalCursors(ref, cursor)) {
+            out.append("refs self");
+        } else if (!clang_equalCursors(ref, nullCursor)) {
+            out.append("refs ");
+            out.append(RTags::cursorToString(ref, RTags::AllCursorToStringFlags));
+        }
+        dump->job->write(out);
+    }
+    ++dump->indentLevel;
+    clang_visitChildren(cursor, IndexerJob::dumpVisitor, userData);
+    --dump->indentLevel;
+    return CXChildVisit_Continue;
+}
+bool IndexerJob::abortIfStarted()
+{
+    MutexLocker lock(&mMutex);
+    if (mStarted)
+        mAborted = true;
+    return mAborted;
+}
+
 class Visitor : public CPlusPlus::ASTVisitor
 {
 public:
@@ -1272,6 +1533,12 @@ public:
     {
         ++mIndent;
         dump(ast);
+        if (CPlusPlus::FunctionDeclaratorAST *func = ast->asFunctionDeclarator()) {
+            handleFunction(func->symbol, false);
+        } else if (CPlusPlus::FunctionDefinitionAST *func = ast->asFunctionDefinition()) {
+            handleFunction(func->symbol, true);
+        }
+        
         return true;
     }
     
@@ -1284,7 +1551,7 @@ public:
         for (int i=0; i<mIndent; ++i) {
             printf("  ");
         }
-
+        // printf("%d", tokenKind(ast->firstToken()));
         for (unsigned i=ast->firstToken(); i<=ast->lastToken(); ++i) {
             printf("%s ", spell(i));
         }
@@ -1910,6 +2177,14 @@ public:
 
         printf("Node\n");
     }
+    void handleFunction(CPlusPlus::Function *function, bool definition)
+    {
+        for (int i=0; i<mIndent; ++i) {
+            printf("  ");
+        }
+
+        printf("%s Function%s\n", function->identifier()->chars(), definition ? "Definition" : "Declaration");
+    }
 private:
     int mIndent;
     IndexerJob *mJob;
@@ -1940,264 +2215,5 @@ bool IndexerJob::rparse(int build)
     Visitor visitor(&translationUnit, this);
     visitor.accept(ast);
     return true;
-}
-
-bool IndexerJob::visit(int build)
-{
-    TIMING();
-    if (!mUnits.at(build).second) {
-        abort();
-        return false;
-    }
-    clang_getInclusions(mUnits.at(build).second, IndexerJob::inclusionVisitor, this);
-    if (isAborted())
-        return false;
-
-    clang_visitChildren(clang_getTranslationUnitCursor(mUnits.at(build).second),
-                        IndexerJob::indexVisitor, this);
-    if (isAborted())
-        return false;
-    if (testLog(VerboseDebug)) {
-        VerboseVisitorUserData u = { 0, "<VerboseVisitor " + mClangLines.at(build) + ">\n", this };
-        clang_visitChildren(clang_getTranslationUnitCursor(mUnits.at(build).second),
-                            IndexerJob::verboseVisitor, &u);
-        u.out += "</VerboseVisitor " + mClangLines.at(build) + ">";
-        if (getenv("RTAGS_INDEXERJOB_DUMP_TO_FILE")) {
-            char buf[1024];
-            snprintf(buf, sizeof(buf), "/tmp/%s.log", mSourceInformation.sourceFile.fileName());
-            FILE *f = fopen(buf, "w");
-            assert(f);
-            fwrite(u.out.constData(), 1, u.out.size(), f);
-            fclose(f);
-        } else {
-            logDirect(VerboseDebug, u.out);
-        }
-    }
-    return !isAborted();
-}
-
-void IndexerJob::execute()
-{
-    mTimer.start();
-    TIMING();
-    if (isAborted())
-        return;
-    mData.reset(new IndexData);
-    if (mSourceInformation.isJS()) {
-        executeJS();
-    } else {
-        executeCPP();
-    }
-}
-
-void IndexerJob::executeJS()
-{
-    TIMING();
-    const String contents = mSourceInformation.sourceFile.readAll(1024 * 1024 * 100);
-    if (contents.isEmpty()) {
-        error() << "Can't open" << mSourceInformation.sourceFile << "for reading";
-        return;
-    }
-
-    JSParser parser;
-    if (!parser.init()) {
-        error() << "Can't init JSParser for" << mSourceInformation.sourceFile;
-        return;
-    }
-    if (isAborted())
-        return;
-    String errors; // ### what to do about this one?
-    String dump;
-    if (!parser.parse(mSourceInformation.sourceFile, contents, &mData->symbols, &mData->symbolNames,
-                      &errors, mType == Dump ? &dump : 0)) {
-        error() << "Can't parse" << mSourceInformation.sourceFile;
-    }
-    mParseTime = time(0);
-
-    if (mType == Dump) {
-        dump += "\n";
-        {
-            Log stream(&dump);
-            stream << "symbols:\n";
-            for (Map<Location, CursorInfo>::const_iterator it = mData->symbols.begin(); it != mData->symbols.end(); ++it) {
-                stream << it->first << it->second.toString(0) << '\n';
-            }
-
-            stream << "symbolnames:\n";
-            for (Map<String, Set<Location> >::const_iterator it = mData->symbolNames.begin(); it != mData->symbolNames.end(); ++it) {
-                stream << it->first << it->second << '\n';
-            }
-
-            assert(id() != -1);
-        }
-        write(dump);
-
-        mData->symbols.clear();
-        mData->symbolNames.clear();
-    } else {
-        mData->dependencies[mFileId].insert(mFileId);
-        mData->message = String::format<128>("%s in %dms. (%d syms, %d symNames, %d refs)",
-                                             mSourceInformation.sourceFile.toTilde().constData(),
-                                             static_cast<int>(mTimer.elapsed()) / 1000, mData->symbols.size(), mData->symbolNames.size(), mData->references.size());
-        shared_ptr<Project> p = project();
-        if (p) {
-            shared_ptr<IndexerJob> job = static_pointer_cast<IndexerJob>(shared_from_this());
-            p->onJobFinished(job);
-        }
-    }
-}
-
-void IndexerJob::executeCPP()
-{
-    TIMING();
-    if (mType == Dump) {
-        assert(id() != -1);
-        if (shared_ptr<Project> p = project()) {
-            for (int i=0; i<mSourceInformation.builds.size(); ++i) {
-                parse(i);
-                if (mUnits.at(i).second) {
-                    DumpUserData u = { 0, this, !(queryFlags() & QueryMessage::NoContext) };
-                    clang_visitChildren(clang_getTranslationUnitCursor(mUnits.at(i).second),
-                                        IndexerJob::dumpVisitor, &u);
-                }
-            }
-        }
-    } else {
-        {
-            MutexLocker lock(&mMutex);
-            mStarted = true;
-        }
-        int unitCount = 0;
-        const int buildCount = mSourceInformation.builds.size();
-        for (int i=0; i<buildCount; ++i) {
-            if (!parse(i)) {
-                goto end;
-            }
-            if (mUnits.at(i).second)
-                ++unitCount;
-        }
-        mParseTime = time(0);
-
-        for (int i=0; i<buildCount; ++i) {
-            if (!visit(i) || !diagnose(i))
-                goto end;
-        }
-        {
-            mData->message = mSourceInformation.sourceFile.toTilde();
-            if (buildCount > 1)
-                mData->message += String::format<16>(" (%d builds)", buildCount);
-            if (!unitCount) {
-                mData->message += " error";
-            } else if (unitCount != buildCount) {
-                mData->message += String::format<16>(" (%d errors, %d ok)", buildCount - unitCount, unitCount);
-            }
-            mData->message += String::format<16>(" in %dms. ", static_cast<int>(mTimer.elapsed()) / 1000);
-            if (unitCount) {
-                mData->message += String::format<128>("(%d syms, %d symNames, %d refs, %d deps, %d files)",
-                                                      mData->symbols.size(), mData->symbolNames.size(), mData->references.size(),
-                                                      mData->dependencies.size(), mVisitedFiles.size());
-            } else if (mData->dependencies.size()) {
-                mData->message += String::format<16>("(%d deps)", mData->dependencies.size());
-            }
-            if (mType == Dirty)
-                mData->message += " (dirty)";
-        }
-  end:
-        shared_ptr<Project> p = project();
-        if (p) {
-            shared_ptr<IndexerJob> job = static_pointer_cast<IndexerJob>(shared_from_this());
-            p->onJobFinished(job);
-        }
-    }
-    for (int i=0; i<mUnits.size(); ++i) {
-        if (mUnits.at(i).first)
-            clang_disposeIndex(mUnits.at(i).first);
-        if (mUnits.at(i).second)
-            clang_disposeTranslationUnit(mUnits.at(i).second);
-    }
-    mUnits.clear();
-}
-
-CXChildVisitResult IndexerJob::verboseVisitor(CXCursor cursor, CXCursor, CXClientData userData)
-{
-    VerboseVisitorUserData *u = reinterpret_cast<VerboseVisitorUserData*>(userData);
-    Location loc = u->job->createLocation(cursor);
-    if (loc.fileId()) {
-        CXCursor ref = clang_getCursorReferenced(cursor);
-
-        VerboseVisitorUserData *u = reinterpret_cast<VerboseVisitorUserData*>(userData);
-        if (u->indent >= 0)
-            u->out += String(u->indent, ' ');
-        u->out += RTags::cursorToString(cursor);
-        if (clang_equalCursors(ref, cursor)) {
-            u->out += " refs self";
-        } else if (!clang_equalCursors(ref, nullCursor)) {
-            u->out += " refs " + RTags::cursorToString(ref);
-        }
-
-        if (loc.fileId() && u->job->mVisitedFiles.contains(loc.fileId())) {
-            if (u->job->mData->references.contains(loc)) {
-                u->out += " used as reference\n";
-            } else if (u->job->mData->symbols.contains(loc)) {
-                u->out += " used as cursor\n";
-            } else {
-                u->out += " not used\n";
-            }
-        } else {
-            u->out += " not indexed\n";
-        }
-    }
-    if (u->indent >= 0) {
-        u->indent += 2;
-        clang_visitChildren(cursor, IndexerJob::verboseVisitor, userData);
-        u->indent -= 2;
-        return CXChildVisit_Continue;
-    } else {
-        return CXChildVisit_Recurse;
-    }
-}
-
-CXChildVisitResult IndexerJob::dumpVisitor(CXCursor cursor, CXCursor, CXClientData userData)
-{
-    DumpUserData *dump = reinterpret_cast<DumpUserData*>(userData);
-    assert(dump);
-    assert(dump->job);
-    Location loc = dump->job->createLocation(cursor);
-    if (loc.fileId()) {
-        CXCursor ref = clang_getCursorReferenced(cursor);
-        String out;
-        out.reserve(256);
-        int col = -1;
-        if (dump->showContext) {
-            out.append(loc.context(&col));
-            if (col != -1) {
-                out.append(String::format<32>(" // %d, %d: ", col, dump->indentLevel));
-            } else {
-                out.append(String::format<32>(" // %d: ", dump->indentLevel));
-            }
-        } else {
-            out.append(String(dump->indentLevel * 2, ' '));
-        }
-        out.append(RTags::cursorToString(cursor, RTags::AllCursorToStringFlags));
-        out.append(" " + typeName(cursor) + " ");
-        if (clang_equalCursors(ref, cursor)) {
-            out.append("refs self");
-        } else if (!clang_equalCursors(ref, nullCursor)) {
-            out.append("refs ");
-            out.append(RTags::cursorToString(ref, RTags::AllCursorToStringFlags));
-        }
-        dump->job->write(out);
-    }
-    ++dump->indentLevel;
-    clang_visitChildren(cursor, IndexerJob::dumpVisitor, userData);
-    --dump->indentLevel;
-    return CXChildVisit_Continue;
-}
-bool IndexerJob::abortIfStarted()
-{
-    MutexLocker lock(&mMutex);
-    if (mStarted)
-        mAborted = true;
-    return mAborted;
 }
 
