@@ -1688,7 +1688,6 @@ bool IndexerJob::rparse(int build)
     Visitor visitor(&translationUnit, this);
     visitor.accept(ast);
 
-
     return true;
 }
 
