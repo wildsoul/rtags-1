@@ -51,6 +51,7 @@ private:
     bool parse(int build);
     bool visit(int build);
     bool diagnose(int build);
+    bool rparse(int build);
 
     virtual void execute();
 
@@ -101,6 +102,9 @@ private:
     bool mStarted;
 
     CXCursor mLastCursor;
+
+    bool mRParse;
+    friend class Visitor;
 };
 
 #endif
