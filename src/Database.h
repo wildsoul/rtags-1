@@ -20,7 +20,7 @@ public:
     class Cursor
     {
     public:
-        Cursor() : kind(Invalid) {}
+        Cursor() : kind(Invalid), start(-1), end(-1) {}
         enum Kind {
             Invalid,
             MemberFunctionDefinition,
@@ -41,7 +41,7 @@ public:
 
         static const char *kindToString(Kind kind);
         enum CursorInfoFlag { // these are combined with the keyflags from Location
-            IncludeTargets = 0x10,
+            IncludeTarget = 0x10,
             IncludeReferences = 0x20
         };
         String toString(unsigned flags) const;
@@ -56,14 +56,26 @@ public:
         Location target;
         Set<Location> references;
         Kind kind;
+        int start, end;
+
+        bool operator==(const Cursor &other) const { return !compare(other); }
+        bool operator<(const Cursor &other) const { return compare(other) < 0; }
+        bool operator>(const Cursor &other) const { return !compare(other) > 0; }
+        int compare(const Cursor &other) const
+        {
+            if (isDefinition() != other.isDefinition())
+                return -1;
+            return location.compare(other.location);
+        }
+
     };
     virtual Cursor cursor(const Location &location) const = 0;
     virtual void status(const String &query, Connection *conn) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
     virtual int index(const SourceInformation &sourceInformation) = 0;
     virtual Set<Path> dependencies(const Path &path) const = 0;
-    virtual Set<String> listSymbols(const String &string, const Path &pathFilter) const = 0;
-    virtual Set<Cursor> findCursors(const String &string, const Path &pathFilter) const = 0;
+    virtual Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const = 0;
+    virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const = 0;
     virtual Set<Cursor> cursors(const Path &path) const = 0;
 };
 #endif

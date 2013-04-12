@@ -139,6 +139,11 @@ shared_ptr<Project> Server::addProject(const Path &path)
     shared_ptr<Project> &project = mProjects[path];
     if (!project) {
         project.reset(new Project(path));
+        if (!project->database()) {
+            error("Can't load plugin");
+            project.reset();
+        }
+
         return project;
     }
     return shared_ptr<Project>();
@@ -612,7 +617,7 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
 
 struct Node
 {
-    Node(const Location &loc, bool def)
+    Node(const Location &loc = Location(), bool def = false)
         : location(loc), definition(def)
     {}
 
@@ -626,6 +631,15 @@ struct Node
     }
 };
 
+static inline void writeNodes(const QueryMessage &query, List<Node> &locations, Connection *conn)
+{
+    std::sort(locations.begin(), locations.end());
+    const unsigned keyFlags = query.keyFlags();
+    for (int i=0; i<locations.size(); ++i) {
+        conn->write(locations.at(i).location.key(keyFlags));
+    }
+}
+
 static void references(const QueryMessage &query, const Set<Database::Cursor> &cursors, const shared_ptr<Database> &db, Connection *conn)
 {
     assert(!cursors.isEmpty());
@@ -634,7 +648,7 @@ static void references(const QueryMessage &query, const Set<Database::Cursor> &c
     for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
         for (Set<Location>::const_iterator loc = it->references.begin(); loc != it->references.end(); ++it) {
             if (query.flags() & QueryMessage::AllReferences) {
-                locations.append(Node(c.location, false));
+                locations.append(Node(*loc, false));
             } else {
                 const Database::Cursor c = db->cursor(*loc);
                 if (c.isValid() && (c.kind == Database::Cursor::Reference) == references) {
@@ -643,11 +657,7 @@ static void references(const QueryMessage &query, const Set<Database::Cursor> &c
             }
         }
     }
-    std::sort(locations.begin(), locations.end());
-    const unsigned keyFlags = query.keyFlags();
-    for (int i=0; i<locations.end(); ++i) {
-        conn->write(locations.at(i).key(keyFlags));
-    }
+    writeNodes(query, locations, conn);
 }
 
 void Server::referencesForLocation(const QueryMessage &query, Connection *conn)
@@ -686,7 +696,7 @@ void Server::referencesForName(const QueryMessage& query, Connection *conn)
         return;
     }
     shared_ptr<Database> database = project->database();
-    Set<Database::Cursor> cursors = database->findCursors(query.query());
+    Set<Database::Cursor> cursors = database->findCursors(query.query(), query.pathFilters());
     if (!cursors.isEmpty())
         references(query, cursors, database, conn);
     conn->finish();
@@ -708,17 +718,12 @@ void Server::findSymbols(const QueryMessage &query, Connection *conn)
         return;
     }
     shared_ptr<Database> database = project->database();
-    List<Database::Cursor> cursors = database->findCursors(query.query()).toList();
+    List<Database::Cursor> cursors = database->findCursors(query.query(), query.pathFilters()).toList();
     if (!cursors.isEmpty()) {
         List<Node> nodes(cursors.size());
         for (int i=0; i<cursors.size(); ++i)
             nodes[i] = Node(cursors.at(i).location, cursors.at(i).isDefinition());
-
-        std::sort(nodes.begin(), nodes.end());
-        const unsigned keyFlags = query.keyFlags();
-        for (int i=0; i<nodes.size(); ++i) {
-            conn->write(nodes.at(i).location.key(keyFlags));
-        }
+        writeNodes(query, nodes, conn);
     }
 
     conn->finish();
@@ -734,35 +739,32 @@ void Server::listSymbols(const QueryMessage &query, Connection *conn)
     }
 
     shared_ptr<Database> db = project->database();
-    Set<String> strings = db->listSymbols(query.query());
-
-    Set<String> out;
-    // if (proj) {
-    //     if (query.flags() & QueryMessage::IMenu) {
-    //         out = imenu(proj);
-    //     } else {
-    //         out = listSymbols(proj);
-    //     }
-    // }
+    const Set<String> strings = db->listSymbols(query.query(), query.pathFilters());
 
     const bool elispList = query.flags() & QueryMessage::ElispList;
 
+    int max = query.max();
     if (elispList) {
-        write("(list", IgnoreMax|DontQuote);
-        for (Set<String>::const_iterator it = out.begin(); it != out.end(); ++it) {
-            write(*it);
+        String out = "(list ";
+        for (Set<String>::const_iterator it = strings.begin(); it != strings.end(); ++it) {
+            if (!max--) // max could start at -1
+                break;
+            out += '"' + *it + '"';
         }
-        write(")", IgnoreMax|DontQuote);
+        out += ')';
+        conn->write(out);
     } else {
-        List<String> sorted = out.toList();
-        if (queryFlags() & QueryMessage::ReverseSort) {
+        List<String> sorted = strings.toList();
+        if (query.flags() & QueryMessage::ReverseSort) {
             std::sort(sorted.begin(), sorted.end(), std::greater<String>());
         } else {
             std::sort(sorted.begin(), sorted.end());
         }
-        const int count = sorted.size();
+        int count = sorted.size();
+        if (max != -1)
+            count = max;
         for (int i=0; i<count; ++i) {
-            write(sorted.at(i));
+            conn->write(sorted.at(i));
         }
     }
     
@@ -783,18 +785,18 @@ void Server::status(const QueryMessage &query, Connection *conn)
 
 void Server::isIndexed(const QueryMessage &query, Connection *conn)
 {
-    // int ret = 0;
-    // const Match match = query.match();
-    // shared_ptr<Project> project = updateProjectForLocation(match);
-    // if (project) {
-    //     bool indexed = false;
-    //     if (project->match(match, &indexed))
-    //         ret = indexed ? 1 : 2;
-    // }
+    int ret = 0;
+    const Match match = query.match();
+    shared_ptr<Project> project = updateProjectForLocation(match);
+    if (project) {
+        bool indexed = false;
+        if (project->match(match, &indexed))
+            ret = indexed ? 1 : 2;
+    }
 
-    // error("=> %d", ret);
-    // conn->write<16>("%d", ret);
-    // conn->finish();
+    error("=> %d", ret);
+    conn->write<16>("%d", ret);
+    conn->finish();
 }
 
 void Server::reloadFileManager(const QueryMessage &, Connection *conn)

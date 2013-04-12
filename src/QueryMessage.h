@@ -55,7 +55,7 @@ public:
         Silent = 0x00400,
         AbsolutePath = 0x00800,
         FindFilePreferExact = 0x01000,
-        CursorInfoIncludeTargets = 0x02000,
+        CursorInfoIncludeTarget = 0x02000,
         CursorInfoIncludeReferences = 0x04000,
         DeclarationOnly = 0x08000
     };

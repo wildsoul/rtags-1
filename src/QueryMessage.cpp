@@ -26,8 +26,8 @@ unsigned QueryMessage::keyFlags(unsigned queryFlags)
         ret |= Location::ShowContext;
     if (queryFlags & QueryMessage::CursorInfoIncludeReferences)
         ret |= Database::Cursor::IncludeReferences;
-    if (queryFlags & QueryMessage::CursorInfoIncludeTargets)
-        ret |= Database::Cursor::IncludeTargets;
+    if (queryFlags & QueryMessage::CursorInfoIncludeTarget)
+        ret |= Database::Cursor::IncludeTarget;
     return ret;
 }
 

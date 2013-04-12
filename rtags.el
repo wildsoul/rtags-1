@@ -388,7 +388,7 @@
                      "-U"
                      loc
                      (if context (concat "-t" context))
-                     (if verbose "--cursorinfo-include-targets")
+                     (if verbose "--cursorinfo-include-target")
                      (if verbose "--cursorinfo-include-references"))
       (buffer-string))))
 

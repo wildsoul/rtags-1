@@ -19,7 +19,7 @@ enum OptionType {
     Context,
     CursorInfo,
     CursorInfoIncludeReferences,
-    CursorInfoIncludeTargets,
+    CursorInfoIncludeTarget,
     DeclarationOnly,
     DeleteProject,
     Dependencies,
@@ -152,7 +152,7 @@ struct Option opts[] = {
     { Timeout, "timeout", 'y', required_argument, "Max time in ms to wait for job to finish (default no timeout)." },
     { FindVirtuals, "find-virtuals", 'k', no_argument, "Use in combinations with -R or -r to show other implementations of this function." },
     { FindFilePreferExact, "find-file-prefer-exact", 'A', no_argument, "Use to make --find-file prefer exact matches over partial matches." },
-    { CursorInfoIncludeTargets, "cursorinfo-include-targets", 0, no_argument, "Use to make --cursor-info include target cursors." },
+    { CursorInfoIncludeTarget, "cursorinfo-include-target", 0, no_argument, "Use to make --cursor-info include target cursors." },
     { CursorInfoIncludeReferences, "cursorinfo-include-references", 0, no_argument, "Use to make --cursor-info include reference cursors." },
     { WithProject, "with-project", 0, required_argument, "Like --project but pass as a flag." },
     { DeclarationOnly, "declaration-only", 0, no_argument, "Filter out definitions (unless inline).", },
@@ -598,8 +598,8 @@ bool RClient::parse(int &argc, char **argv)
         case FindFilePreferExact:
             mQueryFlags |= QueryMessage::FindFilePreferExact;
             break;
-        case CursorInfoIncludeTargets:
-            mQueryFlags |= QueryMessage::CursorInfoIncludeTargets;
+        case CursorInfoIncludeTarget:
+            mQueryFlags |= QueryMessage::CursorInfoIncludeTarget;
             break;
         case CursorInfoIncludeReferences:
             mQueryFlags |= QueryMessage::CursorInfoIncludeReferences;
