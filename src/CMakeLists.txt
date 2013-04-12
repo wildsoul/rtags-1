@@ -8,9 +8,7 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fpic")
 endif ()
 
-find_package(LibClang REQUIRED)
-include_directories(${CLANG_INCLUDE})
-
+find_package(Qt4 REQUIRED)
 find_package(V8 REQUIRED)
 find_package(LevelDB)
 
@@ -24,14 +22,11 @@ if (CMAKE_BUILD_TYPE MATCHES "Debug")
 endif ()
 
 add_definitions(-Wall)
-add_definitions("-DCLANG_INCLUDEPATH=\"${CLANG_SYSTEM_INCLUDE}\"")
-add_definitions("-DCLANG_VERSION_MAJOR=${CLANG_VERSION_MAJOR}")
-add_definitions("-DCLANG_VERSION_MINOR=${CLANG_VERSION_MINOR}")
 add_definitions("-DESPRIMA_JS=\"${PROJECT_SOURCE_DIR}/src/esprima/esprima.js\"")
 add_definitions(-DOS_${CMAKE_SYSTEM_NAME})
 
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
-  set(SYSTEM_LIBS pthread rt crypto)
+  set(SYSTEM_LIBS pthread rt crypto dl)
 elseif (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
   add_definitions(-D__LONG_LONG_SUPPORTED)
   set(SYSTEM_LIBS pthread crypto)
@@ -83,32 +78,12 @@ include_directories(${CMAKE_CURRENT_LIST_DIR}
                     rct
                     ${CMAKE_CURRENT_BINARY_DIR}/rct/include/rct)
 
-add_executable(clangtest clangtest.c)
-target_link_libraries(clangtest ${CLANG_LIBS} ${CORESERVICES_LIBRARY} ${COREFOUNDATION_LIBRARY} ${SYSTEM_LIBS})
-
 add_executable(rc rc.cpp RClient.cpp)
 add_dependencies(rc rct shared)
 target_link_libraries(rc rct shared ${SYSTEM_LIBS})
 
-#if (LEVELDB_FOUND EQUAL 1)
-if (0 EQUAL 1)
-  add_definitions(-DGRTAGS)
-  add_executable(gr ${GR_SOURCES} ${RCT_SOURCES})
-  include_directories(
-    ${CORESERVICES_INCLUDE}
-    ${COREFOUNDATION_INCLUDE}
-    ${LEVELDB_INCLUDE})
-  target_link_libraries(gr
-    ${CLANG_LIBS}
-    ${SYSTEM_LIBS}
-    ${CORESERVICES_LIBRARY}
-    ${COREFOUNDATION_LIBRARY}
-    ${SYSTEM_LIBS}
-    ${LEVELDB_LIBS})
-endif ()
-
 add_library(rtags SHARED ${RDM_SOURCES})
-target_link_libraries(rtags ${CLANG_LIBS} ${CORESERVICES_LIBRARY} ${COREFOUNDATION_LIBRARY} shared rct ${SYSTEM_LIBS})
+target_link_libraries(rtags ${CORESERVICES_LIBRARY} ${COREFOUNDATION_LIBRARY} shared rct ${SYSTEM_LIBS})
 add_dependencies(rtags rct)
 
 add_executable(rdm rdm.cpp)
@@ -123,10 +98,6 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 # add_library(rtagsesprima MODULE IndexerJobEsprima.cpp JSParser.cpp)
 # add_dependencies(rtagsesprima rtags)
 # target_link_libraries(rtagsesprima ${V8_LIBS} rtags)
-
-# add_library(rtagsclang MODULE IndexerJobClang.cpp)
-# add_dependencies(rtagsclang rdm)
-# target_link_libraries(rtagsclang rtags)
 
 if (NOT "${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}")
   file (GLOB binFiles "${PROJECT_SOURCE_DIR}/bin/*")
@@ -145,3 +116,10 @@ if (CMAKE_SYSTEM_NAME MATCHES "Darwin")
       COMMAND ${CMAKE_CURRENT_LIST_DIR}/fix-dylib.sh ${PROJECT_BINARY_DIR} ${PROJECT_BINARY_DIR}/bin/gr)
   endif ()
 endif ()
+
+include(${QT_USE_FILE})
+add_definitions(${QT_DEFINITIONS})
+
+add_library(rparser MODULE DatabaseRParser.cpp)
+add_dependencies(rparser rtags)
+target_link_libraries(rparser rtags ${QT_LIBRARIES})

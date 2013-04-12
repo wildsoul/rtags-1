@@ -77,9 +77,9 @@ bool Server::init(const Options &options)
         mOptions.defaultArguments.append("-nobuiltininc");
         mOptions.defaultArguments.append("-nostdinc++");
     } else {
-        Path clangPath = Path::resolved(CLANG_INCLUDEPATH);
-        clangPath.prepend("-I");
-        mOptions.defaultArguments.append(clangPath);
+        //Path clangPath = Path::resolved(CLANG_INCLUDEPATH);
+        //clangPath.prepend("-I");
+        //mOptions.defaultArguments.append(clangPath);
     }
 
     if (options.options & UnlimitedErrors)
