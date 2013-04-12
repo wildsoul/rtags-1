@@ -4,7 +4,6 @@
 #include "QueryMessage.h"
 #include "CompileMessage.h"
 #include "CreateOutputMessage.h"
-#include "CompletionMessage.h"
 #include "FileManager.h"
 #include "QueryMessage.h"
 #include "RTags.h"
@@ -32,7 +31,7 @@ class IndexerJob;
 class Server : public EventReceiver
 {
 public:
-    enum { DatabaseVersion = 23 };
+    enum { DatabaseVersion = 24 };
 
     Server();
     ~Server();
@@ -50,29 +49,24 @@ public:
         NoStartupCurrentProject = 0x100
     };
     ThreadPool *threadPool() const { return mIndexerThreadPool; }
-    void startQueryJob(const shared_ptr<Job> &job);
-    void startIndexerJob(const shared_ptr<IndexerJob> &job);
+    void startJob(const shared_ptr<ThreadPool::Job> &job);
     struct Options {
-        Options() : options(0), threadCount(0), completionCacheSize(0), unloadTimer(0), clangStackSize(0) {}
+        Options() : options(0), threadCount(0), unloadTimer(0), stackSize(0) {}
         Path socketFile, dataDir;
         unsigned options;
-        int threadCount, completionCacheSize, unloadTimer, clangStackSize;
+        int threadCount, unloadTimer, stackSize;
         List<String> defaultArguments, excludeFilters;
         Set<Path> ignoredCompilers;
     };
     bool init(const Options &options);
     const Options &options() const { return mOptions; }
-    bool saveFileIds() const;
     RTagsPluginFactory &factory() { return mPluginFactory; }
 private:
     bool selectProject(const Match &match, Connection *conn);
     bool updateProject(const List<String> &projects);
 
-    bool isCompletionStream(Connection* conn) const;
-
     void timerEvent(TimerEvent *event);
 
-    void restoreFileIds();
     void clear();
     void onNewConnection();
     signalslot::Signal2<int, const List<String> &> &complete() { return mComplete; }
@@ -84,8 +78,6 @@ private:
     void onConnectionDestroyed(Connection *o);
     void clearProjects();
     void handleCompileMessage(CompileMessage *message, Connection *conn);
-    void handleCompletionMessage(CompletionMessage *message, Connection *conn);
-    void handleCompletionStream(CompletionMessage *message, Connection *conn);
     void handleQueryMessage(QueryMessage *message, Connection *conn);
     void handleErrorMessage(ErrorMessage *message, Connection *conn);
     void handleCreateOutputMessage(CreateOutputMessage *message, Connection *conn);
@@ -121,15 +113,11 @@ private:
     shared_ptr<Project> updateProjectForLocation(const Path &path);
     shared_ptr<Project> currentProject() const
     {
-        MutexLocker lock(&mMutex);
         return mCurrentProject.lock();
     }
     int reloadProjects();
-    void onCompletionStreamDisconnected(SocketClient *client);
     shared_ptr<Project> addProject(const Path &path);
     void loadProject(const shared_ptr<Project> &project);
-    void onCompletionJobFinished(Path path);
-    void startCompletion(const Path &path, int line, int column, int pos, const String &contents, Connection *conn);
 
     typedef Map<Path, shared_ptr<Project> > ProjectsMap;
     ProjectsMap mProjects;
@@ -143,28 +131,11 @@ private:
     int mJobId;
 
     ThreadPool *mIndexerThreadPool;
-    ThreadPool mQueryThreadPool;
     signalslot::Signal2<int, const List<String> &> mComplete;
 
-    Map<SocketClient*, Connection*> mCompletionStreams;
-    struct PendingCompletion
-    {
-        PendingCompletion()
-            : line(-1), column(-1), pos(-1), connection(0)
-        {}
-        int line, column, pos;
-        String contents;
-        Connection *connection;
-    };
-    Map<Path, PendingCompletion> mPendingCompletions;
-    Set<Path> mActiveCompletions;
-
-    bool mRestoreProjects;
     Timer mUnloadTimer;
 
     RTagsPluginFactory mPluginFactory;
-
-    mutable Mutex mMutex;
 
     friend class CommandProcess;
 };

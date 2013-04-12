@@ -65,28 +65,14 @@ set(RTAGS_SHARED_SOURCES
 add_library(shared ${RTAGS_SHARED_SOURCES})
 
 set(RDM_SOURCES
-  CompileJob.cpp
-  CompletionJob.cpp
-  CursorInfo.cpp
-  CursorInfoJob.cpp
-  DependenciesJob.cpp
   FileManager.cpp
-  FindFileJob.cpp
-  FindSymbolsJob.cpp
-  FollowLocationJob.cpp
   GccArguments.cpp
   IndexerJob.cpp
-  JSONJob.cpp
-  Job.cpp
-  ListSymbolsJob.cpp
   Preprocessor.cpp
   Project.cpp
   RTagsClang.cpp
-  ReferencesJob.cpp
   ScanJob.cpp
   Server.cpp
-  StatusJob.cpp
-  ValidateDBJob.cpp
   )
 
 set(GR_SOURCES GRParser.cpp GRTags.cpp Location.cpp RTags.cpp)

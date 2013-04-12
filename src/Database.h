@@ -37,6 +37,12 @@ public:
         };
 
         static const char *kindToString(Kind kind);
+        enum CursorInfoFlag { // these are combined with they keyflags from Location
+            IncludeTargets = 0x10,
+            IncludeReferences = 0x20
+        };
+        String toString(unsigned flags) const;
+        bool isDefinition() const;
 
         Location location;
         String symbolName;
@@ -44,7 +50,6 @@ public:
         Set<Location> references;
         Kind kind;
     };
-    virtual String cursorToString(const Cursor &cursor) const = 0;
     virtual Cursor cursor(const Location &location) const = 0;
     virtual void status(const String &query, Connection *conn) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;

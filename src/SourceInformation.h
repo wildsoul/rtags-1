@@ -4,12 +4,12 @@
 #include <rct/List.h>
 #include <rct/String.h>
 #include <rct/Path.h>
+#include <rct/Serializer.h>
 
 class SourceInformation
 {
 public:
     SourceInformation()
-        : parsed(0)
     {}
 
     Path sourceFile;
@@ -19,6 +19,10 @@ public:
         Build(const Path &c = Path(), const List<String> &a = List<String>())
             : compiler(c), args(a)
         {}
+
+        inline bool operator==(const Build &other) const { return compiler == other.compiler && args == other.args; }
+        inline bool operator!=(const Build &other) const { return !operator==(other); }
+
         Path compiler;
         List<String> args;
     };
@@ -29,8 +33,6 @@ public:
         return builds.isEmpty() && sourceFile.endsWith(".js");
     }
 
-    time_t parsed;
-
     inline bool isNull() const
     {
         return sourceFile.isEmpty();
@@ -38,19 +40,27 @@ public:
 
     inline String toString() const
     {
-        String out = String::format<64>("%s %s\n", sourceFile.constData(),
-                                        parsed ? ("Parsed: " +String::formatTime(parsed, String::DateTime)).constData() : "Not parsed");
+        String out = sourceFile + '\n';
         for (int i=0; i<builds.size(); ++i) {
             out += String::format<256>("  %s %s\n", builds.at(i).compiler.constData(),
                                        String::join(builds.at(i).args, ' ').constData());
         }
         return out;
     }
+    inline bool operator==(const SourceInformation &other) const
+    {
+        return sourceFile == other.sourceFile && builds == other.builds;
+    }
+
+    inline bool operator!=(const SourceInformation &other) const
+    {
+        return !operator==(other);
+    }
 };
 
 template <> inline Serializer &operator<<(Serializer &s, const SourceInformation &t)
 {
-    s << t.sourceFile << t.parsed << t.builds.size();
+    s << t.sourceFile << t.builds.size();
     for (int i=0; i<t.builds.size(); ++i) {
         s << t.builds.at(i).compiler << t.builds.at(i).args;
     }
@@ -61,7 +71,7 @@ template <> inline Serializer &operator<<(Serializer &s, const SourceInformation
 
 template <> inline Deserializer &operator>>(Deserializer &s, SourceInformation &t)
 {
-    s >> t.sourceFile >> t.parsed;
+    s >> t.sourceFile;
     int size;
     s >> size;
     t.builds.resize(size);

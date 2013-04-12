@@ -1,5 +1,5 @@
 #include "QueryMessage.h"
-#include "RTags.h"
+#include "Database.h"
 #include <rct/Serializer.h>
 
 QueryMessage::QueryMessage(Type type)
@@ -26,6 +26,10 @@ unsigned QueryMessage::keyFlags(unsigned queryFlags)
         ret |= Location::ShowContext;
     if (queryFlags & QueryMessage::LineNumbers)
         ret |= Location::ShowLineNumbers;
+    if (queryFlags & QueryMessage::CursorInfoIncludeReferences)
+        ret |= Database::Cursor::IncludeReferences;
+    if (queryFlags & QueryMessage::CursorInfoIncludeTargets)
+        ret |= Database::Cursor::IncludeTargets;
     return ret;
 }
 
