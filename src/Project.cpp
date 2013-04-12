@@ -15,14 +15,7 @@
 #include <math.h>
 
 static void *ModifiedFiles = &ModifiedFiles;
-static void *Save = &Save;
-static void *Sync = &Sync;
-
-enum {
-    SaveTimeout = 2000,
-    ModifiedFilesTimeout = 50,
-    SyncTimeout = 2000
-};
+enum { ModifiedFilesTimeout = 50 };
 
 Project::Project(const Path &path)
     : mPath(path), mJobCounter(0), mFirstCachedUnit(0), mLastCachedUnit(0), mUnitCacheSize(0)
@@ -34,8 +27,8 @@ Project::Project(const Path &path)
 void Project::init()
 {
     assert(!isValid());
-    fileManager.reset(new FileManager);
-    fileManager->init(static_pointer_cast<Project>(shared_from_this()));
+    mFileManager.reset(new FileManager);
+    mFileManager->init(static_pointer_cast<Project>(shared_from_this()));
 }
 
 bool Project::restore()
@@ -480,12 +473,6 @@ int Project::remove(const Match &match)
 }
 
 
-void Project::onValidateDBJobErrors(const Set<Location> &errors)
-{
-    MutexLocker lock(&mMutex);
-    mPreviousErrors = errors;
-}
-
 void Project::startDirtyJobs()
 {
     Set<uint32_t> dirtyFiles;
@@ -517,143 +504,6 @@ void Project::startDirtyJobs()
     }
 }
 
-static inline void writeSymbolNames(const SymbolNameMap &symbolNames, SymbolNameMap &current)
-{
-    SymbolNameMap::const_iterator it = symbolNames.begin();
-    const SymbolNameMap::const_iterator end = symbolNames.end();
-    while (it != end) {
-        Set<Location> &value = current[it->first];
-        value.unite(it->second);
-        ++it;
-    }
-}
-
-static inline void joinCursors(SymbolMap &symbols, const Set<Location> &locations)
-{
-    for (Set<Location>::const_iterator it = locations.begin(); it != locations.end(); ++it) {
-        SymbolMap::iterator c = symbols.find(*it);
-        if (c != symbols.end()) {
-            CursorInfo &cursorInfo = c->second;
-            for (Set<Location>::const_iterator innerIt = locations.begin(); innerIt != locations.end(); ++innerIt) {
-                if (innerIt != it)
-                    cursorInfo.targets.insert(*innerIt);
-            }
-            // ### this is filthy, we could likely think of something better
-        }
-    }
-}
-
-static inline void writeUsr(const UsrMap &usr, UsrMap &current, SymbolMap &symbols)
-{
-    UsrMap::const_iterator it = usr.begin();
-    const UsrMap::const_iterator end = usr.end();
-    while (it != end) {
-        Set<Location> &value = current[it->first];
-        int count = 0;
-        value.unite(it->second, &count);
-        if (count && value.size() > 1)
-            joinCursors(symbols, value);
-        ++it;
-    }
-}
-
-static inline void writeErrorSymbols(const SymbolMap &symbols, ErrorSymbolMap &errorSymbols, const Map<uint32_t, int> &errors)
-{
-    for (Map<uint32_t, int>::const_iterator it = errors.begin(); it != errors.end(); ++it) {
-        if (it->second) {
-            SymbolMap &symbolsForFile = errorSymbols[it->first];
-            if (symbolsForFile.isEmpty()) {
-                const Location loc(it->first, 0);
-                SymbolMap::const_iterator sit = symbols.lower_bound(loc);
-                while (sit != symbols.end() && sit->first.fileId() == it->first) {
-                    symbolsForFile[sit->first] = sit->second;
-                    ++sit;
-                }
-            }
-        } else {
-            errorSymbols.remove(it->first);
-        }
-    }
-}
-
-static inline void writeSymbols(SymbolMap &symbols, SymbolMap &current)
-{
-    if (!symbols.isEmpty()) {
-        if (current.isEmpty()) {
-            current = symbols;
-        } else {
-            SymbolMap::iterator it = symbols.begin();
-            const SymbolMap::iterator end = symbols.end();
-            while (it != end) {
-                SymbolMap::iterator cur = current.find(it->first);
-                if (cur == current.end()) {
-                    current[it->first] = it->second;
-                } else {
-                    cur->second.unite(it->second);
-                }
-                ++it;
-            }
-        }
-    }
-}
-
-static inline void writeReferences(const ReferenceMap &references, SymbolMap &symbols)
-{
-    if (!references.isEmpty()) {
-        const ReferenceMap::const_iterator end = references.end();
-        for (ReferenceMap::const_iterator it = references.begin(); it != end; ++it) {
-            const Set<Location> &refs = it->second;
-            for (Set<Location>::const_iterator rit = refs.begin(); rit != refs.end(); ++rit) {
-                CursorInfo &ci = symbols[*rit];
-                ci.references.insert(it->first);
-            }
-        }
-    }
-}
-
-
-int Project::syncDB()
-{
-    if (mPendingDirtyFiles.isEmpty() && mPendingData.isEmpty())
-        return -1;
-    StopWatch watch;
-    // for (Map<uint32_t, shared_ptr<IndexData> >::iterator it = mPendingData.begin(); it != mPendingData.end(); ++it) {
-    //     writeErrorSymbols(mSymbols, mErrorSymbols, it->second->errors);
-    // }
-
-    if (!mPendingDirtyFiles.isEmpty()) {
-        RTags::dirtySymbols(mSymbols, mPendingDirtyFiles);
-        RTags::dirtySymbolNames(mSymbolNames, mPendingDirtyFiles);
-        RTags::dirtyUsr(mUsr, mPendingDirtyFiles);
-        mPendingDirtyFiles.clear();
-    }
-
-    Set<uint32_t> newFiles;
-    for (Map<uint32_t, shared_ptr<IndexData> >::iterator it = mPendingData.begin(); it != mPendingData.end(); ++it) {
-        const shared_ptr<IndexData> &data = it->second;
-        addDependencies(data->dependencies, newFiles);
-        addFixIts(data->dependencies, data->fixIts);
-        writeSymbols(data->symbols, mSymbols);
-        writeUsr(data->usrMap, mUsr, mSymbols);
-        writeReferences(data->references, mSymbols);
-        writeSymbolNames(data->symbolNames, mSymbolNames);
-    }
-    for (Set<uint32_t>::const_iterator it = newFiles.begin(); it != newFiles.end(); ++it) {
-        const Path path = Location::path(*it);
-        const Path dir = path.parentDir();
-        if (dir.isEmpty()) {
-            error() << "Got empty parent dir for" << path << *it;
-        } else if (mWatchedPaths.insert(dir)) {
-            mWatcher.watch(dir);
-        }
-    }
-    mPendingData.clear();
-    if (Server::instance()->options().options & Server::Validate) {
-        shared_ptr<ValidateDBJob> validate(new ValidateDBJob(static_pointer_cast<Project>(shared_from_this()), mPreviousErrors));
-        Server::instance()->startQueryJob(validate);
-    }
-    return watch.elapsed();
-}
 
 bool Project::isIndexed(uint32_t fileId) const
 {

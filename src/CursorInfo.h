@@ -21,17 +21,6 @@ public:
         JSWeakVariable
     };
 
-    enum RPCursorKind {
-        Invalid = 20000,
-        Function,
-        Class,
-        Constructor,
-        Destructor,
-        Variable,
-        Member,
-        Argument // or struct
-    };
-
     CursorInfo()
         : symbolLength(0), kind(CXCursor_FirstInvalid), type(CXType_Invalid), enumValue(0), start(-1), end(-1)
     {}
