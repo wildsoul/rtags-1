@@ -134,7 +134,7 @@ bool Server::init(const Options &options)
     return true;
 }
 
-shared_ptr<Project> Server::addProject(const Path &path) // lock always held
+shared_ptr<Project> Server::addProject(const Path &path)
 {
     shared_ptr<Project> &project = mProjects[path];
     if (!project) {
@@ -146,7 +146,7 @@ shared_ptr<Project> Server::addProject(const Path &path) // lock always held
 
 int Server::reloadProjects()
 {
-    mProjects.clear(); // ### could keep the ones that persist somehow
+    mProjects.clear();
     List<Path> projects = mOptions.dataDir.files(Path::File);
     const Path home = Path::home();
     for (int i=0; i<projects.size(); ++i) {
@@ -612,452 +612,497 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
 
 void Server::referencesForLocation(const QueryMessage &query, Connection *conn)
 {
-    // const Location loc = query.location();
-    // if (loc.isNull()) {
-    //     conn->write("Not indexed");
-    //     conn->finish();
-    //     return;
-    // }
-    // shared_ptr<Project> project = updateProjectForLocation(loc);
-
-    // if (!project) {
-    //     error("No project");
-    //     conn->finish();
-    //     return;
-    // }
-
-    // ReferencesJob job(loc, query, project);
-    // job.run(conn);
-    // conn->finish();
-}
-
-void Server::referencesForName(const QueryMessage& query, Connection *conn)
-{
-    // const String name = query.query();
-
-    // shared_ptr<Project> project = currentProject();
-    // if (!project) {
-    //     error("No project");
-    //     conn->finish();
-    //     return;
-    // }
-
-    // ReferencesJob job(name, query, project);
-    // job.run(conn);
-    // conn->finish();
-}
-
-void Server::findSymbols(const QueryMessage &query, Connection *conn)
-{
-    // const String partial = query.query();
-
-    // shared_ptr<Project> project = currentProject();
-    // if (!project) {
-    //     error("No project");
-    //     conn->finish();
-    //     return;
-    // }
-
-    // FindSymbolsJob job(query, project);
-    // job.run(conn);
-    // conn->finish();
-}
-
-void Server::listSymbols(const QueryMessage &query, Connection *conn)
-{
-    // const String partial = query.query();
-
-    // shared_ptr<Project> project = currentProject();
-    // if (!project) {
-    //     error("No project");
-    //     conn->finish();
-    //     return;
-    // }
-
-    // ListSymbolsJob job(query, project);
-    // job.run(conn);
-    // conn->finish();
-}
-
-void Server::status(const QueryMessage &query, Connection *conn)
-{
-    // shared_ptr<Project> project = currentProject();
-    // if (!project) {
-    //     error("No project");
-    //     conn->finish();
-    //     return;
-    // }
-
-    // StatusJob job(query, project);
-    // job.run(conn);
-    // conn->finish();
-}
-
-void Server::isIndexed(const QueryMessage &query, Connection *conn)
-{
-    // int ret = 0;
-    // const Match match = query.match();
-    // shared_ptr<Project> project = updateProjectForLocation(match);
-    // if (project) {
-    //     bool indexed = false;
-    //     if (project->match(match, &indexed))
-    //         ret = indexed ? 1 : 2;
-    // }
-
-    // error("=> %d", ret);
-    // conn->write<16>("%d", ret);
-    // conn->finish();
-}
-
-void Server::reloadFileManager(const QueryMessage &, Connection *conn)
-{
-    shared_ptr<Project> project = currentProject();
-    if (project) {
-        conn->write<512>("Reloading files for %s", project->path().constData());
-        conn->finish();
-        project->fileManager()->reload();
-    } else {
-        conn->write("No current project");
-        conn->finish();
-    }
-}
-
-
-void Server::hasFileManager(const QueryMessage &query, Connection *conn)
-{
-    const Path path = query.query();
-    shared_ptr<Project> project = updateProjectForLocation(path);
-    if (project && project->fileManager() && (project->fileManager()->contains(path) || project->match(path))) {
-        error("=> 1");
-        conn->write("1");
-    } else {
-        error("=> 0");
-        conn->write("0");
-    }
-    conn->finish();
-}
-
-void Server::preprocessFile(const QueryMessage &query, Connection *conn)
-{
-    const Path path = query.query();
-    shared_ptr<Project> project = updateProjectForLocation(path);
-    if (!project || !project->isValid()) {
-        conn->write("No project");
+    const Location loc = query.location();
+    if (loc.isNull()) {
+        conn->write("Not indexed");
         conn->finish();
         return;
     }
-
-    const SourceInformation c = project->sourceInfo(path);
-    if (c.isNull()) {
-        conn->write("No arguments for " + path);
-        conn->finish();
-        return;
-    }
-    if (c.builds.size() <= query.buildIndex()) {
-        conn->write<512>("No build for for index %d (max %d) for %s",
-                         query.buildIndex(), c.builds.size() - 1, path.constData());
-        conn->finish();
-        return;
-    }
-
-    Preprocessor* pre = new Preprocessor(c, query.buildIndex(), conn);
-    pre->preprocess();
-}
-
-void Server::clearProjects()
-{
-    for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it)
-        it->second->unload();
-    Rct::removeDirectory(mOptions.dataDir);
-    mCurrentProject.reset();
-    unlink((mOptions.dataDir + ".currentProject").constData());
-    mProjects.clear();
-}
-
-void Server::reindex(const QueryMessage &query, Connection *conn)
-{
-    Match match = query.match();
-    shared_ptr<Project> project = updateProjectForLocation(match);
+    shared_ptr<Project> project = updateProjectForLocation(loc);
     if (!project) {
-        project = currentProject();
-        if (!project || !project->isValid()) {
-            error("No project");
-            conn->finish();
-            return;
-        }
-    }
-
-    const int count = project->reindex(match);
-    // error() << count << query.query();
-    if (count) {
-        conn->write<128>("Dirtied %d files", count);
-    } else {
-        conn->write("No matches");
-    }
-    conn->finish();
-}
-
-void Server::startJob(const shared_ptr<ThreadPool::Job> &job)
-{
-    mThreadPool->start(job);
-}
-
-void Server::processSourceFile(const GccArguments &args, const List<String> &projects)
-{
-    if (args.lang() == GccArguments::NoLang || mOptions.ignoredCompilers.contains(args.compiler())) {
-        return;
-    }
-    Path srcRoot;
-    if (updateProject(projects)) {
-        srcRoot = currentProject()->path();
-    } else if (!projects.isEmpty()) {
-        srcRoot = projects.first();
-    } else {
-        srcRoot = args.projectRoot();
-    }
-    List<Path> inputFiles = args.inputFiles();
-    if (srcRoot.isEmpty()) {
-        error("Can't find project root for %s", String::join(inputFiles, ", ").constData());
+        error("No project");
+        conn->finish();
         return;
     }
 
-    debug() << inputFiles << "in" << srcRoot;
-    const int count = inputFiles.size();
-    int filtered = 0;
-    if (!mOptions.excludeFilters.isEmpty()) {
-        for (int i=0; i<count; ++i) {
-            Path &p = inputFiles[i];
-            if (Filter::filter(p, mOptions.excludeFilters) == Filter::Filtered) {
-                warning() << "Filtered out" << p;
-                p.clear();
-                ++filtered;
-            }
-        }
-    }
-    if (filtered == count) {
-        warning("no input file?");
-        return;
-    }
+    shared_ptr<Database> database = project->database();
+    Database::Cursor cursor = database->cursor(loc);
+    if (cursor.isValid()) {
+        List<Location> locations;
+        if (!(query.flags() & QueryMessage::AllReferences)) {
+            const bool references = !(query.flags() & QueryMessage::FindVirtuals);
+            for (Set<Location>::const_iterator it = cursor.references.begin(); it != cursor.references.end(); ++it) {
+                Database::Cursor c = database->cursor(cursor.location);
+                if (references) {
 
-    shared_ptr<Project> project = mProjects.value(srcRoot);
-    if (!project) {
-        project = addProject(srcRoot);
-        assert(project);
-    }
-    loadProject(project);
+                } else {
 
-    if (!mCurrentProject.lock())
-        mCurrentProject = project;
-
-    const List<String> arguments = args.clangArgs();
-
-    for (int i=0; i<count; ++i) {
-        project->index(inputFiles.at(i), args.compiler(), arguments);
-    }
-}
-void Server::loadProject(const shared_ptr<Project> &project)
-{
-    assert(project);
-    if (!project->isValid()) {
-        assert(!project->isValid());
-        project->init();
-        project->restore();
-    }
-}
-
-shared_ptr<Project> Server::setCurrentProject(const Path &path) // lock always held
-{
-    ProjectsMap::iterator it = mProjects.find(path);
-    if (it != mProjects.end()) {
-        setCurrentProject(it->second);
-        return it->second;
-    }
-    return shared_ptr<Project>();
-}
-
-shared_ptr<Project> Server::setCurrentProject(const shared_ptr<Project> &project)
-{
-    if (project && project != mCurrentProject.lock()) {
-        mCurrentProject = project;
-        FILE *f = fopen((mOptions.dataDir + ".currentProject").constData(), "w");
-        if (f) {
-            if (!fwrite(project->path().constData(), project->path().size(), 1, f) || !fwrite("\n", 1, 1, f)) {
-                error() << "error writing to" << (mOptions.dataDir + ".currentProject");
-                fclose(f);
-                unlink((mOptions.dataDir + ".currentProject").constData());
-            } else {
-                fclose(f);
-            }
-        } else {
-            error() << "error opening" << (mOptions.dataDir + ".currentProject") << "for write";
-        }
-
-        if (!project->isValid())
-            loadProject(project);
-        return project;
-    }
-    return shared_ptr<Project>();
-}
-
-shared_ptr<Project> Server::updateProjectForLocation(const Location &location)
-{
-    return updateProjectForLocation(location.path());
-}
-
-shared_ptr<Project> Server::updateProjectForLocation(const Path &path)
-{
-    return updateProjectForLocation(Match(path));
-}
-
-shared_ptr<Project> Server::updateProjectForLocation(const Match &match)
-{
-    shared_ptr<Project> cur = currentProject();
-    // give current a chance first to avoid switching project when using system headers etc
-    if (cur && cur->match(match))
-        return cur;
-
-    for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
-        if (it->second->match(match)) {
-            return setCurrentProject(it->second->path());
-        }
-    }
-    return shared_ptr<Project>();
-}
-
-void Server::removeProject(const QueryMessage &query, Connection *conn)
-{
-    const bool unload = query.type() == QueryMessage::UnloadProject;
-
-    const Match match = query.match();
-    ProjectsMap::iterator it = mProjects.begin();
-    while (it != mProjects.end()) {
-        ProjectsMap::iterator cur = it++;
-        if (cur->second->match(match)) {
-            if (mCurrentProject.lock() == it->second) {
-                mCurrentProject.reset();
-                unlink((mOptions.dataDir + ".currentProject").constData());
-            }
-            cur->second->unload();
-            Path path = cur->first;
-            conn->write<128>("%s project: %s", unload ? "Unloaded" : "Deleted", path.constData());
-            if (!unload) {
-                RTags::encodePath(path);
-                Path::rm(mOptions.dataDir + path);
-                mProjects.erase(cur);
-            }
-        }
-    }
-    conn->finish();
-}
-
-void Server::reloadProjects(const QueryMessage &query, Connection *conn)
-{
-    const int old = mProjects.size();
-    const int cur = reloadProjects();
-    conn->write<128>("Changed from %d to %d projects", old, cur);
-    conn->finish();
-}
-
-bool Server::selectProject(const Match &match, Connection *conn)
-{
-    shared_ptr<Project> selected;
-    bool error = false;
-    for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
-        if (it->second->match(match)) {
-            if (error) {
-                if (conn)
-                    conn->write(it->first);
-            } else if (selected) {
-                error = true;
-                if (conn) {
-                    conn->write<128>("Multiple matches for %s", match.pattern().constData());
-                    conn->write(selected->path());
-                    conn->write(it->first);
                 }
-                selected.reset();
+                // if (query.flags() &
+
+            }
+
+
+            }
+        } else {
+            locations = cursor.references.toList();
+        }
+
+        // if (query
+
+        //     if (query.flags() & QueryMessage::DeclarationOnly && cursor.isDefinition() && cursor.target.isValid())
+        //         cursor = database->cursor(cursor.target);
+
+        //     if (cursor.location.isValid() && !isFiltered(cursor.location, query))
+        //         conn->write(cursor.location.key(query.keyFlags()).constData());
+        //     conn->finish();
+    
+            // const Location loc = query.location();
+            // if (loc.isNull()) {
+            //     conn->write("Not indexed");
+            //     conn->finish();
+            //     return;
+            // }
+            // shared_ptr<Project> project = updateProjectForLocation(loc);
+
+            // if (!project) {
+            //     error("No project");
+            //     conn->finish();
+            //     return;
+            // }
+
+            // ReferencesJob job(loc, query, project);
+            // job.run(conn);
+            // conn->finish();
+            }
+
+        void Server::referencesForName(const QueryMessage& query, Connection *conn)
+        {
+            // const String name = query.query();
+
+            // shared_ptr<Project> project = currentProject();
+            // if (!project) {
+            //     error("No project");
+            //     conn->finish();
+            //     return;
+            // }
+
+            // ReferencesJob job(name, query, project);
+            // job.run(conn);
+            // conn->finish();
+        }
+
+        void Server::findSymbols(const QueryMessage &query, Connection *conn)
+        {
+            // const String partial = query.query();
+
+            // shared_ptr<Project> project = currentProject();
+            // if (!project) {
+            //     error("No project");
+            //     conn->finish();
+            //     return;
+            // }
+
+            // FindSymbolsJob job(query, project);
+            // job.run(conn);
+            // conn->finish();
+        }
+
+        void Server::listSymbols(const QueryMessage &query, Connection *conn)
+        {
+            // const String partial = query.query();
+
+            // shared_ptr<Project> project = currentProject();
+            // if (!project) {
+            //     error("No project");
+            //     conn->finish();
+            //     return;
+            // }
+
+            // ListSymbolsJob job(query, project);
+            // job.run(conn);
+            // conn->finish();
+        }
+
+        void Server::status(const QueryMessage &query, Connection *conn)
+        {
+            // shared_ptr<Project> project = currentProject();
+            // if (!project) {
+            //     error("No project");
+            //     conn->finish();
+            //     return;
+            // }
+
+            // StatusJob job(query, project);
+            // job.run(conn);
+            // conn->finish();
+        }
+
+        void Server::isIndexed(const QueryMessage &query, Connection *conn)
+        {
+            // int ret = 0;
+            // const Match match = query.match();
+            // shared_ptr<Project> project = updateProjectForLocation(match);
+            // if (project) {
+            //     bool indexed = false;
+            //     if (project->match(match, &indexed))
+            //         ret = indexed ? 1 : 2;
+            // }
+
+            // error("=> %d", ret);
+            // conn->write<16>("%d", ret);
+            // conn->finish();
+        }
+
+        void Server::reloadFileManager(const QueryMessage &, Connection *conn)
+        {
+            shared_ptr<Project> project = currentProject();
+            if (project) {
+                conn->write<512>("Reloading files for %s", project->path().constData());
+                conn->finish();
+                project->fileManager()->reload();
             } else {
-                selected = it->second;
+                conn->write("No current project");
+                conn->finish();
             }
         }
-    }
-    if (selected) {
-        if (setCurrentProject(selected) && conn)
-            conn->write<128>("Selected project: %s for %s", selected->path().constData(), match.pattern().constData());
-        return true;
-    } else if (!error && conn) {
-        conn->write<128>("No matches for %s", match.pattern().constData());
-    }
-    return false;
-}
 
-bool Server::updateProject(const List<String> &projects)
-{
-    for (int i=0; i<projects.size(); ++i) {
-        if (selectProject(projects.at(i), 0))
-            return true;
-    }
-    return false;
-}
 
-void Server::project(const QueryMessage &query, Connection *conn)
-{
-    if (query.query().isEmpty()) {
-        const shared_ptr<Project> current = mCurrentProject.lock();
-        for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
-            conn->write<128>("%s%s%s",
-                             it->first.constData(),
-                             it->second->isValid() ? " (loaded)" : "",
-                             it->second == current ? " <=" : "");
+        void Server::hasFileManager(const QueryMessage &query, Connection *conn)
+        {
+            const Path path = query.query();
+            shared_ptr<Project> project = updateProjectForLocation(path);
+            if (project && project->fileManager() && (project->fileManager()->contains(path) || project->match(path))) {
+                error("=> 1");
+                conn->write("1");
+            } else {
+                error("=> 0");
+                conn->write("0");
+            }
+            conn->finish();
         }
-    } else {
-        Path selected;
-        bool error = false;
-        const Match match = query.match();
-        const ProjectsMap::const_iterator it = mProjects.find(match.pattern());
-        bool ok = false;
-        unsigned long long index = query.query().toULongLong(&ok);
-        if (it != mProjects.end()) {
-            selected = it->first;
-        } else {
-            for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
-                assert(it->second);
-                if (ok) {
-                    if (!index) {
-                        selected = it->first;
-                    } else {
-                        --index;
+
+        void Server::preprocessFile(const QueryMessage &query, Connection *conn)
+        {
+            const Path path = query.query();
+            shared_ptr<Project> project = updateProjectForLocation(path);
+            if (!project || !project->isValid()) {
+                conn->write("No project");
+                conn->finish();
+                return;
+            }
+
+            const SourceInformation c = project->sourceInfo(path);
+            if (c.isNull()) {
+                conn->write("No arguments for " + path);
+                conn->finish();
+                return;
+            }
+            if (c.builds.size() <= query.buildIndex()) {
+                conn->write<512>("No build for for index %d (max %d) for %s",
+                                 query.buildIndex(), c.builds.size() - 1, path.constData());
+                conn->finish();
+                return;
+            }
+
+            Preprocessor* pre = new Preprocessor(c, query.buildIndex(), conn);
+            pre->preprocess();
+        }
+
+        void Server::clearProjects()
+        {
+            for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it)
+                it->second->unload();
+            Rct::removeDirectory(mOptions.dataDir);
+            mCurrentProject.reset();
+            unlink((mOptions.dataDir + ".currentProject").constData());
+            mProjects.clear();
+        }
+
+        void Server::reindex(const QueryMessage &query, Connection *conn)
+        {
+            Match match = query.match();
+            shared_ptr<Project> project = updateProjectForLocation(match);
+            if (!project) {
+                project = currentProject();
+                if (!project || !project->isValid()) {
+                    error("No project");
+                    conn->finish();
+                    return;
+                }
+            }
+
+            const int count = project->reindex(match);
+            // error() << count << query.query();
+            if (count) {
+                conn->write<128>("Dirtied %d files", count);
+            } else {
+                conn->write("No matches");
+            }
+            conn->finish();
+        }
+
+        void Server::startJob(const shared_ptr<ThreadPool::Job> &job)
+        {
+            mThreadPool->start(job);
+        }
+
+        void Server::processSourceFile(const GccArguments &args, const List<String> &projects)
+        {
+            if (args.lang() == GccArguments::NoLang || mOptions.ignoredCompilers.contains(args.compiler())) {
+                return;
+            }
+            Path srcRoot;
+            if (updateProject(projects)) {
+                srcRoot = currentProject()->path();
+            } else if (!projects.isEmpty()) {
+                srcRoot = projects.first();
+            } else {
+                srcRoot = args.projectRoot();
+            }
+            List<Path> inputFiles = args.inputFiles();
+            if (srcRoot.isEmpty()) {
+                error("Can't find project root for %s", String::join(inputFiles, ", ").constData());
+                return;
+            }
+
+            debug() << inputFiles << "in" << srcRoot;
+            const int count = inputFiles.size();
+            int filtered = 0;
+            if (!mOptions.excludeFilters.isEmpty()) {
+                for (int i=0; i<count; ++i) {
+                    Path &p = inputFiles[i];
+                    if (Filter::filter(p, mOptions.excludeFilters) == Filter::Filtered) {
+                        warning() << "Filtered out" << p;
+                        p.clear();
+                        ++filtered;
                     }
                 }
+            }
+            if (filtered == count) {
+                warning("no input file?");
+                return;
+            }
+
+            shared_ptr<Project> project = mProjects.value(srcRoot);
+            if (!project) {
+                project = addProject(srcRoot);
+                assert(project);
+            }
+            loadProject(project);
+
+            if (!mCurrentProject.lock())
+                mCurrentProject = project;
+
+            const List<String> arguments = args.clangArgs();
+
+            for (int i=0; i<count; ++i) {
+                project->index(inputFiles.at(i), args.compiler(), arguments);
+            }
+        }
+        void Server::loadProject(const shared_ptr<Project> &project)
+        {
+            assert(project);
+            if (!project->isValid()) {
+                assert(!project->isValid());
+                project->init();
+                project->restore();
+            }
+        }
+
+        shared_ptr<Project> Server::setCurrentProject(const Path &path) // lock always held
+        {
+            ProjectsMap::iterator it = mProjects.find(path);
+            if (it != mProjects.end()) {
+                setCurrentProject(it->second);
+                return it->second;
+            }
+            return shared_ptr<Project>();
+        }
+
+        shared_ptr<Project> Server::setCurrentProject(const shared_ptr<Project> &project)
+        {
+            if (project && project != mCurrentProject.lock()) {
+                mCurrentProject = project;
+                FILE *f = fopen((mOptions.dataDir + ".currentProject").constData(), "w");
+                if (f) {
+                    if (!fwrite(project->path().constData(), project->path().size(), 1, f) || !fwrite("\n", 1, 1, f)) {
+                        error() << "error writing to" << (mOptions.dataDir + ".currentProject");
+                        fclose(f);
+                        unlink((mOptions.dataDir + ".currentProject").constData());
+                    } else {
+                        fclose(f);
+                    }
+                } else {
+                    error() << "error opening" << (mOptions.dataDir + ".currentProject") << "for write";
+                }
+
+                if (!project->isValid())
+                    loadProject(project);
+                return project;
+            }
+            return shared_ptr<Project>();
+        }
+
+        shared_ptr<Project> Server::updateProjectForLocation(const Location &location)
+        {
+            return updateProjectForLocation(location.path());
+        }
+
+        shared_ptr<Project> Server::updateProjectForLocation(const Path &path)
+        {
+            return updateProjectForLocation(Match(path));
+        }
+
+        shared_ptr<Project> Server::updateProjectForLocation(const Match &match)
+        {
+            shared_ptr<Project> cur = currentProject();
+            // give current a chance first to avoid switching project when using system headers etc
+            if (cur && cur->match(match))
+                return cur;
+
+            for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
+                if (it->second->match(match)) {
+                    return setCurrentProject(it->second->path());
+                }
+            }
+            return shared_ptr<Project>();
+        }
+
+        void Server::removeProject(const QueryMessage &query, Connection *conn)
+        {
+            const bool unload = query.type() == QueryMessage::UnloadProject;
+
+            const Match match = query.match();
+            ProjectsMap::iterator it = mProjects.begin();
+            while (it != mProjects.end()) {
+                ProjectsMap::iterator cur = it++;
+                if (cur->second->match(match)) {
+                    if (mCurrentProject.lock() == it->second) {
+                        mCurrentProject.reset();
+                        unlink((mOptions.dataDir + ".currentProject").constData());
+                    }
+                    cur->second->unload();
+                    Path path = cur->first;
+                    conn->write<128>("%s project: %s", unload ? "Unloaded" : "Deleted", path.constData());
+                    if (!unload) {
+                        RTags::encodePath(path);
+                        Path::rm(mOptions.dataDir + path);
+                        mProjects.erase(cur);
+                    }
+                }
+            }
+            conn->finish();
+        }
+
+        void Server::reloadProjects(const QueryMessage &query, Connection *conn)
+        {
+            const int old = mProjects.size();
+            const int cur = reloadProjects();
+            conn->write<128>("Changed from %d to %d projects", old, cur);
+            conn->finish();
+        }
+
+        bool Server::selectProject(const Match &match, Connection *conn)
+        {
+            shared_ptr<Project> selected;
+            bool error = false;
+            for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
                 if (it->second->match(match)) {
                     if (error) {
-                        conn->write(it->first);
-                    } else if (!selected.isEmpty()) {
+                        if (conn)
+                            conn->write(it->first);
+                    } else if (selected) {
                         error = true;
-                        conn->write<128>("Multiple matches for %s", match.pattern().constData());
-                        conn->write(selected);
-                        conn->write(it->first);
-                        selected.clear();
+                        if (conn) {
+                            conn->write<128>("Multiple matches for %s", match.pattern().constData());
+                            conn->write(selected->path());
+                            conn->write(it->first);
+                        }
+                        selected.reset();
                     } else {
-                        selected = it->first;
+                        selected = it->second;
                     }
                 }
             }
-        }
-        if (!selected.isEmpty()) {
-            shared_ptr<Project> current = mCurrentProject.lock();
-            if (!current || selected != current->path()) {
-                setCurrentProject(selected);
-                conn->write<128>("Selected project: %s for %s", selected.constData(), match.pattern().constData());
+            if (selected) {
+                if (setCurrentProject(selected) && conn)
+                    conn->write<128>("Selected project: %s for %s", selected->path().constData(), match.pattern().constData());
+                return true;
+            } else if (!error && conn) {
+                conn->write<128>("No matches for %s", match.pattern().constData());
             }
-        } else if (!error) {
-            conn->write<128>("No matches for %s", match.pattern().constData());
+            return false;
         }
-    }
-    conn->finish();
-}
 
-void Server::jobCount(const QueryMessage &query, Connection *conn)
-{
+        bool Server::updateProject(const List<String> &projects)
+        {
+            for (int i=0; i<projects.size(); ++i) {
+                if (selectProject(projects.at(i), 0))
+                    return true;
+            }
+            return false;
+        }
+
+        void Server::project(const QueryMessage &query, Connection *conn)
+        {
+            if (query.query().isEmpty()) {
+                const shared_ptr<Project> current = mCurrentProject.lock();
+                for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
+                    conn->write<128>("%s%s%s",
+                                     it->first.constData(),
+                                     it->second->isValid() ? " (loaded)" : "",
+                                     it->second == current ? " <=" : "");
+                }
+            } else {
+                Path selected;
+                bool error = false;
+                const Match match = query.match();
+                const ProjectsMap::const_iterator it = mProjects.find(match.pattern());
+                bool ok = false;
+                unsigned long long index = query.query().toULongLong(&ok);
+                if (it != mProjects.end()) {
+                    selected = it->first;
+                } else {
+                    for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
+                        assert(it->second);
+                        if (ok) {
+                            if (!index) {
+                                selected = it->first;
+                            } else {
+                                --index;
+                            }
+                        }
+                        if (it->second->match(match)) {
+                            if (error) {
+                                conn->write(it->first);
+                            } else if (!selected.isEmpty()) {
+                                error = true;
+                                conn->write<128>("Multiple matches for %s", match.pattern().constData());
+                                conn->write(selected);
+                                conn->write(it->first);
+                                selected.clear();
+                            } else {
+                                selected = it->first;
+                            }
+                        }
+                    }
+                }
+                if (!selected.isEmpty()) {
+                    shared_ptr<Project> current = mCurrentProject.lock();
+                    if (!current || selected != current->path()) {
+                        setCurrentProject(selected);
+                        conn->write<128>("Selected project: %s for %s", selected.constData(), match.pattern().constData());
+                    }
+                } else if (!error) {
+                    conn->write<128>("No matches for %s", match.pattern().constData());
+                }
+            }
+            conn->finish();
+        }
+
+        void Server::jobCount(const QueryMessage &query, Connection *conn)
+        {
     if (query.query().isEmpty()) {
         conn->write<128>("Running with %d jobs", mOptions.threadCount);
     } else {

@@ -46,6 +46,10 @@ public:
         };
         String toString(unsigned flags) const;
         bool isDefinition() const;
+        bool isValid() const { return kind != Invalid; }
+        bool isInvalid() const { return kind == Invalid; }
+        bool isNull() const { return kind == Invalid; }
+        bool isEmpty() const { return kind == Invalid; }
 
         Location location;
         String symbolName;
