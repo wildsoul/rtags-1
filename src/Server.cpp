@@ -1,7 +1,6 @@
 #include "Server.h"
 
 #include "Client.h"
-#include "CompileJob.h"
 #include "CompileMessage.h"
 #include "CreateOutputMessage.h"
 #include "Database.h"

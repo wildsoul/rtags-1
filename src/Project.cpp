@@ -3,7 +3,6 @@
 #include "IndexerJob.h"
 #include "RTags.h"
 #include "Server.h"
-#include "ValidateDBJob.h"
 #include <math.h>
 #include <rct/Log.h>
 #include <rct/MemoryMonitor.h>
