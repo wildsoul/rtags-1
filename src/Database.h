@@ -61,9 +61,9 @@ public:
     virtual void status(const String &query, Connection *conn) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
     virtual int index(const SourceInformation &sourceInformation) = 0;
-    virtual Set<uint32_t> dependencies(uint32_t fileId) const = 0;
-    virtual void sync() = 0;
-    virtual List<String> matchSymbolNames(const String &string) const = 0;
-    virtual Set<Cursor> findCursors(const String &string) const = 0;
+    virtual Set<Path> dependencies(const Path &path) const = 0;
+    virtual Set<String> listSymbols(const String &string, const Path &pathFilter) const = 0;
+    virtual Set<Cursor> findCursors(const String &string, const Path &pathFilter) const = 0;
+    virtual Set<Cursor> cursors(const Path &path) const = 0;
 };
 #endif
