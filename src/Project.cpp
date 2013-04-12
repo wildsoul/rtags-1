@@ -82,7 +82,7 @@ end:
 
 bool Project::isValid() const
 {
-    return mFileManager;
+    return mFileManager.get();
 }
 
 void Project::unload()
