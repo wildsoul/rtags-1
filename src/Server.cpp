@@ -357,11 +357,11 @@ int Server::nextId()
 
 static bool isFiltered(const Location &loc, const QueryMessage &query)
 {
-    if (query.minOffset() == -1) {
-        assert(query.maxOffset() == -1);
+    if (query.minLine() == -1) {
+        assert(query.maxLine() == -1);
         return false;
     }
-    return loc.offset() >= query.minOffset() && loc.offset() <= query.maxOffset();
+    return loc.line() >= query.minLine() && loc.line() <= query.maxLine();
 }
 
 void Server::followLocation(const QueryMessage &query, Connection *conn)
@@ -537,24 +537,18 @@ void Server::findFile(const QueryMessage &query, Connection *conn)
 
 void Server::dumpFile(const QueryMessage &query, Connection *conn)
 {
-    const uint32_t fileId = Location::fileId(query.query());
-    if (!fileId) {
-        conn->write<256>("%s is not indexed", query.query().constData());
-        conn->finish();
-        return;
-    }
+    const Path path = query.query();
+    const Location loc(path, 1, 1);
 
-    Location loc(fileId, 0);
-
-    shared_ptr<Project> project = updateProjectForLocation(loc);
+    shared_ptr<Project> project = updateProjectForLocation(path);
     if (!project || !project->isValid()) {
-        conn->write<256>("%s is not indexed", query.query().constData());
+        conn->write<256>("%s is not indexed", path.constData());
         conn->finish();
         return;
     }
-    const SourceInformation c = project->sourceInfo(fileId);
+    const SourceInformation c = project->sourceInfo(path);
     if (c.isNull()) {
-        conn->write<256>("%s is not indexed", query.query().constData());
+        conn->write<256>("%s is not indexed", path.constData());
         conn->finish();
         return;
     }
@@ -593,27 +587,24 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    const uint32_t fileId = Location::fileId(path);
-    if (!fileId)
-        return;
     const Path srcRoot = project->path();
 
     // const bool absolute = (queryFlags() & QueryMessage::AbsolutePath);
-    Set<uint32_t> dependencies = project->dependencies(fileId, Project::DependsOnArg);
-    dependencies.remove(fileId);
+    Set<Path> dependencies = project->dependencies(path, Project::DependsOnArg);
+    dependencies.remove(path);
     // if (!absolute && path.startsWith(srcRoot))
     //     absolute.remove(0, srcRoot.size());
     if (!dependencies.isEmpty()) {
         conn->write<64>("%s is depended on by:", path.constData());
-        for (Set<uint32_t>::const_iterator it = dependencies.begin(); it != dependencies.end(); ++it) {
-            conn->write<64>("  %s", Location::path(*it).constData());
+        for (Set<Path>::const_iterator it = dependencies.begin(); it != dependencies.end(); ++it) {
+            conn->write<64>("  %s", it->constData());
         }
     }
-    dependencies = project->dependencies(fileId, Project::ArgDependsOn);
+    dependencies = project->dependencies(path, Project::ArgDependsOn);
     if (!dependencies.isEmpty()) {
         conn->write<64>("%s depends on:", path.constData());
-        for (Set<uint32_t>::const_iterator it = dependencies.begin(); it != dependencies.end(); ++it) {
-            conn->write<64>("  %s", Location::path(*it).constData());
+        for (Set<Path>::const_iterator it = dependencies.begin(); it != dependencies.end(); ++it) {
+            conn->write<64>("  %s", path.constData());
         }
     }
     conn->finish();
@@ -756,8 +747,7 @@ void Server::preprocessFile(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    const uint32_t fileId = Location::fileId(path);
-    const SourceInformation c = project->sourceInfo(fileId);
+    const SourceInformation c = project->sourceInfo(path);
     if (c.isNull()) {
         conn->write("No arguments for " + path);
         conn->finish();
@@ -1103,11 +1093,9 @@ void Server::builds(const QueryMessage &query, Connection *conn)
     if (!path.isEmpty()) {
         shared_ptr<Project> project = updateProjectForLocation(path);
         if (project) {
-            const uint32_t fileId = Location::fileId(path);
-            if (fileId) {
-                const SourceInformation info = project->sourceInfo(fileId);
+            const SourceInformation info = project->sourceInfo(path);
+            if (!info.isNull())
                 conn->write(info.toString());
-            }
         }
     } else if (shared_ptr<Project> project = currentProject()) {
         const SourceInformationMap infos = project->sourceInfos();

@@ -39,7 +39,6 @@ enum OptionType {
     IsIndexed,
     IsIndexing,
     JobCount,
-    LineNumbers,
     ListSymbols,
     LogFile,
     Man,
@@ -139,9 +138,8 @@ struct Option opts[] = {
     { UnsavedFile, "unsaved-file", 0, required_argument, "Pass unsaved file on command line. E.g. --unsaved-file=main.cpp:1200 then write 1200 bytes on stdin." },
     { LogFile, "log-file", 'L', required_argument, "Log to this file." },
     { NoContext, "no-context", 'N', no_argument, "Don't print context for locations." },
-    { LineNumbers, "line-numbers", 'l', no_argument, "Output line numbers instead of offsets." },
     { PathFilter, "path-filter", 'i', required_argument, "Filter out results not matching with arg." },
-    { RangeFilter, "range-filter", 0, required_argument, "Filter out results not in the specified range." },
+    { RangeFilter, "range-filter", 0, required_argument, "Filter out results not in the specified line range." },
     { FilterSystemHeaders, "filter-system-headers", 'H', no_argument, "Don't exempt system headers from path filters." },
     { AllReferences, "all-references", 'e', no_argument, "Include definitions/declarations/constructors/destructors for references. Used for rename symbol." },
     { ElispList, "elisp-list", 'Y', no_argument, "Output elisp: (list \"one\" \"two\" ...)." },
@@ -272,7 +270,7 @@ public:
         msg.setMax(rc->max());
         msg.setBuildIndex(buildIndex);
         msg.setPathFilters(rc->pathFilters().toList());
-        msg.setRangeFilter(rc->minOffset(), rc->maxOffset());
+        msg.setRangeFilter(rc->minLine(), rc->maxLine());
         msg.setProjects(rc->projects());
         return client->send(&msg, rc->timeout());
     }
@@ -431,7 +429,7 @@ public:
 
 RClient::RClient()
     : mQueryFlags(0), mMax(-1), mLogLevel(0), mTimeout(0),
-      mMinOffset(-1), mMaxOffset(-1), mConnectTimeout(DEFAULT_CONNECT_TIMEOUT), mArgc(0), mArgv(0)
+      mMinLine(-1), mMaxLine(-1), mConnectTimeout(DEFAULT_CONNECT_TIMEOUT), mArgc(0), mArgv(0)
 {
 }
 
@@ -670,17 +668,14 @@ bool RClient::parse(int &argc, char **argv)
                 fprintf(stderr, "Can't parse range, must be uint-uint. E.g. 1-123\n");
                 return false;
             } else {
-                mMinOffset = atoi(caps.at(1).capture.constData());
-                mMaxOffset = atoi(caps.at(2).capture.constData());
-                if (mMaxOffset <= mMinOffset || mMinOffset < 0) {
-                    fprintf(stderr, "Invalid range (%d-%d), must be uint-uint. E.g. 1-123\n", mMinOffset, mMaxOffset);
+                mMinLine = atoi(caps.at(1).capture.constData());
+                mMaxLine = atoi(caps.at(2).capture.constData());
+                if (mMaxLine <= 0 || mMaxLine < mMinLine || mMinLine <= 0) {
+                    fprintf(stderr, "Invalid range (%d-%d), must be uint-uint. E.g. 1-123\n", mMinLine, mMaxLine);
                     return false;
                 }
             }
             break; }
-        case LineNumbers:
-            mQueryFlags |= QueryMessage::LineNumbers;
-            break;
         case Verbose:
             ++mLogLevel;
             break;
@@ -744,8 +739,8 @@ bool RClient::parse(int &argc, char **argv)
         case FollowLocation:
         case CursorInfo:
         case ReferenceLocation: {
-            const String encoded = Location::encodeClientLocation(optarg);
-            if (encoded.isEmpty()) {
+            const Location loc = Location::decode(optarg);
+            if (loc.isNull()) {
                 fprintf(stderr, "Can't resolve argument %s\n", optarg);
                 return false;
             }
@@ -756,7 +751,7 @@ bool RClient::parse(int &argc, char **argv)
             case ReferenceLocation: type = QueryMessage::ReferencesLocation; break;
             default: assert(0); break;
             }
-            addQuery(type, encoded);
+            addQuery(type, loc.encode());
             break; }
         case WithProject:
             mProjects.append(optarg);

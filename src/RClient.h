@@ -20,8 +20,8 @@ public:
     int timeout() const { return mTimeout; }
 
     const Set<String> &pathFilters() const { return mPathFilters; }
-    int minOffset() const { return mMinOffset; }
-    int maxOffset() const { return mMaxOffset; }
+    int minLine() const { return mMinLine; }
+    int maxLine() const { return mMaxLine; }
 
     const Map<Path, String> &unsavedFiles() const { return mUnsavedFiles; }
 
@@ -43,7 +43,7 @@ private:
     void addCompile(const Path &cwd, const String &args);
 
     unsigned mQueryFlags;
-    int mMax, mLogLevel, mTimeout, mMinOffset, mMaxOffset, mConnectTimeout;
+    int mMax, mLogLevel, mTimeout, mMinLine, mMaxLine, mConnectTimeout;
     String mContext;
     Set<String> mPathFilters;
     Map<Path, String> mUnsavedFiles;

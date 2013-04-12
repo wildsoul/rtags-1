@@ -39,7 +39,7 @@ public:
 
     String kindSpelling() const { return kindSpelling(kind); }
     static String kindSpelling(uint16_t kind);
-    bool dirty(const Set<uint32_t> &dirty)
+    bool dirty(const Set<Path> &dirty)
     {
         bool changed = false;
         Set<Location> *locations[] = { &targets, &references };
@@ -47,7 +47,7 @@ public:
             Set<Location> &l = *locations[i];
             Set<Location>::iterator it = l.begin();
             while (it != l.end()) {
-                if (dirty.contains(it->fileId())) {
+                if (dirty.contains(it->path())) {
                     changed = true;
                     l.erase(it++);
                 } else {

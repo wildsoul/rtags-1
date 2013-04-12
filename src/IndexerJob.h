@@ -24,13 +24,15 @@ public:
     int symbolCount() const { return mSymbolCount; }
     int elapsed() const { return mElapsed; }
     Type type() const { return mType; }
-    uint32_t fileId() const { return mFileId; }
     Path path() const { return mSourceInformation.sourceFile; }
     signalslot::Signal1<shared_ptr<IndexerJob> > &finished() { return mFinished; }
+    enum State {
+        NotStarted,
+        Running,
+    };
 protected:
     virtual void execute();
 private:
-    const uint32_t mFileId;
     shared_ptr<Database> mDatabase;
     const Type mType;
     SourceInformation mSourceInformation;

@@ -94,60 +94,6 @@ String backtrace(int)
 }
 #endif
 
-void dirtySymbolNames(SymbolNameMap &map, const Set<uint32_t> &dirty)
-{
-    SymbolNameMap::iterator it = map.begin();
-    while (it != map.end()) {
-        Set<Location> &locations = it->second;
-        Set<Location>::iterator i = locations.begin();
-        while (i != locations.end()) {
-            if (dirty.contains(i->fileId())) {
-                locations.erase(i++);
-            } else {
-                ++i;
-            }
-        }
-        if (locations.isEmpty()) {
-            map.erase(it++);
-        } else {
-            ++it;
-        }
-    }
-}
-
-void dirtySymbols(SymbolMap &map, const Set<uint32_t> &dirty)
-{
-    SymbolMap::iterator it = map.begin();
-    while (it != map.end()) {
-        if (dirty.contains(it->first.fileId())) {
-            map.erase(it++);
-        } else {
-            CursorInfo &cursorInfo = it->second;
-            cursorInfo.dirty(dirty);
-            ++it;
-        }
-    }
-}
-void dirtyUsr(UsrMap &map, const Set<uint32_t> &dirty)
-{
-    UsrMap::iterator it = map.begin();
-    while (it != map.end()) {
-        Set<Location> &locations = it->second;
-        Set<Location>::iterator i = locations.begin();
-        while (i != locations.end()) {
-            if (dirty.contains(i->fileId())) {
-                locations.erase(i++);
-            } else {
-                ++i;
-            }
-        }
-        if (locations.isEmpty()) {
-            map.erase(it++);
-        } else {
-            ++it;
-        }
-    }
-}
 /* Same behavior as rtags-default-current-project() */
 
 enum FindAncestorFlag {

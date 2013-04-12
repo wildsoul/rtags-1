@@ -58,7 +58,6 @@ set(RTAGS_SHARED_SOURCES
   CompileMessage.cpp
   CompletionMessage.cpp
   CreateOutputMessage.cpp
-  Location.cpp
   QueryMessage.cpp
   RTags.cpp)
 
@@ -71,7 +70,6 @@ set(RDM_SOURCES
   IndexerJob.cpp
   Preprocessor.cpp
   Project.cpp
-  RTagsClang.cpp
   ScanJob.cpp
   Server.cpp
   )

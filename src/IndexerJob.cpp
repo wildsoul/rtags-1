@@ -6,8 +6,7 @@
 
 IndexerJob::IndexerJob(const shared_ptr<Database> &db, Type type,
                        const SourceInformation &sourceInformation, Connection *connection)
-    : ThreadPool::Job(), mFileId(Location::insertFile(sourceInformation.sourceFile)),
-      mDatabase(db), mType(type), mSourceInformation(sourceInformation),
+    : ThreadPool::Job(), mDatabase(db), mType(type), mSourceInformation(sourceInformation),
       mParseTime(0), mSymbolCount(-1), mElapsed(-1)
 {
     assert((connection != 0) == (type == Dump));

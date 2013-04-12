@@ -43,22 +43,21 @@ public:
 
     enum Flag {
         NoContext = 0x00001,
-        LineNumbers = 0x00002,
-        FilterSystemIncludes = 0x00004,
-        StripParentheses = 0x00008,
-        AllReferences = 0x00010,
-        ReverseSort = 0x00020,
-        ElispList = 0x00040,
-        IMenu = 0x00080,
-        MatchRegexp = 0x00100,
-        MatchCaseInsensitive = 0x00200,
-        FindVirtuals = 0x00400,
-        Silent = 0x00800,
-        AbsolutePath = 0x01000,
-        FindFilePreferExact = 0x02000,
-        CursorInfoIncludeTargets = 0x04000,
-        CursorInfoIncludeReferences = 0x08000,
-        DeclarationOnly = 0x10000
+        FilterSystemIncludes = 0x00002,
+        StripParentheses = 0x00004,
+        AllReferences = 0x00008,
+        ReverseSort = 0x00010,
+        ElispList = 0x00020,
+        IMenu = 0x00040,
+        MatchRegexp = 0x00080,
+        MatchCaseInsensitive = 0x00100,
+        FindVirtuals = 0x00200,
+        Silent = 0x00400,
+        AbsolutePath = 0x00800,
+        FindFilePreferExact = 0x01000,
+        CursorInfoIncludeTargets = 0x02000,
+        CursorInfoIncludeReferences = 0x04000,
+        DeclarationOnly = 0x08000
     };
 
     QueryMessage(Type type = Invalid);
@@ -76,19 +75,19 @@ public:
     String context() const { return mContext; }
 
     String query() const { return mQuery; }
-    Location location() const { return Location::decodeClientLocation(mQuery); }
+    Location location() const { return Location::decode(mQuery); }
     void setQuery(const String &query) { mQuery = query; }
 
     Match match() const;
 
-    void setRangeFilter(int min, int max)
+    void setRangeFilter(int minLine, int maxLine)
     {
-        mMinOffset = min;
-        mMaxOffset = max;
+        mMinLine = minLine;
+        mMaxLine = maxLine;
     }
 
-    int minOffset() const { return mMinOffset; }
-    int maxOffset() const { return mMaxOffset; }
+    int minLine() const { return mMinLine; }
+    int maxLine() const { return mMaxLine; }
 
     int max() const { return mMax; }
     void setMax(int max) { mMax = max; }
@@ -111,7 +110,7 @@ private:
     String mQuery, mContext;
     Type mType;
     unsigned mFlags;
-    int mMax, mMinOffset, mMaxOffset;
+    int mMax, mMinLine, mMaxLine;
     uint8_t mBuildIndex;
     List<String> mPathFilters;
     List<String> mProjects;

@@ -10,6 +10,9 @@
 #include <rct/FileSystemWatcher.h>
 #include "IndexerJob.h"
 
+typedef Map<Path, Set<String> > FilesMap;
+typedef Map<Path, SourceInformation> SourceInformationMap;
+typedef Map<Path, Set<Path> > DependencyMap;
 class FileManager;
 class TimerEvent;
 class Database;
@@ -32,17 +35,18 @@ public:
     const FilesMap &files() const { return mFiles; }
     FilesMap &files() { return mFiles; }
 
-    bool isIndexed(uint32_t fileId) const;
+    bool isIndexed(const Path &path) const;
 
     void index(const SourceInformation &args, IndexerJob::Type type);
     bool index(const Path &sourceFile, const Path &compiler = Path(), const List<String> &args = List<String>());
     SourceInformationMap sourceInfos() const;
-    SourceInformation sourceInfo(uint32_t fileId) const;
+    SourceInformation sourceInfo(const Path &path) const;
     enum DependencyMode {
         DependsOnArg,
         ArgDependsOn // slow
     };
-    Set<uint32_t> dependencies(uint32_t fileId, DependencyMode mode) const;
+    Set<Path> dependencies(const Path &path, DependencyMode mode) const;
+    void setDependencies(const Path &path, const Set<Path> &dependencies);
     int reindex(const Match &match);
     int remove(const Match &match);
     void onJobFinished(shared_ptr<IndexerJob> job);
@@ -50,11 +54,11 @@ public:
     DependencyMap dependencies() const;
     Set<Path> watchedPaths() const { return mWatchedPaths; }
     bool isIndexing() const { return !mJobs.isEmpty(); }
-    int dirty(const Set<uint32_t> &files);
+    int dirty(const Set<Path> &files);
     virtual void timerEvent(TimerEvent *e);
 private:
-    void onFileModified(const Path &);
-    void addDependencies(const DependencyMap &hash, Set<uint32_t> &newFiles);
+    void onFileModified(const Path &path);
+    void onFileRemoved(const Path &path);
 
     shared_ptr<FileManager> mFileManager;
     shared_ptr<Database> mDatabase;
@@ -64,22 +68,14 @@ private:
     FilesMap mFiles;
 
     int mJobCounter;
-    Map<uint32_t, shared_ptr<IndexerJob> > mJobs;
-    struct PendingJob
-    {
-        SourceInformation source;
-        IndexerJob::Type type;
-    };
-    Map<uint32_t, PendingJob> mPendingJobs;
-
+    Map<Path, shared_ptr<IndexerJob> > mJobs;
     StopWatch mTimer;
 
     DependencyMap mDependencies;
     SourceInformationMap mSources;
 
     FileSystemWatcher mWatcher;
-    Set<Path> mWatchedPaths;
-    Set<uint32_t> mModifiedFiles;
+    Set<Path> mWatchedPaths, mModifiedFiles;
     Timer mModifiedFilesTimer;
 };
 

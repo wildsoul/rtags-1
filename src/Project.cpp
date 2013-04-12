@@ -20,7 +20,7 @@ Project::Project(const Path &path)
     : mPath(path), mJobCounter(0)
 {
     mWatcher.modified().connect(this, &Project::onFileModified);
-    mWatcher.removed().connect(this, &Project::onFileModified);
+    mWatcher.removed().connect(this, &Project::onFileRemoved);
     mDatabase = Server::instance()->factory().createDatabase();
 }
 
@@ -99,8 +99,7 @@ bool Project::match(const Match &p, bool *indexed) const
     bool ret = false;
     for (int i=0; i<count; ++i) {
         const Path &path = paths[i];
-        const uint32_t id = Location::fileId(path);
-        if (isIndexed(id)) {
+        if (isIndexed(path)) {
             if (indexed)
                 *indexed = true;
             return true;
@@ -117,10 +116,10 @@ bool Project::match(const Match &p, bool *indexed) const
 
 void Project::onJobFinished(shared_ptr<IndexerJob> job)
 {
-    const uint32_t fileId = job->fileId();
-    if (mJobs.value(fileId) != job)
+    const Path path = job->path();
+    if (mJobs.value(path) != job)
         return;
-    mJobs.remove(fileId);
+    mJobs.remove(path);
 
     const int idx = mJobCounter - mJobs.size();
 
@@ -129,10 +128,6 @@ void Project::onJobFinished(shared_ptr<IndexerJob> job)
           String::formatTime(time(0), String::Time).constData(),
           job->path().constData(), job->elapsed(),
           job->symbolCount() == -1 ? "Error" : String::format<32>("%d symbols", job->symbolCount()).constData());
-    bool ok;
-    PendingJob pending = mPendingJobs.take(fileId, &ok);
-    if (ok)
-        index(pending.source, pending.type);
 }
 
 bool Project::save()
@@ -165,16 +160,13 @@ void Project::index(const SourceInformation &sourceInformation, IndexerJob::Type
     static const char *fileFilter = getenv("RTAGS_FILE_FILTER");
     if (fileFilter && !strstr(sourceInformation.sourceFile.constData(), fileFilter))
         return;
-    const uint32_t fileId = Location::insertFile(sourceInformation.sourceFile);
-    shared_ptr<IndexerJob> &job = mJobs[fileId];
-    if (job) {
-        const PendingJob pending = { sourceInformation, type };
-        mPendingJobs[fileId] = pending;
+    shared_ptr<IndexerJob> &job = mJobs[sourceInformation.sourceFile];
+    if (job && job->state() == ThreadPool::Job::NotStarted) {
         return;
     }
     shared_ptr<Project> project = static_pointer_cast<Project>(shared_from_this());
 
-    mSources[fileId] = sourceInformation;
+    mSources[sourceInformation.sourceFile] = sourceInformation;
     save(); // do this in a timer?
 
     if (!mJobCounter++)
@@ -250,7 +242,7 @@ static inline Path resolveCompiler(const Path &compiler)
 bool Project::index(const Path &sourceFile, const Path &cc, const List<String> &args)
 {
     const Path compiler = resolveCompiler(cc.canonicalized());
-    SourceInformation sourceInformation = sourceInfo(Location::insertFile(sourceFile));
+    SourceInformation sourceInformation = sourceInfo(sourceFile);
     const bool js = args.isEmpty() && sourceFile.endsWith(".js");
     bool added = false;
     if (sourceInformation.isNull()) {
@@ -282,11 +274,11 @@ bool Project::index(const Path &sourceFile, const Path &cc, const List<String> &
 
 void Project::onFileModified(const Path &file)
 {
-    const uint32_t fileId = Location::fileId(file);
-    debug() << file << "was modified" << fileId << mModifiedFiles.contains(fileId);
-    if (!fileId || !mModifiedFiles.insert(fileId)) {
+    debug() << file << "was modified" << mModifiedFiles.contains(file);
+    if (!file.isFile() || !mModifiedFiles.insert(file)) {
         return;
     }
+
     if (mModifiedFiles.size() == 1 && file.isSource()) {
         dirty(mModifiedFiles);
         mModifiedFiles.clear();
@@ -296,60 +288,51 @@ void Project::onFileModified(const Path &file)
     }
 }
 
+void Project::onFileRemoved(const Path &path)
+{
+    error() << "Need to tell db to remove path";
+}
+
+
 SourceInformationMap Project::sourceInfos() const
 {
     return mSources;
 }
 
-SourceInformation Project::sourceInfo(uint32_t fileId) const
+SourceInformation Project::sourceInfo(const Path &path) const
 {
-    if (fileId) {
-        return mSources.value(fileId);
-    }
-    return SourceInformation();
+    return mSources.value(path);
 }
 
-void Project::addDependencies(const DependencyMap &deps, Set<uint32_t> &newFiles)
-{
-    StopWatch timer;
-
-    const DependencyMap::const_iterator end = deps.end();
-    for (DependencyMap::const_iterator it = deps.begin(); it != end; ++it) {
-        Set<uint32_t> &values = mDependencies[it->first];
-        if (values.isEmpty()) {
-            values = it->second;
-        } else {
-            values.unite(it->second);
-        }
-        if (newFiles.isEmpty()) {
-            newFiles = it->second;
-        } else {
-            newFiles.unite(it->second);
-        }
-        newFiles.insert(it->first);
-    }
-}
-
-Set<uint32_t> Project::dependencies(uint32_t fileId, DependencyMode mode) const
+Set<Path> Project::dependencies(const Path &path, DependencyMode mode) const
 {
     if (mode == DependsOnArg)
-        return mDependencies.value(fileId);
+        return mDependencies.value(path);
 
-    Set<uint32_t> ret;
+    Set<Path> ret;
     const DependencyMap::const_iterator end = mDependencies.end();
     for (DependencyMap::const_iterator it = mDependencies.begin(); it != end; ++it) {
-        if (it->second.contains(fileId))
+        if (it->second.contains(path))
             ret.insert(it->first);
     }
     return ret;
 }
 
+void Project::setDependencies(const Path &path, const Set<Path> &paths)
+{
+    if (paths.isEmpty()) {
+        mDependencies.remove(path);
+    } else {
+        mDependencies[path] = paths;
+    }
+}
+
 int Project::reindex(const Match &match)
 {
-    Set<uint32_t> files;
+    Set<Path> files;
     const DependencyMap::const_iterator end = mDependencies.end();
     for (DependencyMap::const_iterator it = mDependencies.begin(); it != end; ++it) {
-        if (match.isEmpty() || match.match(Location::path(it->first))) {
+        if (match.isEmpty() || match.match(it->first)) {
             files += it->first;
         }
     }
@@ -362,9 +345,8 @@ int Project::remove(const Match &match)
     SourceInformationMap::iterator it = mSources.begin();
     while (it != mSources.end()) {
         if (match.match(it->second.sourceFile)) {
-            const uint32_t fileId = it->first;
+            mJobs.remove(it->first);
             mSources.erase(it++);
-            mJobs.remove(fileId);
             ++count;
         } else {
             ++it;
@@ -374,14 +356,14 @@ int Project::remove(const Match &match)
 }
 
 
-int Project::dirty(const Set<uint32_t> &dirty)
+int Project::dirty(const Set<Path> &dirty)
 {
     int ret = 0;
-    Set<uint32_t> dirtyFiles;
+    Set<Path> dirtyFiles;
     Map<Path, List<String> > toIndex;
-    for (Set<uint32_t>::const_iterator it = dirty.begin(); it != dirty.end(); ++it)
+    for (Set<Path>::const_iterator it = dirty.begin(); it != dirty.end(); ++it)
         dirtyFiles += mDependencies.value(*it);
-    for (Set<uint32_t>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
+    for (Set<Path>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
         const SourceInformationMap::const_iterator found = mSources.find(*it);
         if (found != mSources.end()) {
             index(found->second, IndexerJob::Dirty);
@@ -400,9 +382,9 @@ void Project::timerEvent(TimerEvent *e)
 }
 
 
-bool Project::isIndexed(uint32_t fileId) const
+bool Project::isIndexed(const Path &file) const
 {
-    return mDependencies.contains(fileId);
+    return mDependencies.contains(file);
 }
 
 SourceInformationMap Project::sources() const

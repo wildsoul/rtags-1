@@ -7,7 +7,6 @@
 #include <rct/Event.h>
 #include <rct/SignalSlot.h>
 #include <rct/RegExp.h>
-#include "RTagsClang.h"
 
 class CursorInfo;
 class Location;

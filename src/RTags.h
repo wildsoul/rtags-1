@@ -20,12 +20,6 @@ namespace RTags {
 
 enum { CompilationError = -1, CompilationErrorXml = -2 };
 
-enum DatabaseLockType {
-    Read = ReadWriteLock::Read,
-    Write = ReadWriteLock::Write,
-    Erase
-};
-
 enum UnitType {
     CompileC,
     CompileCPlusPlus
@@ -39,25 +33,8 @@ enum CursorType {
 void initMessages();
 }
 
-class CursorInfo;
-typedef Map<Location, CursorInfo> SymbolMap;
-typedef Map<uint32_t, SymbolMap> ErrorSymbolMap;
-typedef Map<String, Set<Location> > UsrMap;
-typedef Map<Location, Set<Location> > ReferenceMap;
-typedef Map<String, Set<Location> > SymbolNameMap;
-typedef Map<uint32_t, Set<uint32_t> > DependencyMap;
-typedef Map<uint32_t, SourceInformation> SourceInformationMap;
-typedef Map<Path, Set<String> > FilesMap;
-typedef Map<uint32_t, Set<FixIt> > FixItMap;
-typedef Map<uint32_t, List<String> > DiagnosticsMap;
-
 namespace RTags {
-void dirtySymbolNames(SymbolNameMap &map, const Set<uint32_t> &dirty);
-void dirtySymbols(SymbolMap &map, const Set<uint32_t> &dirty);
-void dirtyUsr(UsrMap &map, const Set<uint32_t> &dirty);
-
 String backtrace(int maxFrames = -1);
-
 
 template <typename Container, typename Value>
 inline bool addTo(Container &container, const Value &value)
@@ -146,16 +123,6 @@ inline void decodePath(Path &path)
             break;
         }
     }
-}
-
-inline int digits(int len)
-{
-    int ret = 1;
-    while (len >= 10) {
-        len /= 10;
-        ++ret;
-    }
-    return ret;
 }
 
 String filterPreprocessor(const Path &path);
