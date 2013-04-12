@@ -48,7 +48,7 @@ public:
         AllowMultipleBuildsForSameCompiler = 0x080,
         NoStartupCurrentProject = 0x100
     };
-    ThreadPool *threadPool() const { return mIndexerThreadPool; }
+    ThreadPool *threadPool() const { return mThreadPool; }
     void startJob(const shared_ptr<ThreadPool::Job> &job);
     struct Options {
         Options() : options(0), threadCount(0), unloadTimer(0), stackSize(0) {}
@@ -65,14 +65,13 @@ private:
     bool selectProject(const Match &match, Connection *conn);
     bool updateProject(const List<String> &projects);
 
-    void timerEvent(TimerEvent *event);
+    virtual void timerEvent(TimerEvent *event);
 
     void clear();
     void onNewConnection();
     signalslot::Signal2<int, const List<String> &> &complete() { return mComplete; }
     shared_ptr<Project> setCurrentProject(const Path &path);
     shared_ptr<Project> setCurrentProject(const shared_ptr<Project> &project);
-    void event(const Event *event);
     void processSourceFile(const GccArguments &args, const List<String> &projects);
     void onNewMessage(Message *message, Connection *conn);
     void onConnectionDestroyed(Connection *o);
@@ -86,8 +85,6 @@ private:
     void followLocation(const QueryMessage &query, Connection *conn);
     void cursorInfo(const QueryMessage &query, Connection *conn);
     void dependencies(const QueryMessage &query, Connection *conn);
-    void fixIts(const QueryMessage &query, Connection *conn);
-    void JSON(const QueryMessage &query, Connection *conn);
     void jobCount(const QueryMessage &query, Connection *conn);
     void referencesForLocation(const QueryMessage &query, Connection *conn);
     void referencesForName(const QueryMessage &query, Connection *conn);
@@ -130,7 +127,7 @@ private:
     bool mVerbose;
     int mJobId;
 
-    ThreadPool *mIndexerThreadPool;
+    ThreadPool *mThreadPool;
     signalslot::Signal2<int, const List<String> &> mComplete;
 
     Timer mUnloadTimer;

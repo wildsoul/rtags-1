@@ -32,7 +32,7 @@
 void *UnloadTimer = &UnloadTimer;
 Server *Server::sInstance = 0;
 Server::Server()
-    : mServer(0), mVerbose(false), mJobId(0), mIndexerThreadPool(0)
+    : mServer(0), mVerbose(false), mJobId(0), mThreadPool(0)
 {
     assert(!sInstance);
     sInstance = this;
@@ -48,10 +48,10 @@ Server::~Server()
 
 void Server::clear()
 {
-    if (mIndexerThreadPool) {
-        mIndexerThreadPool->clearBackLog();
-        delete mIndexerThreadPool;
-        mIndexerThreadPool = 0;
+    if (mThreadPool) {
+        mThreadPool->clearBackLog();
+        delete mThreadPool;
+        mThreadPool = 0;
     }
     Path::rm(mOptions.socketFile);
     delete mServer;
@@ -71,7 +71,7 @@ bool Server::init(const Options &options)
     }
     RTags::initMessages();
 
-    mIndexerThreadPool = new ThreadPool(options.threadCount, options.stackSize);
+    mThreadPool = new ThreadPool(options.threadCount, options.stackSize);
 
     mOptions = options;
     if (options.options & NoBuiltinIncludes) {
@@ -278,14 +278,8 @@ void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
     case QueryMessage::RemoveFile:
         removeFile(*message, conn);
         break;
-    case QueryMessage::JSON:
-        JSON(*message, conn);
-        break;
     case QueryMessage::JobCount:
         jobCount(*message, conn);
-        break;
-    case QueryMessage::FixIts:
-        fixIts(*message, conn);
         break;
     case QueryMessage::FindFile:
         findFile(*message, conn);
@@ -584,7 +578,7 @@ void Server::cursorInfo(const QueryMessage &query, Connection *conn)
     }
 
     shared_ptr<Database> db = project->database();
-    Database::Cursor cursor = database->cursor(loc);
+    Database::Cursor cursor = db->cursor(loc);
     if (cursor.location.isValid())
         conn->write(cursor.toString(query.keyFlags()));
     conn->finish();
@@ -607,7 +601,6 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
     // const bool absolute = (queryFlags() & QueryMessage::AbsolutePath);
     Set<uint32_t> dependencies = project->dependencies(fileId, Project::DependsOnArg);
     dependencies.remove(fileId);
-    Path path = Location::path(fileId);
     // if (!absolute && path.startsWith(srcRoot))
     //     absolute.remove(0, srcRoot.size());
     if (!dependencies.isEmpty()) {
@@ -628,101 +621,101 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
 
 void Server::referencesForLocation(const QueryMessage &query, Connection *conn)
 {
-    const Location loc = query.location();
-    if (loc.isNull()) {
-        conn->write("Not indexed");
-        conn->finish();
-        return;
-    }
-    shared_ptr<Project> project = updateProjectForLocation(loc);
+    // const Location loc = query.location();
+    // if (loc.isNull()) {
+    //     conn->write("Not indexed");
+    //     conn->finish();
+    //     return;
+    // }
+    // shared_ptr<Project> project = updateProjectForLocation(loc);
 
-    if (!project) {
-        error("No project");
-        conn->finish();
-        return;
-    }
+    // if (!project) {
+    //     error("No project");
+    //     conn->finish();
+    //     return;
+    // }
 
-    ReferencesJob job(loc, query, project);
-    job.run(conn);
-    conn->finish();
+    // ReferencesJob job(loc, query, project);
+    // job.run(conn);
+    // conn->finish();
 }
 
 void Server::referencesForName(const QueryMessage& query, Connection *conn)
 {
-    const String name = query.query();
+    // const String name = query.query();
 
-    shared_ptr<Project> project = currentProject();
-    if (!project) {
-        error("No project");
-        conn->finish();
-        return;
-    }
+    // shared_ptr<Project> project = currentProject();
+    // if (!project) {
+    //     error("No project");
+    //     conn->finish();
+    //     return;
+    // }
 
-    ReferencesJob job(name, query, project);
-    job.run(conn);
-    conn->finish();
+    // ReferencesJob job(name, query, project);
+    // job.run(conn);
+    // conn->finish();
 }
 
 void Server::findSymbols(const QueryMessage &query, Connection *conn)
 {
-    const String partial = query.query();
+    // const String partial = query.query();
 
-    shared_ptr<Project> project = currentProject();
-    if (!project) {
-        error("No project");
-        conn->finish();
-        return;
-    }
+    // shared_ptr<Project> project = currentProject();
+    // if (!project) {
+    //     error("No project");
+    //     conn->finish();
+    //     return;
+    // }
 
-    FindSymbolsJob job(query, project);
-    job.run(conn);
-    conn->finish();
+    // FindSymbolsJob job(query, project);
+    // job.run(conn);
+    // conn->finish();
 }
 
 void Server::listSymbols(const QueryMessage &query, Connection *conn)
 {
-    const String partial = query.query();
+    // const String partial = query.query();
 
-    shared_ptr<Project> project = currentProject();
-    if (!project) {
-        error("No project");
-        conn->finish();
-        return;
-    }
+    // shared_ptr<Project> project = currentProject();
+    // if (!project) {
+    //     error("No project");
+    //     conn->finish();
+    //     return;
+    // }
 
-    ListSymbolsJob job(query, project);
-    job.run(conn);
-    conn->finish();
+    // ListSymbolsJob job(query, project);
+    // job.run(conn);
+    // conn->finish();
 }
 
 void Server::status(const QueryMessage &query, Connection *conn)
 {
-    shared_ptr<Project> project = currentProject();
-    if (!project) {
-        error("No project");
-        conn->finish();
-        return;
-    }
+    // shared_ptr<Project> project = currentProject();
+    // if (!project) {
+    //     error("No project");
+    //     conn->finish();
+    //     return;
+    // }
 
-    StatusJob job(query, project);
-    job.run(conn);
-    conn->finish();
+    // StatusJob job(query, project);
+    // job.run(conn);
+    // conn->finish();
 }
 
 void Server::isIndexed(const QueryMessage &query, Connection *conn)
 {
-    int ret = 0;
-    const Match match = query.match();
-    shared_ptr<Project> project = updateProjectForLocation(match);
-    if (project) {
-        bool indexed = false;
-        if (project->match(match, &indexed))
-            ret = indexed ? 1 : 2;
-    }
+    // int ret = 0;
+    // const Match match = query.match();
+    // shared_ptr<Project> project = updateProjectForLocation(match);
+    // if (project) {
+    //     bool indexed = false;
+    //     if (project->match(match, &indexed))
+    //         ret = indexed ? 1 : 2;
+    // }
 
-    error("=> %d", ret);
-    conn->write<16>("%d", ret);
-    conn->finish();
+    // error("=> %d", ret);
+    // conn->write<16>("%d", ret);
+    // conn->finish();
 }
 
 void Server::reloadFileManager(const QueryMessage &, Connection *conn)
@@ -731,7 +724,7 @@ void Server::reloadFileManager(const QueryMessage &, Connection *conn)
     if (project) {
         conn->write<512>("Reloading files for %s", project->path().constData());
         conn->finish();
-        project->fileManager->reload();
+        project->fileManager()->reload();
     } else {
         conn->write("No current project");
         conn->finish();
@@ -743,7 +736,7 @@ void Server::hasFileManager(const QueryMessage &query, Connection *conn)
 {
     const Path path = query.query();
     shared_ptr<Project> project = updateProjectForLocation(path);
-    if (project && project->fileManager && (project->fileManager->contains(path) || project->match(path))) {
+    if (project && project->fileManager() && (project->fileManager()->contains(path) || project->match(path))) {
         error("=> 1");
         conn->write("1");
     } else {
@@ -814,14 +807,9 @@ void Server::reindex(const QueryMessage &query, Connection *conn)
     conn->finish();
 }
 
-void Server::startIndexerJob(const shared_ptr<IndexerJob> &job)
+void Server::startJob(const shared_ptr<ThreadPool::Job> &job)
 {
-    mIndexerThreadPool->start(job);
-}
-
-void Server::startQueryJob(const shared_ptr<Job> &job)
-{
-    mQueryThreadPool.start(job);
+    mThreadPool->start(job);
 }
 
 void Server::processSourceFile(const GccArguments &args, const List<String> &projects)
@@ -877,52 +865,13 @@ void Server::processSourceFile(const GccArguments &args, const List<String> &pro
         project->index(inputFiles.at(i), args.compiler(), arguments);
     }
 }
-
-void Server::event(const Event *event)
-{
-    switch (event->type()) {
-    case JobOutputEvent::Type: {
-        const JobOutputEvent *e = static_cast<const JobOutputEvent*>(event);
-        printf("[%s] %s:%d: const JobOutputEvent *e = static_cast<const JobOutputEvent*>(event); [after]\n", __func__, __FILE__, __LINE__);
-        Map<int, Connection*>::iterator it = mPendingLookups.find(e->id);
-        if (it == mPendingLookups.end()) {
-            printf("[%s] %s:%d: if (it == mPendingLookups.end()) { [after]\n", __func__, __FILE__, __LINE__);
-            if (shared_ptr<Job> job = e->job.lock())
-                job->abort();
-            break;
-        }
-        if (!it->second->isConnected()) {
-            printf("[%s] %s:%d: if (!it->second->isConnected()) { [after]\n", __func__, __FILE__, __LINE__);
-            if (shared_ptr<Job> job = e->job.lock())
-                job->abort();
-            break;
-        }
-        if (!e->out.isEmpty() && !it->second->write(e->out)) {
-            printf("[%s] %s:%d: if (!e->out.isEmpty() && !it->second->write(e->out)) { [after]\n", __func__, __FILE__, __LINE__);
-            if (shared_ptr<Job> job = e->job.lock())
-                job->abort();
-            break;
-        }
-        printf("%s\n", e->out.constData());
-
-        if (e->finish && !isCompletionStream(it->second))
-            it->second->finish();
-        break; }
-    default:
-        EventReceiver::event(event);
-        break;
-    }
-}
-
 void Server::loadProject(const shared_ptr<Project> &project)
 {
     assert(project);
     if (!project->isValid()) {
         assert(!project->isValid());
         project->init();
-
-        if (mRestoreProjects)
-            project->restore();
+        project->restore();
     }
 }
 
@@ -1127,7 +1076,7 @@ void Server::jobCount(const QueryMessage &query, Connection *conn)
             conn->write<128>("Invalid job count %s (%d)", query.query().constData(), jobCount);
         } else {
             mOptions.threadCount = jobCount;
-            mIndexerThreadPool->setConcurrentJobs(jobCount);
+            mThreadPool->setConcurrentJobs(jobCount);
             conn->write<128>("Changed jobs to %d", jobCount);
         }
     }

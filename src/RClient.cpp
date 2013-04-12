@@ -18,7 +18,6 @@ enum OptionType {
     ConnectTimeout,
     Context,
     CursorInfo,
-    CursorInfoIncludeParents,
     CursorInfoIncludeReferences,
     CursorInfoIncludeTargets,
     DeclarationOnly,
@@ -33,14 +32,12 @@ enum OptionType {
     FindProjectRoot,
     FindSymbols,
     FindVirtuals,
-    FixIts,
     FollowLocation,
     HasFileManager,
     Help,
     IMenu,
     IsIndexed,
     IsIndexing,
-    JSON,
     JobCount,
     LineNumbers,
     ListSymbols,
@@ -126,11 +123,9 @@ struct Option opts[] = {
     { RdmLog, "rdm-log", 'g', no_argument, "Receive logs from rdm." },
     { CodeCompleteAt, "code-complete-at", 'x', required_argument, "Get code completion from location (must be specified with path:line:column)." },
     { CodeComplete, "code-complete", 0, no_argument, "Get code completion from stream written to stdin." },
-    { FixIts, "fixits", 0, required_argument, "Get fixits for file." },
     { Compile, "compile", 'c', required_argument, "Pass compilation arguments to rdm." },
     { RemoveFile, "remove", 'D', required_argument, "Remove file from project." },
     { FindProjectRoot, "find-project-root", 0, required_argument, "Use to check behavior of find-project-root." },
-    { JSON, "json", 0, optional_argument, "Dump json about files matching arg or whole project if no argument." },
     { Builds, "builds", 0, optional_argument, "Dump builds for source file." },
     { Dependencies, "dependencies", 0, required_argument, "Dump dependencies for source file." },
     { ReloadFileManager, "reload-file-manager", 'B', no_argument, "Reload file manager." },
@@ -159,7 +154,6 @@ struct Option opts[] = {
     { Timeout, "timeout", 'y', required_argument, "Max time in ms to wait for job to finish (default no timeout)." },
     { FindVirtuals, "find-virtuals", 'k', no_argument, "Use in combinations with -R or -r to show other implementations of this function." },
     { FindFilePreferExact, "find-file-prefer-exact", 'A', no_argument, "Use to make --find-file prefer exact matches over partial matches." },
-    { CursorInfoIncludeParents, "cursorinfo-include-parents", 0, no_argument, "Use to make --cursor-info include parent cursors." },
     { CursorInfoIncludeTargets, "cursorinfo-include-targets", 0, no_argument, "Use to make --cursor-info include target cursors." },
     { CursorInfoIncludeReferences, "cursorinfo-include-references", 0, no_argument, "Use to make --cursor-info include reference cursors." },
     { WithProject, "with-project", 0, required_argument, "Like --project but pass as a flag." },
@@ -606,9 +600,6 @@ bool RClient::parse(int &argc, char **argv)
         case FindFilePreferExact:
             mQueryFlags |= QueryMessage::FindFilePreferExact;
             break;
-        case CursorInfoIncludeParents:
-            mQueryFlags |= QueryMessage::CursorInfoIncludeParents;
-            break;
         case CursorInfoIncludeTargets:
             mQueryFlags |= QueryMessage::CursorInfoIncludeTargets;
             break;
@@ -812,7 +803,6 @@ bool RClient::parse(int &argc, char **argv)
         case Project:
         case FindFile:
         case ListSymbols:
-        case JSON:
         case Builds:
         case Status: {
             QueryMessage::Type type = QueryMessage::Invalid;
@@ -822,7 +812,6 @@ bool RClient::parse(int &argc, char **argv)
             case FindFile: type = QueryMessage::FindFile; break;
             case Builds: type = QueryMessage::Builds; break;
             case Status: type = QueryMessage::Status; break;
-            case JSON: type = QueryMessage::JSON; break;
             case ListSymbols: type = QueryMessage::ListSymbols; break;
             default: assert(0); break;
             }
@@ -870,8 +859,7 @@ bool RClient::parse(int &argc, char **argv)
             break;
         case IsIndexed:
         case DumpFile:
-        case Dependencies:
-        case FixIts: {
+        case Dependencies: {
             Path p = optarg;
             if (!p.exists()) {
                 fprintf(stderr, "%s does not exist\n", optarg);
@@ -892,7 +880,6 @@ bool RClient::parse(int &argc, char **argv)
             QueryMessage::Type type = QueryMessage::Invalid;
             switch (opt->option) {
             case Dependencies: type = QueryMessage::Dependencies; break;
-            case FixIts: type = QueryMessage::FixIts; break;
             case IsIndexed: type = QueryMessage::IsIndexed; break;
             case DumpFile: type = QueryMessage::DumpFile; break;
             default: assert(0); break;

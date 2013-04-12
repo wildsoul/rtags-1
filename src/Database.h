@@ -35,6 +35,7 @@ public:
             Field,
             Enum,
             EnumValue,
+            Macro,
             Reference
         };
 

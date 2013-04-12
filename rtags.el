@@ -388,7 +388,6 @@
                      "-U"
                      loc
                      (if context (concat "-t" context))
-                     (if verbose "--cursorinfo-include-parents")
                      (if verbose "--cursorinfo-include-targets")
                      (if verbose "--cursorinfo-include-references"))
       (buffer-string))))

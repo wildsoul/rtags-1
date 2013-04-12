@@ -51,6 +51,7 @@ public:
     Set<Path> watchedPaths() const { return mWatchedPaths; }
     bool isIndexing() const { return !mJobs.isEmpty(); }
     int dirty(const Set<uint32_t> &files);
+    virtual void timerEvent(TimerEvent *e);
 private:
     void onFileModified(const Path &);
     void addDependencies(const DependencyMap &hash, Set<uint32_t> &newFiles);
@@ -78,6 +79,8 @@ private:
 
     FileSystemWatcher mWatcher;
     Set<Path> mWatchedPaths;
+    Set<uint32_t> mModifiedFiles;
+    Timer mModifiedFilesTimer;
 };
 
 #endif

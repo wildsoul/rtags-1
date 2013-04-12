@@ -180,7 +180,7 @@ void Project::index(const SourceInformation &sourceInformation, IndexerJob::Type
     if (!mJobCounter++)
         mTimer.start();
 
-    job.reset(new IndexerJob(project, type, sourceInformation));
+    job.reset(new IndexerJob(project->database(), type, sourceInformation));
     job->finished().connectAsync(this, &Project::onJobFinished);
     Server::instance()->startJob(job);
 }
@@ -288,7 +288,8 @@ void Project::onFileModified(const Path &file)
         return;
     }
     if (mModifiedFiles.size() == 1 && file.isSource()) {
-        startDirtyJobs();
+        dirty(mModifiedFiles);
+        mModifiedFiles.clear();
     } else {
         mModifiedFilesTimer.start(shared_from_this(), ModifiedFilesTimeout,
                                   SingleShot, ModifiedFiles);
@@ -297,14 +298,12 @@ void Project::onFileModified(const Path &file)
 
 SourceInformationMap Project::sourceInfos() const
 {
-    MutexLocker lock(&mMutex);
     return mSources;
 }
 
 SourceInformation Project::sourceInfo(uint32_t fileId) const
 {
     if (fileId) {
-        MutexLocker lock(&mMutex);
         return mSources.value(fileId);
     }
     return SourceInformation();
@@ -333,7 +332,6 @@ void Project::addDependencies(const DependencyMap &deps, Set<uint32_t> &newFiles
 
 Set<uint32_t> Project::dependencies(uint32_t fileId, DependencyMode mode) const
 {
-    MutexLocker lock(&mMutex);
     if (mode == DependsOnArg)
         return mDependencies.value(fileId);
 
@@ -361,20 +359,15 @@ int Project::reindex(const Match &match)
 int Project::remove(const Match &match)
 {
     int count = 0;
-    {
-        MutexLocker lock(&mMutex);
-        SourceInformationMap::iterator it = mSources.begin();
-        while (it != mSources.end()) {
-            if (match.match(it->second.sourceFile)) {
-                const uint32_t fileId = it->first;
-                mSources.erase(it++);
-                shared_ptr<IndexerJob> job = mJobs.value(fileId);
-                if (job)
-                    job->abort();
-                ++count;
-            } else {
-                ++it;
-            }
+    SourceInformationMap::iterator it = mSources.begin();
+    while (it != mSources.end()) {
+        if (match.match(it->second.sourceFile)) {
+            const uint32_t fileId = it->first;
+            mSources.erase(it++);
+            mJobs.remove(fileId);
+            ++count;
+        } else {
+            ++it;
         }
     }
     return count;
@@ -388,7 +381,6 @@ int Project::dirty(const Set<uint32_t> &dirty)
     Map<Path, List<String> > toIndex;
     for (Set<uint32_t>::const_iterator it = dirty.begin(); it != dirty.end(); ++it)
         dirtyFiles += mDependencies.value(*it);
-    bool indexed = false;
     for (Set<uint32_t>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
         const SourceInformationMap::const_iterator found = mSources.find(*it);
         if (found != mSources.end()) {
@@ -397,6 +389,14 @@ int Project::dirty(const Set<uint32_t> &dirty)
         }
     }
     return ret;
+}
+
+void Project::timerEvent(TimerEvent *e)
+{
+    if (e->userData() == ModifiedFiles) {
+        dirty(mModifiedFiles);
+        mModifiedFiles.clear();
+    }
 }
 
 

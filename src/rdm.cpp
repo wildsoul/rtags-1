@@ -64,14 +64,13 @@ void usage(FILE *f)
             "  --data-dir|-d [arg]               Use this directory to store persistent data (default ~/.rtags).\n"
             "  --socket-file|-n [arg]            Use this file for the server socket (default ~/.rdm).\n"
             "  --setenv|-e [arg]                 Set this environment variable (--setenv \"foobar=1\").\n"
-            "  --completion-cache-size|-a [arg]  Cache this many translation units (default 0, must have at least 1 to use completion).\n"
             "  --no-current-project|-o           Don't restore the last current project on startup.\n"
             "  --allow-multiple-builds|-m        Without this setting different flags for the same compiler will be merged for each source file.\n"
             "  --unload-timer|-u [arg]           Number of minutes to wait before unloading non-current projects (disabled by default).\n"
             "  --thread-count|-j [arg]           Spawn this many threads for thread pool.\n"
             "  --ignore-compiler|-b [arg]        Alias this compiler (Might be practical to avoid duplicated builds for things like icecc).\n"
             "  --disable-plugin|-p [arg]         Don't load this plugin\n"
-            "  --clang-stack-size|-t [arg]       Use this much stack for clang's threads (default %d).\n", defaultStackSize);
+            "  --stack-size|-t [arg]             Use this much stack for indexing threads (default %d).\n", defaultStackSize);
 }
 
 int main(int argc, char** argv)
@@ -109,7 +108,6 @@ int main(int argc, char** argv)
         { "data-dir", required_argument, 0, 'd' },
         { "ignore-printf-fixits", no_argument, 0, 'F' },
         { "unlimited-errors", no_argument, 0, 'f' },
-        { "completion-cache-size", required_argument, 0, 'a' },
         { "no-spell-checking", no_argument, 0, 'l' },
         { "large-by-value-copy", required_argument, 0, 'r' },
         { "allow-multiple-builds", no_argument, 0, 'm' },
@@ -198,12 +196,11 @@ int main(int argc, char** argv)
     Server::Options serverOpts;
     serverOpts.socketFile = String::format<128>("%s.rdm", Path::home().constData());
     serverOpts.threadCount = ThreadPool::idealThreadCount();
-    serverOpts.completionCacheSize = 0;
     serverOpts.options = Server::Wall|Server::SpellChecking;
     serverOpts.excludeFilters = String(EXCLUDEFILTER_DEFAULT).split(';');
     serverOpts.dataDir = String::format<128>("%s.rtags", Path::home().constData());
     serverOpts.unloadTimer = 0;
-    serverOpts.clangStackSize = defaultStackSize;
+    serverOpts.stackSize = defaultStackSize;
 
     const char *logFile = 0;
     unsigned logFlags = 0;
@@ -227,8 +224,8 @@ int main(int argc, char** argv)
             serverOpts.excludeFilters += String(optarg).split(';');
             break;
         case 't':
-            serverOpts.clangStackSize = atoi(optarg);
-            if (serverOpts.clangStackSize <= 0) {
+            serverOpts.stackSize = atoi(optarg);
+            if (serverOpts.stackSize <= 0) {
                 fprintf(stderr, "Invalid stack size: %s\n", optarg);
                 return 1;
             }
@@ -286,13 +283,6 @@ int main(int argc, char** argv)
                 return 1;
             }
             break; }
-        case 'a':
-            serverOpts.completionCacheSize = atoi(optarg);
-            if (serverOpts.completionCacheSize < 1) {
-                fprintf(stderr, "Invalid argument to -a %s\n", optarg);
-                return 1;
-            }
-            break;
         case 'j':
             serverOpts.threadCount = atoi(optarg);
             if (serverOpts.threadCount <= 0) {

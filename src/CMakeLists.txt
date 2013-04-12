@@ -65,6 +65,7 @@ set(RTAGS_SHARED_SOURCES
 add_library(shared ${RTAGS_SHARED_SOURCES})
 
 set(RDM_SOURCES
+  Database.cpp
   FileManager.cpp
   GccArguments.cpp
   IndexerJob.cpp
@@ -117,17 +118,17 @@ target_link_libraries(rdm rtags shared)
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
-include_directories(${V8_INCLUDE})
-if (V8_DISPOSE_HAS_ISOLATE)
-  add_definitions(-DV8_DISPOSE_HAS_ISOLATE)
-endif ()
-add_library(rtagsesprima MODULE IndexerJobEsprima.cpp JSParser.cpp)
-add_dependencies(rtagsesprima rtags)
-target_link_libraries(rtagsesprima ${V8_LIBS} rtags)
+# include_directories(${V8_INCLUDE})
+# if (V8_DISPOSE_HAS_ISOLATE)
+#   add_definitions(-DV8_DISPOSE_HAS_ISOLATE)
+# endif ()
+# add_library(rtagsesprima MODULE IndexerJobEsprima.cpp JSParser.cpp)
+# add_dependencies(rtagsesprima rtags)
+# target_link_libraries(rtagsesprima ${V8_LIBS} rtags)
 
-add_library(rtagsclang MODULE IndexerJobClang.cpp)
-add_dependencies(rtagsclang rdm)
-target_link_libraries(rtagsclang rtags)
+# add_library(rtagsclang MODULE IndexerJobClang.cpp)
+# add_dependencies(rtagsclang rdm)
+# target_link_libraries(rtagsclang rtags)
 
 if (NOT "${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}")
   file (GLOB binFiles "${PROJECT_SOURCE_DIR}/bin/*")
