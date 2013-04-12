@@ -6,6 +6,8 @@
 #include <rct/String.h>
 #include <rct/List.h>
 
+class Connection;
+class SourceInformation;
 class Database
 {
 public:
@@ -37,7 +39,7 @@ public:
         };
 
         static const char *kindToString(Kind kind);
-        enum CursorInfoFlag { // these are combined with they keyflags from Location
+        enum CursorInfoFlag { // these are combined with the keyflags from Location
             IncludeTargets = 0x10,
             IncludeReferences = 0x20
         };
