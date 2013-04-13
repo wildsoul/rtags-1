@@ -412,7 +412,7 @@ bool RClient::exec()
 bool RClient::parse(int &argc, char **argv)
 {
     Rct::findExecutablePath(*argv);
-    mSocketFile = Path::home() + ".rdm";
+    mSocketFile = Path::home() + ".rdm-rewrite";
 
     List<option> options;
     options.reserve(sizeof(opts) / sizeof(Option));

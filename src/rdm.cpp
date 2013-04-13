@@ -194,11 +194,11 @@ int main(int argc, char** argv)
     }
 
     Server::Options serverOpts;
-    serverOpts.socketFile = String::format<128>("%s.rdm", Path::home().constData());
+    serverOpts.socketFile = String::format<128>("%s.rdm-rewrite", Path::home().constData());
     serverOpts.threadCount = ThreadPool::idealThreadCount();
     serverOpts.options = Server::Wall|Server::SpellChecking;
     serverOpts.excludeFilters = String(EXCLUDEFILTER_DEFAULT).split(';');
-    serverOpts.dataDir = String::format<128>("%s.rtags", Path::home().constData());
+    serverOpts.dataDir = String::format<128>("%s.rtags-rewrite", Path::home().constData());
     serverOpts.unloadTimer = 0;
     serverOpts.stackSize = defaultStackSize;
 
