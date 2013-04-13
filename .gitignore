@@ -1,5 +1,6 @@
 *.o
 *.a
+moc_*
 Makefile
 core
 CMakeFiles/
