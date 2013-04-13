@@ -1,8 +1,8 @@
 #include "GccArguments.h"
-#include <rct/Log.h>
 #include "RTags.h"
-#include <rct/Process.h>
 #include "Server.h"
+#include <rct/Log.h>
+#include <rct/Process.h>
 
 GccArguments::GccArguments()
     : mLanguage(NoLang)

@@ -6,7 +6,6 @@
 #include "CreateOutputMessage.h"
 #include "FileManager.h"
 #include "QueryMessage.h"
-#include "RTags.h"
 #include "ScanJob.h"
 #include "RTagsPluginFactory.h"
 #include <rct/Connection.h>
@@ -61,6 +60,8 @@ public:
     bool init(const Options &options);
     const Options &options() const { return mOptions; }
     RTagsPluginFactory &factory() { return mPluginFactory; }
+    static bool encodePath(Path &path);
+    static void decodePath(Path &path);
 private:
     bool selectProject(const Match &match, Connection *conn);
     bool updateProject(const List<String> &projects);

@@ -75,10 +75,6 @@ bool Server::init(const Options &options)
     if (options.options & NoBuiltinIncludes) {
         mOptions.defaultArguments.append("-nobuiltininc");
         mOptions.defaultArguments.append("-nostdinc++");
-    } else {
-        //Path clangPath = Path::resolved(CLANG_INCLUDEPATH);
-        //clangPath.prepend("-I");
-        //mOptions.defaultArguments.append(clangPath);
     }
 
     if (options.options & UnlimitedErrors)
@@ -155,7 +151,7 @@ int Server::reloadProjects()
     for (int i=0; i<projects.size(); ++i) {
         Path file = projects.at(i);
         Path p = file.mid(mOptions.dataDir.size());
-        RTags::decodePath(p);
+        Server::decodePath(p);
         if (p.isDir()) {
             bool remove = false;
             if (FILE *f = fopen(file.constData(), "r")) {
@@ -678,7 +674,7 @@ void Server::referencesForLocation(const QueryMessage &query, Connection *conn)
         conn->finish();
         return;
     }
-    
+
     Set<Database::Cursor> cursors;
     cursors.insert(cursor);
     references(query, cursors, database, conn);
@@ -765,7 +761,7 @@ void Server::listSymbols(const QueryMessage &query, Connection *conn)
             conn->write(sorted.at(i));
         }
     }
-    
+
     conn->finish();
 }
 
@@ -1028,7 +1024,7 @@ void Server::removeProject(const QueryMessage &query, Connection *conn)
             Path path = cur->first;
             conn->write<128>("%s project: %s", unload ? "Unloaded" : "Deleted", path.constData());
             if (!unload) {
-                RTags::encodePath(path);
+                Server::encodePath(path);
                 Path::rm(mOptions.dataDir + path);
                 mProjects.erase(cur);
             }
@@ -1203,6 +1199,52 @@ void Server::timerEvent(TimerEvent *e)
             if (it->second->isValid() && it->second != cur && !it->second->isIndexing()) {
                 it->second->unload();
             }
+        }
+    }
+}
+
+bool Server::encodePath(Path &path)
+{
+    int size = path.size();
+    enum { EncodedUnderscoreLength = 12 };
+    for (int i=0; i<size; ++i) {
+        char &ch = path[i];
+        switch (ch) {
+        case '/':
+            ch = '_';
+            break;
+        case '_':
+            path.replace(i, 1, "<underscore>");
+            size += EncodedUnderscoreLength - 1;
+            i += EncodedUnderscoreLength - 1;
+            break;
+        case '<':
+            if (i + EncodedUnderscoreLength <= size && !strncmp(&ch + 1, "underscore>", EncodedUnderscoreLength - 1)) {
+                error("Invalid folder name %s", path.constData());
+                return false;
+            }
+            break;
+        }
+    }
+    return true;
+}
+
+void Server::decodePath(Path &path)
+{
+    int size = path.size();
+    enum { EncodedUnderscoreLength = 12 };
+    for (int i=0; i<size; ++i) {
+        char &ch = path[i];
+        switch (ch) {
+        case '_':
+            ch = '/';
+            break;
+        case '<':
+            if (i + EncodedUnderscoreLength <= size && !strncmp(&ch + 1, "underscore>", EncodedUnderscoreLength - 1)) {
+                path.replace(i, EncodedUnderscoreLength, "_");
+                size -= EncodedUnderscoreLength - 1;
+            }
+            break;
         }
     }
 }

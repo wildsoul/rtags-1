@@ -18,7 +18,7 @@
 void sigSegvHandler(int signal)
 {
     fprintf(stderr, "Caught signal %d\n", signal);
-    String trace = RTags::backtrace();
+    String trace = Rct::backtrace();
     if (!trace.isEmpty()) {
         fprintf(stderr, "%s", trace.constData());
     }
@@ -48,7 +48,7 @@ void usage(FILE *f)
             "  --append|-A                       Append to log file.\n"
             "  --verbose|-v                      Change verbosity, multiple -v's are allowed.\n"
             "  --clear-project-caches|-C         Clear out project caches.\n"
-            "  --enable-sighandler|-s            Enable signal handler to dump stack for crashes..\n"
+            "  --disable-sighandler|-s           Disable signal handler to dump stack for crashes..\n"
             "                                    Note that this might not play well with clang's signal handler.\n"
             "  --clang-includepath|-P            Use clang include paths by default.\n"
             "  --no-Wall|-W                      Don't use -Wall.\n"
@@ -208,6 +208,7 @@ int main(int argc, char** argv)
     assert(Path::home().endsWith('/'));
     int argCount = argList.size();
     char **args = argList.data();
+    bool noSigHandler = false;
     while (true) {
         const int c = getopt_long(argCount, args, shortOptions.constData(), opts, 0);
         if (c == -1)
@@ -273,7 +274,7 @@ int main(int argc, char** argv)
             putenv(optarg);
             break;
         case 's':
-            signal(SIGSEGV, sigSegvHandler);
+            noSigHandler = true;
             break;
         case 'u': {
             bool ok;
@@ -323,6 +324,9 @@ int main(int argc, char** argv)
             return 1;
         }
     }
+    if (!noSigHandler)
+        signal(SIGSEGV, sigSegvHandler);
+
     if (optind < argCount) {
         fprintf(stderr, "rdm: unexpected option -- '%s'\n", args[optind]);
         return 1;

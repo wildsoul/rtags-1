@@ -1,5 +1,4 @@
 #include "CompletionMessage.h"
-#include "RTags.h"
 #include <rct/Serializer.h>
 
 

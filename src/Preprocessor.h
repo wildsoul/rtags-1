@@ -5,7 +5,7 @@
 #include <rct/List.h>
 #include <rct/String.h>
 #include <rct/EventReceiver.h>
-#include "RTags.h"
+#include "SourceInformation.h"
 
 class Connection;
 class Process;

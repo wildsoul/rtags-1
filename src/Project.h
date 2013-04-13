@@ -1,15 +1,12 @@
 #ifndef Project_h
 #define Project_h
 
-#include <rct/Path.h>
-#include "RTags.h"
-#include "Match.h"
-#include <rct/RegExp.h>
-#include <rct/EventReceiver.h>
-#include <rct/ReadWriteLock.h>
-#include <rct/FileSystemWatcher.h>
-#include "IndexerJob.h"
 #include "GccArguments.h"
+#include "IndexerJob.h"
+#include "Match.h"
+#include <rct/EventReceiver.h>
+#include <rct/FileSystemWatcher.h>
+#include <rct/Path.h>
 
 typedef Map<Path, Set<String> > FilesMap;
 typedef Map<Path, SourceInformation> SourceInformationMap;

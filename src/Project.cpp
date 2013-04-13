@@ -1,7 +1,6 @@
 #include "Project.h"
 #include "FileManager.h"
 #include "IndexerJob.h"
-#include "RTags.h"
 #include "Server.h"
 #include <math.h>
 #include <rct/Log.h>
@@ -34,7 +33,7 @@ bool Project::restore()
 {
     StopWatch timer;
     Path path = mPath;
-    RTags::encodePath(path);
+    Server::encodePath(path);
     const Path p = Server::instance()->options().dataDir + path;
     bool restoreError = false;
     FILE *f = fopen(p.constData(), "r");
@@ -133,7 +132,7 @@ bool Project::save()
 {
     StopWatch timer;
     Path srcPath = mPath;
-    RTags::encodePath(srcPath);
+    Server::encodePath(srcPath);
     const Server::Options &options = Server::instance()->options();
     const Path p = options.dataDir + srcPath;
     FILE *f = fopen(p.constData(), "w");

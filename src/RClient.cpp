@@ -1,7 +1,8 @@
 #include "RClient.h"
-#include "CreateOutputMessage.h"
 #include "CompileMessage.h"
 #include "CompletionMessage.h"
+#include "CreateOutputMessage.h"
+#include "RTags.h"
 #include <rct/EventLoop.h>
 #include <rct/Rct.h>
 #include <rct/RegExp.h>

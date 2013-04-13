@@ -4,7 +4,6 @@
 #include <rct/List.h>
 #include <rct/String.h>
 #include "ClientMessage.h"
-#include "RTags.h"
 
 class CompileMessage : public ClientMessage
 {

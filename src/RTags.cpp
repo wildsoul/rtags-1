@@ -1,99 +1,14 @@
 #include "RTags.h"
-#include "Server.h"
-#include <rct/StopWatch.h>
+#include "CompileMessage.h"
+#include "CreateOutputMessage.h"
+#include "QueryMessage.h"
 #include <dirent.h>
-#include <fcntl.h>
 #include <fnmatch.h>
-#include <sys/types.h>
-#include <rct/Rct.h>
 #include <rct/Messages.h>
-#ifdef OS_FreeBSD
-#include <sys/sysctl.h>
-#endif
-#ifdef OS_Darwin
-#include <mach-o/dyld.h>
-#endif
-
-namespace RTags {
-
-#ifdef HAVE_BACKTRACE
-#include <execinfo.h>
-#include <cxxabi.h>
-
-static inline char *demangle(const char *str)
-{
-    if (!str)
-        return 0;
-    int status;
-#ifdef OS_Darwin
-    char paren[1024];
-    sscanf(str, "%*d %*s %*s %s %*s %*d", paren);
-#else
-    const char *paren = strchr(str, '(');
-    if (!paren) {
-        paren = str;
-    } else {
-        ++paren;
-    }
-#endif
-    size_t l;
-    if (const char *plus = strchr(paren, '+')) {
-        l = plus - paren;
-    } else {
-        l = strlen(paren);
-    }
-
-    char buf[1024];
-    size_t len = sizeof(buf);
-    if (l >= len)
-        return 0;
-    memcpy(buf, paren, l + 1);
-    buf[l] = '\0';
-    char *ret = abi::__cxa_demangle(buf, 0, 0, &status);
-    if (status != 0) {
-        if (ret)
-            free(ret);
-#ifdef OS_Darwin
-        return strdup(paren);
-#else
-        return 0;
-#endif
-    }
-    return ret;
-}
-
-String backtrace(int maxFrames)
-{
-    enum { SIZE = 1024 };
-    void *stack[SIZE];
-
-    int frameCount = backtrace(stack, sizeof(stack) / sizeof(void*));
-    if (frameCount <= 0)
-        return String("Couldn't get stack trace");
-    String ret;
-    char **symbols = backtrace_symbols(stack, frameCount);
-    if (symbols) {
-        char frame[1024];
-        for (int i=1; i<frameCount && (maxFrames < 0 || i - 1 < maxFrames); ++i) {
-            char *demangled = demangle(symbols[i]);
-            snprintf(frame, sizeof(frame), "%d/%d %s\n", i, frameCount - 1, demangled ? demangled : symbols[i]);
-            ret += frame;
-            if (demangled)
-                free(demangled);
-        }
-        free(symbols);
-    }
-    return ret;
-}
-#else
-String backtrace(int)
-{
-    return String();
-}
-#endif
 
 /* Same behavior as rtags-default-current-project() */
 
+namespace RTags {
 enum FindAncestorFlag {
     Shallow = 0x1,
     Wildcard = 0x2
@@ -185,7 +100,6 @@ static inline Path checkEntry(const Entry *entries, const Path &path, const Path
     }
     return Path();
 }
-
 
 Path findProjectRoot(const Path &path)
 {
@@ -294,43 +208,6 @@ Path findProjectRoot(const Path &path)
     return Path();
 }
 
-String filterPreprocessor(const Path &path)
-{
-    String ret;
-    FILE *f = fopen(path.constData(), "r");
-    if (f) {
-        char line[1026];
-        int r;
-        while ((r = Rct::readLine(f, line, sizeof(line) - 1)) != -1) {
-            int start = 0;
-            while (start < r && isspace(line[start]))
-                ++start;
-            if (start == r || line[start] != '#')
-                continue;
-            line[r] = '\n';
-            ret.append(line, r + 1);
-
-            int end = r - 1;
-            while (end >= start && isspace(line[end]))
-                --end;
-            while ((r = Rct::readLine(f, line, sizeof(line) - 1)) != -1) {
-                line[r] = '\n';
-                ret.append(line, r + 1);
-                end = r - 1;
-                while (end >= 0 && isspace(line[end]))
-                    --end;
-                if (end < 0 || line[end] != '\\') {
-                    break;
-                }
-            }
-        }
-
-        fclose(f);
-    }
-
-    return ret;
-}
-
 void initMessages()
 {
 #ifndef GRTAGS
@@ -339,19 +216,4 @@ void initMessages()
     Messages::registerMessage<CreateOutputMessage>();
 #endif
 }
-
 }
-
-#ifdef RTAGS_DEBUG_MUTEX
-void Mutex::lock()
-{
-    Timer timer;
-    while (!tryLock()) {
-        usleep(10000);
-        if (timer.elapsed() >= 10000) {
-            error("Couldn't acquire lock in 10 seconds\n%s", RTags::backtrace().constData());
-            timer.restart();
-        }
-    }
-}
-#endif

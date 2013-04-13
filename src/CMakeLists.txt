@@ -68,8 +68,6 @@ set(RDM_SOURCES
   Server.cpp
   )
 
-set(GR_SOURCES GRParser.cpp GRTags.cpp Location.cpp RTags.cpp)
-
 include_directories(${CMAKE_CURRENT_LIST_DIR}
                     ${CORESERVICES_INCLUDE}
                     ${COREFOUNDATION_INCLUDE}
@@ -110,10 +108,6 @@ if (CMAKE_SYSTEM_NAME MATCHES "Darwin")
     COMMAND ${CMAKE_CURRENT_LIST_DIR}/fix-dylib.sh ${PROJECT_BINARY_DIR} ${PROJECT_BINARY_DIR}/bin/rdm)
   add_custom_command(TARGET rc POST_BUILD
     COMMAND ${CMAKE_CURRENT_LIST_DIR}/fix-dylib.sh ${PROJECT_BINARY_DIR} ${PROJECT_BINARY_DIR}/bin/rc)
-  if (GRTAGS_ENABLED MATCHES 1)
-    add_custom_command(TARGET gr POST_BUILD
-      COMMAND ${CMAKE_CURRENT_LIST_DIR}/fix-dylib.sh ${PROJECT_BINARY_DIR} ${PROJECT_BINARY_DIR}/bin/gr)
-  endif ()
 endif ()
 
 include(${QT_USE_FILE})
