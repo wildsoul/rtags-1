@@ -1,8 +1,6 @@
 #include "RTags.h"
-#include "CursorInfo.h"
 #include "Server.h"
 #include <rct/StopWatch.h>
-#include "Str.h"
 #include <dirent.h>
 #include <fcntl.h>
 #include <fnmatch.h>

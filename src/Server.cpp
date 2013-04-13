@@ -12,7 +12,6 @@
 #include "Project.h"
 #include "QueryMessage.h"
 #include "RTags.h"
-#include <clang-c/Index.h>
 #include <rct/Connection.h>
 #include <rct/Event.h>
 #include <rct/EventLoop.h>
