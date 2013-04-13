@@ -46,6 +46,7 @@ public:
     virtual Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const;
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
     virtual Set<Cursor> cursors(const Path &path) const;
+    virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
 
 private:
     friend class RParserUnit;

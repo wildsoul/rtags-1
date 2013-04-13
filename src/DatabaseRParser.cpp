@@ -513,3 +513,8 @@ extern "C" RTagsPlugin* createInstance()
 {
     return new DatabaseRParserPlugin;
 }
+bool DatabaseRParser::codeCompleteAt(const Location &location, const String &source,
+                                     Connection *conn)
+{
+    return false;
+}

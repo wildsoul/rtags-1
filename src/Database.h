@@ -77,5 +77,6 @@ public:
     virtual Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const = 0;
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const = 0;
     virtual Set<Cursor> cursors(const Path &path) const = 0;
+    virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn) = 0;
 };
 #endif
