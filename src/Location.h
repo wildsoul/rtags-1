@@ -8,6 +8,7 @@
 #include <rct/Rct.h>
 #include <assert.h>
 #include <stdio.h>
+#include <math.h>
 
 class Location
 {
@@ -77,18 +78,13 @@ public:
 
     String encode() const
     {
-        int size = mPath.size() + 3;
-        int ints[] = { mLine, mColumn };
-        for (int i=0; i<2; ++i) {
-            while (ints[i] >= 10) {
-                ints[i] /= 10;
-                ++size;
-            }
-            ++size;
-        }
-        
-        String ret(size, ' ');
-        snprintf(ret.data(), size, "%s:%d:%d", mPath.constData(), mLine, mColumn);
+        int size = mPath.size() + 2;
+        size += (floor(log10(mLine)) + 1);
+        size += (floor(log10(mColumn)) + 1);
+
+        String ret(size + 1, ' '); // account for the '\0'
+        snprintf(ret.data(), size + 1, "%s:%d:%d", mPath.constData(), mLine, mColumn);
+        ret.resize(size); // we don't want the '\0' inside our size
         return ret;
     }
 

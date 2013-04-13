@@ -380,7 +380,7 @@ void Server::followLocation(const QueryMessage &query, Connection *conn)
         cursor = database->cursor(cursor.target);
 
     if (cursor.location.isValid() && !isFiltered(cursor.location, query))
-        conn->write(cursor.location.key(query.keyFlags()).constData());
+        conn->write(cursor.target.key(query.keyFlags()).constData());
     conn->finish();
 }
 

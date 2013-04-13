@@ -31,7 +31,8 @@ public:
         Running,
     };
 protected:
-    virtual void execute();
+    virtual void run();
+
 private:
     shared_ptr<Database> mDatabase;
     const Type mType;

@@ -12,7 +12,7 @@ IndexerJob::IndexerJob(const shared_ptr<Database> &db, Type type,
     assert((connection != 0) == (type == Dump));
 }
 
-void IndexerJob::execute()
+void IndexerJob::run()
 {
     StopWatch timer(StopWatch::Microsecond);
     assert(mDatabase);

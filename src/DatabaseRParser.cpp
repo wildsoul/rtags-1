@@ -1,9 +1,10 @@
 #include "DatabaseRParser.h"
 #include "SourceInformation.h"
 #include "RTagsPlugin.h"
+#include <rct/Log.h>
 #include <searchsymbols.h>
-#include <LookupContext.h>
 #include <ASTPath.h>
+#include <QMutexLocker>
 
 using namespace CppTools;
 using namespace CppTools::Internal;
@@ -212,7 +213,7 @@ void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
         bind(ast, globalNamespace);
     else if (CPlusPlus::DeclarationAST *ast = translationUnit->ast()->asDeclaration())
         bind(ast, globalNamespace);
-    qDebug("bound %s", qPrintable(doc->fileName()));
+    //error("bound %s with mgr %p", qPrintable(doc->fileName()), manager.data());
 }
 
 class RParserUnit
@@ -239,11 +240,13 @@ static inline QStringList toQStringList(const T& t)
 void RParserUnit::reindex(QPointer<CppModelManager> manager)
 {
     CppPreprocessor preprocessor(manager);
-    QStringList incs, defs;
+    const QString srcPath = QString::fromStdString(info.sourceFile.parentDir());
+    static QStringList incs = QStringList() << QLatin1String("/usr/include") << QLatin1String("/usr/include/c++/4.6") << srcPath;
     List<SourceInformation::Build>::const_iterator build = info.builds.begin();
     const List<SourceInformation::Build>::const_iterator end = info.builds.end();
     while (build != end) {
-        preprocessor.setIncludePaths(toQStringList(build->includePaths));
+        //error() << "reindexing" << info.sourceFile << build->includePaths << build->defines;
+        preprocessor.setIncludePaths(toQStringList(build->includePaths) + incs);
         preprocessor.addDefinitions(toQStringList(build->defines));
         preprocessor.run(QString::fromStdString(info.sourceFile));
         preprocessor.resetEnvironment();
@@ -267,6 +270,7 @@ static inline Location makeLocation(CPlusPlus::Symbol* sym)
 CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                                                const Location& srcLoc,
                                                const QByteArray& src,
+                                               CPlusPlus::LookupContext& lookup,
                                                Location& loc) const
 {
     const unsigned line = srcLoc.line();
@@ -285,6 +289,7 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                     // yes
                     sym = candidate;
                     loc = makeLocation(sym);
+                    error("found outright");
                 }
             }
         }
@@ -293,23 +298,24 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
 
     if (!sym) {
         // See if we can parse it:
+        CPlusPlus::TypeOfExpression typeofExpression;
+        typeofExpression.init(doc, manager->snapshot(), lookup.bindings());
+        typeofExpression.setExpandTemplates(true);
+
+        CPlusPlus::TranslationUnit* unit = doc->translationUnit();
+        ReallyFindScopeAt really(unit, line, column);
+        CPlusPlus::Scope* scope = really(doc->globalNamespace());
+
         CPlusPlus::ASTPath path(doc);
         QList<CPlusPlus::AST*> asts = path(line, column);
-        if (!asts.isEmpty()) {
-            CPlusPlus::AST* ast = asts.last(); // just try the last one
-
-            CPlusPlus::LookupContext lookup(doc, manager->snapshot());
-            CPlusPlus::TypeOfExpression typeofExpression;
-            typeofExpression.init(doc, manager->snapshot(), lookup.bindings());
-            typeofExpression.setExpandTemplates(true);
-
-            CPlusPlus::TranslationUnit* unit = doc->translationUnit();
-            ReallyFindScopeAt really(unit, line, column);
-            CPlusPlus::Scope* scope = really(doc->globalNamespace());
+        while (!asts.isEmpty()) {
+            CPlusPlus::AST* ast = asts.takeLast();
 
             const CPlusPlus::Token& start = unit->tokenAt(ast->firstToken());
             const CPlusPlus::Token& last = unit->tokenAt(ast->lastToken() - 1);
             const QByteArray expression = src.mid(start.begin(), last.end() - start.begin());
+
+            error("trying expr '%.20s' in scope %p", qPrintable(expression), scope);
 
             sym = canonicalSymbol(scope, expression, typeofExpression);
             if (sym) {
@@ -320,6 +326,9 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                 unit->getTokenStartPosition(ast->firstToken(), &startLine, &startColumn, &file);
                 //unit->getTokenEndPosition(ast->lastToken() - 1, &endLine, &endColumn, 0);
                 loc = Location(file->chars(), startLine, startColumn);
+
+                error("got it!");
+                break;
             }
         }
     }
@@ -374,9 +383,12 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
 
     Cursor cursor;
 
-    CPlusPlus::Symbol* sym = findSymbol(doc, location, src, cursor.location);
-    if (!sym)
+    CPlusPlus::LookupContext lookup(doc, manager->snapshot());
+    CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
+    if (!sym) {
+        error() << "no symbol whatsoever for" << location;
         return Cursor();
+    }
 
     cursor.target = makeLocation(sym); // will be overridden if we find a symbol in the usages
     if (cursor.location == cursor.target) {
@@ -422,6 +434,7 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
         }
     }
 
+    error() << "got a symbol, tried" << location << "ended up with target" << cursor.target;
     return cursor;
 }
 
@@ -430,7 +443,8 @@ DatabaseRParser::DatabaseRParser()
     manager = new CppModelManager;
     parser = new DocumentParser(manager);
     QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
-                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
+                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)),
+                     Qt::DirectConnection);
 }
 
 DatabaseRParser::~DatabaseRParser()
@@ -454,6 +468,8 @@ void DatabaseRParser::dump(const SourceInformation &sourceInformation, Connectio
 
 int DatabaseRParser::index(const SourceInformation &sourceInformation)
 {
+    QMutexLocker locker(&mutex);
+
     RParserUnit* unit = findUnit(sourceInformation.sourceFile);
     if (!unit) {
         unit = new RParserUnit;

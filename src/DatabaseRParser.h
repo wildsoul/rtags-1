@@ -5,8 +5,10 @@
 #include <cplusplus/AST.h>
 #include <cppmodelmanager.h>
 #include <FindUsages.h>
+#include <LookupContext.h>
 #include <QObject>
 #include <QPointer>
+#include <QMutex>
 
 class DocumentParser : public QObject
 {
@@ -50,8 +52,10 @@ private:
 
     RParserUnit* findUnit(const Path& path);
     CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& srcLoc,
-                                  const QByteArray& src, Location& loc) const;
+                                  const QByteArray& src, CPlusPlus::LookupContext& ctx,
+                                  Location& loc) const;
 
+    QMutex mutex;
     Map<Path, RParserUnit*> units;
     DocumentParser* parser;
     QPointer<CppTools::Internal::CppModelManager> manager;
