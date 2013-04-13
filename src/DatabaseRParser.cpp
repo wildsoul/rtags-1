@@ -4,6 +4,7 @@
 #include <rct/Log.h>
 #include <searchsymbols.h>
 #include <ASTPath.h>
+#include <DependencyTable.h>
 #include <QMutexLocker>
 
 using namespace CppTools;
@@ -237,6 +238,12 @@ static inline QStringList toQStringList(const T& t)
     return list;
 }
 
+static inline String fromQString(const QString& str)
+{
+    const QByteArray& utf8 = str.toUtf8();
+    return String(utf8.constData(), utf8.size());
+}
+
 void RParserUnit::reindex(QPointer<CppModelManager> manager)
 {
     CppPreprocessor preprocessor(manager);
@@ -429,7 +436,7 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
             }
         }
         if (!added) {
-            cursor.references.insert(Location(usage.path.toUtf8().constData(),
+            cursor.references.insert(Location(fromQString(usage.path),
                                               usage.line, usage.col + 1));
         }
     }
@@ -482,7 +489,18 @@ int DatabaseRParser::index(const SourceInformation &sourceInformation)
 
 Set<Path> DatabaseRParser::dependencies(const Path &path) const
 {
-    return Set<Path>();
+    Set<Path> result;
+
+    // ### perhaps keep this around
+    CPlusPlus::DependencyTable table;
+    table.build(manager->snapshot());
+
+    const QStringList deps = table.filesDependingOn(QString::fromStdString(path));
+    foreach(const QString dep, deps) {
+        result.insert(fromQString(dep));
+    }
+
+    return result;
 }
 
 Set<String> DatabaseRParser::listSymbols(const String &string, const List<Path> &pathFilter) const
