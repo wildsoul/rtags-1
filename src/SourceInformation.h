@@ -74,27 +74,27 @@ public:
     }
 };
 
+template <> inline Serializer &operator<<(Serializer &s, const SourceInformation::Build &b)
+{
+    s << b.compiler << b.defines << b.includePaths << b.includes << b.args;
+    return s;
+}
+
+template <> inline Deserializer &operator>>(Deserializer &s, SourceInformation::Build &b)
+{
+    s >> b.compiler >> b.defines >> b.includePaths >> b.includes >> b.args;
+    return s;
+}
+
 template <> inline Serializer &operator<<(Serializer &s, const SourceInformation &t)
 {
-    s << t.sourceFile << t.builds.size();
-    for (int i=0; i<t.builds.size(); ++i) {
-        s << t.builds.at(i).compiler << t.builds.at(i).defines << t.builds.at(i).includePaths
-          << t.builds.at(i).includes << t.builds.at(i).args;
-    }
-
+    s << t.sourceFile << t.builds;
     return s;
 }
 
 template <> inline Deserializer &operator>>(Deserializer &s, SourceInformation &t)
 {
-    s >> t.sourceFile;
-    int size;
-    s >> size;
-    t.builds.resize(size);
-    for (int i=0; i<size; ++i) {
-        s >> t.builds[i].compiler >> t.builds[i].defines >> t.builds.at(i).includePaths
-          >> t.builds[i].includes >> t.builds.at(i).args;
-    }
+    s >> t.sourceFile >> t.builds;
     return s;
 }
 

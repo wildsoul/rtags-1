@@ -12,7 +12,8 @@
 #include <rct/WriteLocker.h>
 
 static void *ModifiedFiles = &ModifiedFiles;
-enum { ModifiedFilesTimeout = 50 };
+static void *Save = &Save;
+enum { ModifiedFilesTimeout = 50, SaveTimeout = 500 };
 
 Project::Project(const Path &path)
     : mPath(path), mJobCounter(0)
@@ -130,7 +131,6 @@ void Project::onJobFinished(shared_ptr<IndexerJob> job)
 
 bool Project::save()
 {
-    StopWatch timer;
     Path srcPath = mPath;
     Server::encodePath(srcPath);
     const Server::Options &options = Server::instance()->options();
@@ -158,7 +158,7 @@ bool Project::save()
     fseek(f, pos, SEEK_SET);
     out << size;
 
-    error() << "saved project" << path() << "in" << String::format<12>("%dms", timer.elapsed()).constData();
+    // error() << "saved project" << path() << "in" << String::format<12>("%dms", timer.elapsed()).constData();
     fclose(f);
     return true;
 }
@@ -175,7 +175,8 @@ void Project::index(const SourceInformation &sourceInformation, IndexerJob::Type
     shared_ptr<Project> project = static_pointer_cast<Project>(shared_from_this());
 
     mSources[sourceInformation.sourceFile] = sourceInformation;
-    save(); // do this in a timer?
+
+    mSaveTimer.start(shared_from_this(), SaveTimeout, SingleShot, Save);
 
     if (!mJobCounter++)
         mTimer.start();
@@ -387,6 +388,9 @@ void Project::timerEvent(TimerEvent *e)
     if (e->userData() == ModifiedFiles) {
         dirty(mModifiedFiles);
         mModifiedFiles.clear();
+    } else if (e->userData() == Save) {
+        printf("[%s] %s:%d: save(); [before]\n", __func__, __FILE__, __LINE__);
+        save();
     }
 }
 

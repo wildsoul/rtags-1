@@ -74,7 +74,7 @@ private:
 
     FileSystemWatcher mWatcher;
     Set<Path> mWatchedPaths, mModifiedFiles;
-    Timer mModifiedFilesTimer;
+    Timer mModifiedFilesTimer, mSaveTimer;
 };
 
 #endif
