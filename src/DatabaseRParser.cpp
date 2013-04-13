@@ -356,6 +356,8 @@ static inline Database::Cursor makeCursor(const CPlusPlus::Symbol* sym,
     const CPlusPlus::Identifier* id = sym->identifier();
     if (id)
         cursor.symbolName = id->chars();
+    else
+        cursor.symbolName = token.spell();
     return cursor;
 }
 
