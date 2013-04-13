@@ -34,7 +34,7 @@ class DatabaseRParser : public Database
 {
 public:
     DatabaseRParser();
-    virtual ~DatabaseRParser() {}
+    virtual ~DatabaseRParser();
 
     virtual Cursor cursor(const Location &location) const;
     virtual void status(const String &query, Connection *conn) const;
@@ -49,6 +49,8 @@ private:
     friend class RParserUnit;
 
     RParserUnit* findUnit(const Path& path);
+    CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& loc,
+                                  const QByteArray& src) const;
 
     Map<Path, RParserUnit*> units;
     DocumentParser* parser;

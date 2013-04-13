@@ -7,6 +7,138 @@
 using namespace CppTools;
 using namespace CppTools::Internal;
 
+class ReallyFindScopeAt: protected CPlusPlus::SymbolVisitor
+{
+    CPlusPlus::TranslationUnit *_unit;
+    unsigned _line;
+    unsigned _column;
+    CPlusPlus::Scope *_scope;
+    unsigned _foundStart;
+    unsigned _foundEnd;
+
+public:
+    /** line and column should be 1-based */
+    ReallyFindScopeAt(CPlusPlus::TranslationUnit *unit, unsigned line, unsigned column)
+        : _unit(unit), _line(line), _column(column), _scope(0),
+          _foundStart(0), _foundEnd(0)
+    {
+    }
+
+    CPlusPlus::Scope *operator()(CPlusPlus::Symbol *symbol)
+    {
+        accept(symbol);
+        return _scope;
+    }
+
+protected:
+    bool process(CPlusPlus::Scope *symbol)
+    {
+        CPlusPlus::Scope *scope = symbol;
+
+        for (unsigned i = 0; i < scope->memberCount(); ++i) {
+            accept(scope->memberAt(i));
+        }
+
+        unsigned startLine, startColumn;
+        _unit->getPosition(scope->startOffset(), &startLine, &startColumn);
+
+        if (_line > startLine || (_line == startLine && _column >= startColumn)) {
+            unsigned endLine, endColumn;
+            _unit->getPosition(scope->endOffset(), &endLine, &endColumn);
+
+            if (_line < endLine || (_line == endLine && _column < endColumn)) {
+                if (!_scope || (scope->startOffset() >= _foundStart &&
+                                scope->endOffset() <= _foundEnd)) {
+                    _foundStart = scope->startOffset();
+                    _foundEnd = scope->endOffset();
+                    _scope = scope;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    using CPlusPlus::SymbolVisitor::visit;
+
+    virtual bool visit(CPlusPlus::UsingNamespaceDirective *) { return false; }
+    virtual bool visit(CPlusPlus::UsingDeclaration *) { return false; }
+    virtual bool visit(CPlusPlus::NamespaceAlias *) { return false; }
+    virtual bool visit(CPlusPlus::Declaration *) { return false; }
+    virtual bool visit(CPlusPlus::Argument *) { return false; }
+    virtual bool visit(CPlusPlus::TypenameArgument *) { return false; }
+    virtual bool visit(CPlusPlus::BaseClass *) { return false; }
+    virtual bool visit(CPlusPlus::ForwardClassDeclaration *) { return false; }
+
+    virtual bool visit(CPlusPlus::Enum *symbol)
+    { return process(symbol); }
+
+    virtual bool visit(CPlusPlus::Function *symbol)
+    { return process(symbol); }
+
+    virtual bool visit(CPlusPlus::Namespace *symbol)
+    { return process(symbol); }
+
+    virtual bool visit(CPlusPlus::Class *symbol)
+    { return process(symbol); }
+
+    virtual bool visit(CPlusPlus::Block *symbol)
+    { return process(symbol); }
+
+    // Objective-C
+    virtual bool visit(CPlusPlus::ObjCBaseClass *) { return false; }
+    virtual bool visit(CPlusPlus::ObjCBaseProtocol *) { return false; }
+    virtual bool visit(CPlusPlus::ObjCForwardClassDeclaration *) { return false; }
+    virtual bool visit(CPlusPlus::ObjCForwardProtocolDeclaration *) { return false; }
+    virtual bool visit(CPlusPlus::ObjCPropertyDeclaration *) { return false; }
+
+    virtual bool visit(CPlusPlus::ObjCClass *symbol)
+    { return process(symbol); }
+
+    virtual bool visit(CPlusPlus::ObjCProtocol *symbol)
+    { return process(symbol); }
+
+    virtual bool visit(CPlusPlus::ObjCMethod *symbol)
+    { return process(symbol); }
+};
+
+static inline CPlusPlus::Symbol *canonicalSymbol(CPlusPlus::Scope *scope, const QString &code,
+                                                 CPlusPlus::TypeOfExpression &typeOfExpression)
+{
+    const QList<CPlusPlus::LookupItem> results =
+        typeOfExpression(code.toUtf8(), scope, CPlusPlus::TypeOfExpression::Preprocess);
+
+    for (int i = results.size() - 1; i != -1; --i) {
+        const CPlusPlus::LookupItem &r = results.at(i);
+        CPlusPlus::Symbol *decl = r.declaration();
+
+        if (! (decl && decl->enclosingScope()))
+            break;
+
+        if (CPlusPlus::Class *classScope = r.declaration()->enclosingScope()->asClass()) {
+            const CPlusPlus::Identifier *declId = decl->identifier();
+            const CPlusPlus::Identifier *classId = classScope->identifier();
+
+            if (classId && classId->isEqualTo(declId))
+                continue; // skip it, it's a ctor or a dtor.
+
+            else if (CPlusPlus::Function *funTy = r.declaration()->type()->asFunctionType()) {
+                if (funTy->isVirtual())
+                    return r.declaration();
+            }
+        }
+    }
+
+    for (int i = 0; i < results.size(); ++i) {
+        const CPlusPlus::LookupItem &r = results.at(i);
+
+        if (r.declaration())
+            return r.declaration();
+    }
+
+    return 0;
+}
+
 DocumentParser::DocumentParser(QPointer<CppModelManager> mgr, QObject* parent)
     : QObject(parent), symbolCount(0), manager(mgr)
 {
@@ -23,7 +155,8 @@ DocumentParser::~DocumentParser()
     }
 }
 
-QByteArray DocumentParser::tokenForAst(CPlusPlus::AST* ast, CPlusPlus::TranslationUnit* unit, const QByteArray& src)
+static inline QByteArray tokenForAst(CPlusPlus::AST* ast, CPlusPlus::TranslationUnit* unit,
+                                     const QByteArray& src)
 {
     const CPlusPlus::Token& start = unit->tokenAt(ast->firstToken());
     const CPlusPlus::Token& last = unit->tokenAt(ast->lastToken() - 1);
@@ -35,12 +168,15 @@ QByteArray DocumentParser::debugScope(CPlusPlus::Scope* scope, const QByteArray&
     return src.mid(scope->startOffset(), scope->endOffset() - scope->startOffset());
 }
 
-QList<CPlusPlus::Usage> DocumentParser::findUsages(CPlusPlus::Symbol* symbol, const QByteArray& unpreprocessedSource)
+static inline QList<CPlusPlus::Usage> findUsages(QPointer<CppModelManager> manager,
+                                                 CPlusPlus::Symbol* symbol,
+                                                 const QByteArray& unpreprocessedSource)
 {
     const CPlusPlus::Identifier *symbolId = symbol->identifier();
     const CPlusPlus::Snapshot& snapshot = manager->snapshot();
 
-    CPlusPlus::Document::Ptr doc = snapshot.preprocessedDocument(unpreprocessedSource, symbol->fileName());
+    CPlusPlus::Document::Ptr doc = snapshot.preprocessedDocument(unpreprocessedSource,
+                                                                 symbol->fileName());
     doc->tokenize();
 
     QList<CPlusPlus::Usage> usages;
@@ -195,24 +331,14 @@ void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
 {
     // seems I need to keep this around
     doc->keepSourceAndAST();
+
     const QFileInfo info(doc->fileName());
     const QString canonical = info.canonicalFilePath();
 
-    // if (seen.contains(canonical))
-    //     return;
-    // seen.insert(canonical);
-
-    //QElapsedTimer timer;
-    //timer.start();
-    //LookupContext lookup(doc, manager->snapshot());
     CPlusPlus::TranslationUnit *translationUnit = doc->translationUnit();
-
     CPlusPlus::Parser parser(translationUnit);
-
     CPlusPlus::Namespace *globalNamespace = doc->globalNamespace();
-
     CPlusPlus::Bind bind(translationUnit);
-
     if (!translationUnit->ast())
         return; // nothing to do.
 
@@ -224,42 +350,128 @@ void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
         bind(ast, globalNamespace);
     else if (CPlusPlus::DeclarationAST *ast = translationUnit->ast()->asDeclaration())
         bind(ast, globalNamespace);
-    //bind(ast, globalNamespace);
-    //doc->check();
-    //Visitor visitor(manager, lookup);
-    //visitor.accept(globalNamespace);
-    //qDebug("accepted %s %d", qPrintable(doc->fileName()), visitor.symbolCount);
     qDebug("bound %s", qPrintable(doc->fileName()));
-    //symbolCount += visitor.symbolCount;
 }
 
 class RParserUnit
 {
 public:
     SourceInformation info;
-    CPlusPlus::Document::Ptr doc;
 
     void reindex(QPointer<CppModelManager> manager);
 };
+
+template<typename T>
+static inline QStringList toQStringList(const T& t)
+{
+    QStringList list;
+    typename T::const_iterator it = t.begin();
+    const typename T::const_iterator end = t.end();
+    while (it != end) {
+        list << QString::fromStdString(*it);
+        ++it;
+    }
+    return list;
+}
 
 void RParserUnit::reindex(QPointer<CppModelManager> manager)
 {
     CppPreprocessor preprocessor(manager);
     QStringList incs, defs;
-    preprocessor.setIncludePaths(incs);
-    preprocessor.addDefinitions(defs);
+    List<SourceInformation::Build>::const_iterator build = info.builds.begin();
+    const List<SourceInformation::Build>::const_iterator end = info.builds.end();
+    while (build != end) {
+        preprocessor.setIncludePaths(toQStringList(build->includePaths));
+        preprocessor.addDefinitions(toQStringList(build->defines));
+        preprocessor.run(QString::fromStdString(info.sourceFile));
+        preprocessor.resetEnvironment();
+        ++build;
+    }
 }
 
 RParserUnit* DatabaseRParser::findUnit(const Path& path)
 {
-    Map<Path, RParserUnit*>::const_iterator it = units.find(path);
-    if (it == units.end())
+    Map<Path, RParserUnit*>::const_iterator unit = units.find(path);
+    if (unit == units.end())
         return 0;
-    return it->second;
+    return unit->second;
+}
+
+CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
+                                               const Location& loc,
+                                               const QByteArray& src) const
+{
+    const unsigned line = loc.line();
+    const unsigned column = loc.column();
+
+    // First, try to find the symbol outright:
+    CPlusPlus::Symbol* sym = 0;
+    {
+        CPlusPlus::Symbol* candidate = doc->lastVisibleSymbolAt(line, column);
+        if (candidate) {
+            const CPlusPlus::Identifier* id = candidate->identifier();
+            if (id) {
+                // ### fryktelig
+                if (candidate->line() == line && candidate->column() <= column &&
+                    candidate->column() + id->size() >= column) {
+                    // yes
+                    sym = candidate;
+                }
+            }
+        }
+        // no
+    }
+
+    if (!sym) {
+        // See if we can parse it:
+        CPlusPlus::ASTPath path(doc);
+        QList<CPlusPlus::AST*> asts = path(line, column);
+        if (!asts.isEmpty()) {
+            CPlusPlus::AST* ast = asts.last(); // just try the last one
+
+            CPlusPlus::LookupContext lookup(doc, manager->snapshot());
+            CPlusPlus::TypeOfExpression typeofExpression;
+            typeofExpression.init(doc, manager->snapshot(), lookup.bindings());
+            typeofExpression.setExpandTemplates(true);
+
+            CPlusPlus::TranslationUnit* translationUnit = doc->translationUnit();
+            ReallyFindScopeAt really(translationUnit, line, column);
+            CPlusPlus::Scope* scope = really(doc->globalNamespace());
+
+            const QByteArray expression = tokenForAst(ast, translationUnit, src);
+            sym = canonicalSymbol(scope, expression, typeofExpression);
+        }
+    }
+
+    return sym;
 }
 
 Database::Cursor DatabaseRParser::cursor(const Location &location) const
 {
+    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
+    assert(doc != 0);
+
+    const QByteArray& src = doc->utf8Source();
+
+    CPlusPlus::Symbol* sym = findSymbol(doc, location, src);
+    if (!sym)
+        return Cursor();
+
+    Cursor cursor;
+
+    const QList<CPlusPlus::Usage> usages = findUsages(manager, sym, src);
+    foreach(const CPlusPlus::Usage& usage, usages) {
+        CPlusPlus::Document::Ptr doc = manager->document(usage.path);
+        if (doc) {
+            CPlusPlus::Symbol* refsym = doc->lastVisibleSymbolAt(usage.line, usage.col + 1);
+            if (refsym) {
+                if (refsym->line() == static_cast<unsigned>(usage.line) &&
+                    refsym->column() == static_cast<unsigned>(usage.col + 1)) {
+                }
+            }
+        }
+    }
+
     return Cursor();
 }
 
@@ -267,6 +479,19 @@ DatabaseRParser::DatabaseRParser()
 {
     manager = new CppModelManager;
     parser = new DocumentParser(manager);
+    QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
+                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
+}
+
+DatabaseRParser::~DatabaseRParser()
+{
+    Map<Path, RParserUnit*>::const_iterator unit = units.begin();
+    const Map<Path, RParserUnit*>::const_iterator end = units.end();
+    while (unit != end) {
+        delete unit->second;
+        ++unit;
+    }
+    delete parser;
 }
 
 void DatabaseRParser::status(const String &query, Connection *conn) const
