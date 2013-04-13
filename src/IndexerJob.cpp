@@ -15,7 +15,7 @@ IndexerJob::IndexerJob(const shared_ptr<Database> &db, Type type,
 void IndexerJob::execute()
 {
     StopWatch timer(StopWatch::Microsecond);
-    assert(mDb);
+    assert(mDatabase);
     if (mType == Dump) {
         assert(mConnection);
         mDatabase->dump(mSourceInformation, mConnection);
