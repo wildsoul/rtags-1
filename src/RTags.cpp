@@ -1,6 +1,7 @@
 #include "RTags.h"
 #include "CompileMessage.h"
 #include "QueryMessage.h"
+#include "CompletionMessage.h"
 #include <dirent.h>
 #include <fnmatch.h>
 #include <rct/Messages.h>
@@ -212,6 +213,7 @@ void initMessages()
 #ifndef GRTAGS
     Messages::registerMessage<QueryMessage>();
     Messages::registerMessage<CompileMessage>();
+    Messages::registerMessage<CompletionMessage>();
 #endif
 }
 }

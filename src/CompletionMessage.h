@@ -11,7 +11,7 @@ class CompletionMessage : public ClientMessage
 public:
     enum { MessageId = CompletionId };
 
-    CompletionMessage(const Location &location);
+    CompletionMessage(const Location &location = Location());
 
     Location location() const { return mLocation; }
 
