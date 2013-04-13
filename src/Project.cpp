@@ -134,7 +134,17 @@ bool Project::save()
     Path srcPath = mPath;
     Server::encodePath(srcPath);
     const Server::Options &options = Server::instance()->options();
-    const Path p = options.dataDir + srcPath;
+    Path p = options.dataDir;
+    if (!p.exists()) {
+        if (!Path::mkdir(p)) {
+            error("Unable to make path %s", p.constData());
+            return false;
+        }
+    } else if (!p.isDir()) {
+        error("Path is not a directory %s", p.constData());
+        return false;
+    }
+    p += srcPath;
     FILE *f = fopen(p.constData(), "w");
     if (!f) {
         error("Can't open file %s", p.constData());
