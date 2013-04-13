@@ -2,10 +2,12 @@
 #include "SourceInformation.h"
 #include "RTagsPlugin.h"
 #include <rct/Log.h>
+#include <QMutexLocker>
+
 #include <searchsymbols.h>
 #include <ASTPath.h>
 #include <DependencyTable.h>
-#include <QMutexLocker>
+#include <cplusplus/SymbolVisitor.h>
 
 using namespace CppTools;
 using namespace CppTools::Internal;
@@ -104,6 +106,35 @@ protected:
     virtual bool visit(CPlusPlus::ObjCMethod *symbol)
     { return process(symbol); }
 };
+
+class FindSymbols : public CPlusPlus::SymbolVisitor
+{
+public:
+    enum Mode { Cursors };
+
+    FindSymbols(Mode m) : mode(m) { }
+
+    bool preVisit(CPlusPlus::Symbol* symbol);
+
+    QSet<CPlusPlus::Symbol*> operator()(CPlusPlus::Symbol* symbol);
+
+private:
+    Mode mode;
+    QSet<CPlusPlus::Symbol*> symbols;
+};
+
+bool FindSymbols::preVisit(CPlusPlus::Symbol* symbol)
+{
+    symbols.insert(symbol);
+    return true;
+}
+
+QSet<CPlusPlus::Symbol*> FindSymbols::operator()(CPlusPlus::Symbol* symbol)
+{
+    symbols.clear();
+    accept(symbol);
+    return symbols;
+}
 
 static inline CPlusPlus::Symbol *canonicalSymbol(CPlusPlus::Scope *scope, const QString &code,
                                                  CPlusPlus::TypeOfExpression &typeOfExpression)
@@ -269,9 +300,63 @@ RParserUnit* DatabaseRParser::findUnit(const Path& path)
     return unit->second;
 }
 
+static inline Database::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
+{
+    if (sym->asScope()) {
+        return Database::Cursor::Invalid;
+    } else if (sym->asEnum()) {
+        return Database::Cursor::Enum;
+    } else if (sym->asFunction()) {
+        return Database::Cursor::MemberFunctionDeclaration;
+    } else if (sym->asNamespace()) {
+        return Database::Cursor::Namespace;
+    } else if (sym->asTemplate()) {
+    } else if (sym->asNamespaceAlias()) {
+    } else if (sym->asClass()) {
+        return Database::Cursor::Class;
+    } else if (sym->asBlock()) {
+    } else if (sym->asUsingNamespaceDirective()) {
+    } else if (sym->asUsingDeclaration()) {
+    } else if (sym->asDeclaration()) {
+        return Database::Cursor::Variable; // ### ???
+    } else if (sym->asArgument()) {
+        return Database::Cursor::Variable;
+    } else if (sym->asTypenameArgument()) {
+    } else if (sym->asBaseClass()) {
+    } else if (sym->asForwardClassDeclaration()) {
+        return Database::Cursor::Class;
+    } else if (sym->asQtPropertyDeclaration()) {
+    } else if (sym->asQtEnum()) {
+    } else if (sym->asObjCBaseClass()) {
+    } else if (sym->asObjCBaseProtocol()) {
+    } else if (sym->asObjCClass()) {
+    } else if (sym->asObjCForwardClassDeclaration()) {
+    } else if (sym->asObjCProtocol()) {
+    } else if (sym->asObjCForwardProtocolDeclaration()) {
+    } else if (sym->asObjCMethod()) {
+    } else if (sym->asObjCPropertyDeclaration()) {
+    }
+    return Database::Cursor::Invalid;
+}
+
 static inline Location makeLocation(CPlusPlus::Symbol* sym)
 {
     return Location(sym->fileName(), sym->line(), sym->column());
+}
+
+static inline Database::Cursor makeCursor(const CPlusPlus::Symbol* sym,
+                                          const CPlusPlus::TranslationUnit* unit)
+{
+    Database::Cursor cursor;
+    cursor.location = Location(sym->fileName(), sym->line(), sym->column());
+    const CPlusPlus::Token& token = unit->tokenAt(sym->sourceLocation());
+    cursor.start = token.begin();
+    cursor.end = token.end();
+    cursor.kind = symbolKind(sym);
+    const CPlusPlus::Identifier* id = sym->identifier();
+    if (id)
+        cursor.symbolName = id->chars();
+    return cursor;
 }
 
 CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
@@ -343,49 +428,11 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
     return sym;
 }
 
-static inline Database::Cursor::Kind symbolKind(CPlusPlus::Symbol* sym)
-{
-    if (sym->asScope()) {
-        return Database::Cursor::Invalid;
-    } else if (sym->asEnum()) {
-        return Database::Cursor::Enum;
-    } else if (sym->asFunction()) {
-        return Database::Cursor::MemberFunctionDeclaration;
-    } else if (sym->asNamespace()) {
-        return Database::Cursor::Namespace;
-    } else if (sym->asTemplate()) {
-    } else if (sym->asNamespaceAlias()) {
-    } else if (sym->asClass()) {
-        return Database::Cursor::Class;
-    } else if (sym->asBlock()) {
-    } else if (sym->asUsingNamespaceDirective()) {
-    } else if (sym->asUsingDeclaration()) {
-    } else if (sym->asDeclaration()) {
-        return Database::Cursor::Variable; // ### ???
-    } else if (sym->asArgument()) {
-        return Database::Cursor::Variable;
-    } else if (sym->asTypenameArgument()) {
-    } else if (sym->asBaseClass()) {
-    } else if (sym->asForwardClassDeclaration()) {
-        return Database::Cursor::Class;
-    } else if (sym->asQtPropertyDeclaration()) {
-    } else if (sym->asQtEnum()) {
-    } else if (sym->asObjCBaseClass()) {
-    } else if (sym->asObjCBaseProtocol()) {
-    } else if (sym->asObjCClass()) {
-    } else if (sym->asObjCForwardClassDeclaration()) {
-    } else if (sym->asObjCProtocol()) {
-    } else if (sym->asObjCForwardProtocolDeclaration()) {
-    } else if (sym->asObjCMethod()) {
-    } else if (sym->asObjCPropertyDeclaration()) {
-    }
-    return Database::Cursor::Invalid;
-}
-
 Database::Cursor DatabaseRParser::cursor(const Location &location) const
 {
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
-    assert(doc != 0);
+    if (!doc)
+        return Cursor();
     const QByteArray& src = doc->utf8Source();
 
     Cursor cursor;
@@ -515,7 +562,22 @@ Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const L
 
 Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
 {
-    return Set<Cursor>();
+    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(path));
+    if (!doc)
+        return Set<Cursor>();
+    Set<Cursor> cursors;
+
+    CPlusPlus::TranslationUnit* unit = doc->translationUnit();
+    CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
+    if (globalNamespace) {
+        FindSymbols find(FindSymbols::Cursors);
+        QSet<CPlusPlus::Symbol*> syms = find(globalNamespace);
+        foreach(const CPlusPlus::Symbol* sym, syms) {
+            cursors.insert(makeCursor(sym, unit));
+        }
+    }
+
+    return cursors;
 }
 
 bool DatabaseRParser::codeCompleteAt(const Location &location, const String &source,
