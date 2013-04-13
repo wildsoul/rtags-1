@@ -28,6 +28,7 @@ public:
     QSet<QString> seen;
 };
 
+class DocumentParser;
 class RParserUnit;
 class DatabaseRParser : public Database
 {
@@ -50,6 +51,7 @@ private:
     RParserUnit* findUnit(const Path& path);
 
     Map<Path, RParserUnit*> units;
+    DocumentParser* parser;
     QPointer<CppTools::Internal::CppModelManager> manager;
 };
 

@@ -245,7 +245,9 @@ public:
 void RParserUnit::reindex(QPointer<CppModelManager> manager)
 {
     CppPreprocessor preprocessor(manager);
-
+    QStringList incs, defs;
+    preprocessor.setIncludePaths(incs);
+    preprocessor.addDefinitions(defs);
 }
 
 RParserUnit* DatabaseRParser::findUnit(const Path& path)
@@ -264,6 +266,7 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
 DatabaseRParser::DatabaseRParser()
 {
     manager = new CppModelManager;
+    parser = new DocumentParser(manager);
 }
 
 void DatabaseRParser::status(const String &query, Connection *conn) const
