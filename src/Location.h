@@ -77,13 +77,14 @@ public:
 
     String encode() const
     {
-        int size = mPath.size() + 2;
+        int size = mPath.size() + 3;
         int ints[] = { mLine, mColumn };
         for (int i=0; i<2; ++i) {
             while (ints[i] >= 10) {
                 ints[i] /= 10;
                 ++size;
             }
+            ++size;
         }
         
         String ret(size, ' ');
