@@ -16,14 +16,26 @@ public:
 
     struct Build
     {
-        Build(const Path &c = Path(), const List<String> &a = List<String>())
-            : compiler(c), args(a)
+        Build(const Path &c = Path(),
+              const List<String> &a = List<String>(),
+              const List<String> &d = List<String>(),
+              const List<Path> &i = List<Path>(),
+              const List<Path> &inc = List<Path>())
+            : compiler(c), defines(d), includePaths(i), includes(inc), args(a)
         {}
 
-        inline bool operator==(const Build &other) const { return compiler == other.compiler && args == other.args; }
+        inline bool operator==(const Build &other) const
+        {
+            return (compiler == other.compiler && defines == other.defines
+                    && includePaths == other.includePaths && args == other.args
+                    && includes == other.includes);
+        }
         inline bool operator!=(const Build &other) const { return !operator==(other); }
 
         Path compiler;
+        List<String> defines;
+        List<Path> includePaths;
+        List<String> includes;
         List<String> args;
     };
     List<Build> builds;
@@ -42,7 +54,11 @@ public:
     {
         String out = sourceFile + '\n';
         for (int i=0; i<builds.size(); ++i) {
-            out += String::format<256>("  %s %s\n", builds.at(i).compiler.constData(),
+            out += String::format<256>("  %s -D: %s -I: %s -include: %s Args: %s\n",
+                                       builds.at(i).compiler.constData(),
+                                       String::join(builds.at(i).defines, ' ').constData(),
+                                       String::join(builds.at(i).includePaths, ' ').constData(),
+                                       String::join(builds.at(i).includes, ' ').constData(),
                                        String::join(builds.at(i).args, ' ').constData());
         }
         return out;
@@ -62,9 +78,9 @@ template <> inline Serializer &operator<<(Serializer &s, const SourceInformation
 {
     s << t.sourceFile << t.builds.size();
     for (int i=0; i<t.builds.size(); ++i) {
-        s << t.builds.at(i).compiler << t.builds.at(i).args;
+        s << t.builds.at(i).compiler << t.builds.at(i).defines << t.builds.at(i).includePaths
+          << t.builds.at(i).includes << t.builds.at(i).args;
     }
-
 
     return s;
 }
@@ -76,7 +92,8 @@ template <> inline Deserializer &operator>>(Deserializer &s, SourceInformation &
     s >> size;
     t.builds.resize(size);
     for (int i=0; i<size; ++i) {
-        s >> t.builds[i].compiler >> t.builds[i].args;
+        s >> t.builds[i].compiler >> t.builds[i].defines >> t.builds.at(i).includePaths
+          >> t.builds[i].includes >> t.builds.at(i).args;
     }
     return s;
 }

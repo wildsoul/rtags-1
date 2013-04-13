@@ -15,23 +15,25 @@ public:
     GccArguments();
 
     bool parse(String args, const Path &base);
-    Lang lang() const;
     void clear();
 
-    void addFlags(const List<String> &extraFlags);
-    List<String> clangArgs() const;
-    List<Path> inputFiles() const;
-    List<Path> unresolvedInputFiles() const;
-    Path baseDirectory() const;
-    Path compiler() const;
+    Lang language() const { return mLanguage; }
+    List<String> arguments() const { return mArgs; }
+    List<String> defines() const { return mDefines; }
+    List<Path> includePaths() const { return mIncludePaths; }
+    List<Path> includes() const { return mIncludes; }
+    List<Path> inputFiles() const { return mInputFiles; }
+    List<Path> unresolvedInputFiles() const { return mUnresolvedInputFiles; }
+    Path baseDirectory() const { return mBase; }
+    Path compiler() const { return mCompiler; }
     Path projectRoot() const;
 private:
-    List<String> mClangArgs;
+    List<String> mArgs;
+    List<String> mDefines;
+    List<Path> mIncludePaths, mIncludes;
     List<Path> mInputFiles, mUnresolvedInputFiles;
     Path mBase, mCompiler;
-    GccArguments::Lang mLang;
-    friend class MakefileParser;
-    friend class Server;
+    GccArguments::Lang mLanguage;
 };
 
 #endif

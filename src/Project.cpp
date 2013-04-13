@@ -238,27 +238,28 @@ static inline Path resolveCompiler(const Path &compiler)
     return resolved;
 }
 
-bool Project::index(const Path &sourceFile, const Path &cc, const List<String> &args)
+bool Project::index(const Path &sourceFile, const GccArguments &args)
 {
-    const Path compiler = resolveCompiler(cc.canonicalized());
+    const Path compiler = resolveCompiler(args.compiler().canonicalized());
     SourceInformation sourceInformation = sourceInfo(sourceFile);
-    const bool js = args.isEmpty() && sourceFile.endsWith(".js");
     bool added = false;
+    const SourceInformation::Build build(compiler,
+                                         args.arguments(),
+                                         args.defines(),
+                                         args.includePaths(),
+                                         args.includes());
     if (sourceInformation.isNull()) {
         sourceInformation.sourceFile = sourceFile;
-    } else if (js) {
-        debug() << sourceFile << " is not dirty. ignoring";
-        return false;
     } else {
         List<SourceInformation::Build> &builds = sourceInformation.builds;
         const bool allowMultiple = Server::instance()->options().options & Server::AllowMultipleBuildsForSameCompiler;
         for (int j=0; j<builds.size(); ++j) {
             if (builds.at(j).compiler == compiler) {
-                if (builds.at(j).args == args) {
+                if (builds.at(j) == build) {
                     debug() << sourceFile << " is not dirty. ignoring";
                     return false;
                 } else if (!allowMultiple) {
-                    builds[j].args = args;
+                    builds[j] = build;
                     added = true;
                     break;
                 }
@@ -266,7 +267,7 @@ bool Project::index(const Path &sourceFile, const Path &cc, const List<String> &
         }
     }
     if (!added)
-        sourceInformation.builds.append(SourceInformation::Build(compiler, args));
+        sourceInformation.builds.append(build);
     index(sourceInformation, IndexerJob::Makefile);
     return true;
 }

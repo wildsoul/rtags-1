@@ -893,7 +893,7 @@ void Server::startJob(const shared_ptr<ThreadPool::Job> &job)
 
 void Server::processSourceFile(const GccArguments &args, const List<String> &projects)
 {
-    if (args.lang() == GccArguments::NoLang || mOptions.ignoredCompilers.contains(args.compiler())) {
+    if (args.language() == GccArguments::NoLang || mOptions.ignoredCompilers.contains(args.compiler())) {
         return;
     }
     Path srcRoot;
@@ -938,10 +938,9 @@ void Server::processSourceFile(const GccArguments &args, const List<String> &pro
     if (!mCurrentProject.lock())
         mCurrentProject = project;
 
-    const List<String> arguments = args.clangArgs();
 
     for (int i=0; i<count; ++i) {
-        project->index(inputFiles.at(i), args.compiler(), arguments);
+        project->index(inputFiles.at(i), args);
     }
 }
 void Server::loadProject(const shared_ptr<Project> &project)

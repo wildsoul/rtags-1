@@ -5,18 +5,20 @@
 #include "Server.h"
 
 GccArguments::GccArguments()
-    : mLang(NoLang)
+    : mLanguage(NoLang)
 {
 }
 
 void GccArguments::clear()
 {
-    mClangArgs.clear();
+    mArgs.clear();
+    mDefines.clear();
+    mIncludePaths.clear();
     mInputFiles.clear();
     mUnresolvedInputFiles.clear();
     mBase.clear();
     mCompiler.clear();
-    mLang = NoLang;
+    mLanguage = NoLang;
 }
 
 static inline GccArguments::Lang guessLang(const Path &fullPath)
@@ -89,8 +91,7 @@ static inline String trim(const char *start, int size)
 
 bool GccArguments::parse(String args, const Path &base)
 {
-    mLang = NoLang;
-    mClangArgs.clear();
+    clear();
     mInputFiles.clear();
     mBase = base;
 
@@ -151,8 +152,8 @@ bool GccArguments::parse(String args, const Path &base)
         split.removeAt(0);
     }
 
-    mLang = guessLang(split.front());
-    if (mLang == NoLang) {
+    mLanguage = guessLang(split.front());
+    if (mLanguage == NoLang) {
         clear();
         return false;
     }
@@ -177,16 +178,16 @@ bool GccArguments::parse(String args, const Path &base)
                 }
                 if (a == "c-header" || a == "c++-header")
                     return false;
-                mClangArgs.append("-x");
-                mClangArgs.append(a);
+                mArgs.append("-x");
+                mArgs.append(a);
             } else if (arg.startsWith("-D")) {
-                String a;
                 if (arg.size() == 2 && i + 1 < s) {
-                    a = (arg + split.at(++i));
+                    mDefines.append(split.at(++i));
+                    mArgs.append("-D" + split.at(i));
                 } else {
-                    a = arg;
+                    mDefines.append(arg.mid(2));
+                    mArgs.append(arg);
                 }
-                mClangArgs.append(a);
             } else if (arg.startsWith("-I")) {
                 Path inc;
                 bool ok = false;
@@ -195,17 +196,18 @@ bool GccArguments::parse(String args, const Path &base)
                 } else if (i + 1 < s) {
                     inc = Path::resolved(split.at(++i), Path::RealPath, path, &ok);
                 }
-                if (ok)
-                    mClangArgs.append("-I" + inc);
-            } else if (arg.startsWith("-std") || arg == "-m32") {
-                mClangArgs.append(arg);
+                if (ok) {
+                    mIncludePaths.append(inc);
+                    mArgs.append("-D" + inc);
+                }
             } else if (arg == "-include") {
                 if (i + 1 < s) {
                     bool ok;
                     Path inc = Path::resolved(split.at(++i), Path::RealPath, path, &ok);
                     if (ok) {
-                        mClangArgs.append(arg);
-                        mClangArgs.append(inc);
+                        mIncludes.append(inc);
+                        mArgs.append(arg);
+                        mArgs.append(inc);
                     }
                 }
             }
@@ -249,49 +251,6 @@ bool GccArguments::parse(String args, const Path &base)
     }
     mCompiler = compiler;
     return true;
-}
-
-GccArguments::Lang GccArguments::lang() const
-{
-    return mLang;
-}
-
-List<String> GccArguments::clangArgs() const
-{
-    return mClangArgs;
-}
-
-List<Path> GccArguments::inputFiles() const
-{
-    return mInputFiles;
-}
-
-List<Path> GccArguments::unresolvedInputFiles() const
-{
-    return mUnresolvedInputFiles;
-}
-
-Path GccArguments::baseDirectory() const
-{
-    return mBase;
-}
-
-void GccArguments::addFlags(const List<String> &extraFlags)
-{
-    const int count = extraFlags.size();
-    for (int i=0; i<count; ++i) {
-        String flag = extraFlags.at(i);
-        if (flag.startsWith("-I")) {
-            Path p = Path::resolved(flag.constData() + 2);
-            flag.replace(2, flag.size() - 2, p);
-        }
-        mClangArgs.append(flag);
-    }
-}
-
-Path GccArguments::compiler() const
-{
-    return mCompiler;
 }
 
 Path GccArguments::projectRoot() const

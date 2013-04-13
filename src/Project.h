@@ -9,6 +9,7 @@
 #include <rct/ReadWriteLock.h>
 #include <rct/FileSystemWatcher.h>
 #include "IndexerJob.h"
+#include "GccArguments.h"
 
 typedef Map<Path, Set<String> > FilesMap;
 typedef Map<Path, SourceInformation> SourceInformationMap;
@@ -38,7 +39,7 @@ public:
     bool isIndexed(const Path &path) const;
 
     void index(const SourceInformation &args, IndexerJob::Type type);
-    bool index(const Path &sourceFile, const Path &compiler = Path(), const List<String> &args = List<String>());
+    bool index(const Path &sourceFile, const GccArguments &args);
     SourceInformationMap sourceInfos() const;
     SourceInformation sourceInfo(const Path &path) const;
     enum DependencyMode {
