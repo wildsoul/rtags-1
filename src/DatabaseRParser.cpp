@@ -500,6 +500,13 @@ Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
     return Set<Cursor>();
 }
 
+bool DatabaseRParser::codeCompleteAt(const Location &location, const String &source,
+                                     Connection *conn)
+{
+    error() << "Got code complete" << location << source;
+    return false;
+}
+
 class DatabaseRParserPlugin : public RTagsPlugin
 {
 public:
@@ -512,9 +519,4 @@ public:
 extern "C" RTagsPlugin* createInstance()
 {
     return new DatabaseRParserPlugin;
-}
-bool DatabaseRParser::codeCompleteAt(const Location &location, const String &source,
-                                     Connection *conn)
-{
-    return false;
 }
