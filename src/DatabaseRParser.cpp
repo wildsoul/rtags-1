@@ -391,14 +391,6 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
         cursor.symbolName = id->chars();
     }
 
-    /*
-    CPlusPlus::TranslationUnit* translationUnit = doc->translationUnit();
-    const unsigned loc = sym->sourceLocation();
-    const CPlusPlus::Token& tok = translationUnit->tokenAt(loc);
-    cursor.start = tok.begin();
-    cursor.end = tok.end();
-    */
-
     bool added = false;
     const QList<CPlusPlus::Usage> usages = findUsages(manager, sym, src);
     foreach(const CPlusPlus::Usage& usage, usages) {
