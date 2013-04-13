@@ -155,14 +155,6 @@ DocumentParser::~DocumentParser()
     }
 }
 
-static inline QByteArray tokenForAst(CPlusPlus::AST* ast, CPlusPlus::TranslationUnit* unit,
-                                     const QByteArray& src)
-{
-    const CPlusPlus::Token& start = unit->tokenAt(ast->firstToken());
-    const CPlusPlus::Token& last = unit->tokenAt(ast->lastToken() - 1);
-    return src.mid(start.begin(), last.end() - start.begin());
-}
-
 QByteArray DocumentParser::debugScope(CPlusPlus::Scope* scope, const QByteArray& src)
 {
     return src.mid(scope->startOffset(), scope->endOffset() - scope->startOffset());
@@ -195,137 +187,6 @@ static inline QList<CPlusPlus::Usage> findUsages(QPointer<CppModelManager> manag
 
     return usages;
 }
-
-/*
-void processInput(char* line)
-{
-    char* save;
-    char* ret = strtok_r(line, ":", &save);
-
-    QString fn;
-    unsigned l, c, cnt = 0;
-
-    while (ret) {
-        // process token
-        switch (cnt++) {
-        case 0:
-            fn = QString::fromUtf8(ret);
-            break;
-        case 1:
-        case 2: {
-            unsigned* x = (cnt == 2) ? &l : &c;
-            *x = atoi(ret);
-            break; }
-        }
-        ret = strtok_r(0, ":", &save);
-    }
-
-    Document::Ptr doc = manager->document(fn);
-    if (!doc) {
-        qWarning("No document for %s", qPrintable(fn));
-        return;
-    }
-
-    if (cnt == 1) {
-        qDebug("looking up sym %s", qPrintable(fn));
-        SearchSymbols search;
-        search.setSymbolsToSearchFor(SearchSymbols::AllTypes);
-        search.setSeparateScope(true);
-        QList<ModelItemInfo> items = search(doc);
-        foreach(const ModelItemInfo& item, items) {
-            qDebug("  got %s (%s)", qPrintable(item.fullyQualifiedName.join("::")), qPrintable(item.symbolType));
-        }
-        return;
-    }
-
-    if (cnt != 3) {
-        qWarning("Invalid input %s", line);
-        return;
-    }
-
-    qDebug("processing %s:%d:%d", qPrintable(fn), l, c);
-    TranslationUnit *translationUnit = doc->translationUnit();
-    printf("men... %p\n", doc->globalNamespace());
-    LookupContext lookup(doc, manager->snapshot());
-
-    TypeOfExpression typeofExpression;
-    typeofExpression.init(doc, manager->snapshot(), lookup.bindings());
-
-    printf("men... 2 %p\n", doc->globalNamespace());
-    ReallyFindScopeAt really(translationUnit, l, c);
-    Scope* scope = really(doc->globalNamespace());
-    if (!scope) {
-        qWarning("no scope at %d:%d", l, c);
-        return;
-    }
-    //Scope* scope = doc->scopeAt(l, c);
-
-    printf("men... 3 %p\n", doc->globalNamespace());
-    QByteArray src = doc->utf8Source();
-
-    ASTPath path(doc);
-    QList<AST*> asts = path(l, c);
-    qDebug("asts cnt %d", asts.size());
-    if (asts.isEmpty()) {
-        qWarning("no ast at %d:%d", l, c);
-        return;
-    }
-
-    Symbol* decl = 0;
-    for (int i = asts.size() - 1; i >= 0; --i) {
-        typeofExpression.setExpandTemplates(true);
-        QByteArray expression = tokenForAst(asts.at(i), translationUnit, src);
-        decl = canonicalSymbol(scope, expression, typeofExpression);
-        if (decl)
-            break;
-    }
-    if (decl) {
-        qDebug() << "finding refs";
-
-        printf("men... 4 %p\n", doc->globalNamespace());
-        const QList<Usage> usages = findUsages(decl, src);
-        qDebug() << "found refs" << usages.size();
-        foreach(const Usage& usage, usages) {
-            qDebug("usage %s:%d:%d (%s)", qPrintable(usage.path), usage.line, usage.col, qPrintable(usage.lineText));
-
-            Document::Ptr doc = manager->document(usage.path);
-            if (doc) {
-                Symbol* refsym = doc->lastVisibleSymbolAt(usage.line, usage.col + 1);
-                if (refsym) {
-                    if (refsym->line() == static_cast<unsigned>(usage.line) &&
-                        refsym->column() == static_cast<unsigned>(usage.col + 1)) {
-                        qDebug() << "it's a symbol!";
-                    }
-                }
-            }
-        }
-    } else {
-        // try to find the symbol outright
-        Symbol* sym = doc->lastVisibleSymbolAt(l, c);
-        if (sym) {
-            const Identifier* id = sym->identifier();
-            if (id) {
-                // ### fryktelig
-                if (sym->line() == l && sym->column() <= c &&
-                    sym->column() + id->size() >= c) {
-                    // yes
-                    qDebug("found symbol outright %s at %s:%d:%d", id->chars(), sym->fileName(), sym->line(), sym->column());;
-
-                    qDebug() << "finding refs";
-
-                    const QList<Usage> usages = findUsages(sym, src);
-                    foreach(const Usage& usage, usages) {
-                        qDebug("usage %s:%d:%d (%s)", qPrintable(usage.path), usage.line, usage.col, qPrintable(usage.lineText));
-                    }
-
-                    return;
-                }
-            }
-            // no
-        }
-    }
-}
-*/
 
 void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
 {
@@ -397,12 +258,18 @@ RParserUnit* DatabaseRParser::findUnit(const Path& path)
     return unit->second;
 }
 
-CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
-                                               const Location& loc,
-                                               const QByteArray& src) const
+static inline Location makeLocation(CPlusPlus::Symbol* sym)
 {
-    const unsigned line = loc.line();
-    const unsigned column = loc.column();
+    return Location(sym->fileName(), sym->line(), sym->column());
+}
+
+CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
+                                               const Location& srcLoc,
+                                               const QByteArray& src,
+                                               Location& loc) const
+{
+    const unsigned line = srcLoc.line();
+    const unsigned column = srcLoc.column();
 
     // First, try to find the symbol outright:
     CPlusPlus::Symbol* sym = 0;
@@ -416,6 +283,7 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                     candidate->column() + id->size() >= column) {
                     // yes
                     sym = candidate;
+                    loc = makeLocation(sym);
                 }
             }
         }
@@ -434,45 +302,134 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
             typeofExpression.init(doc, manager->snapshot(), lookup.bindings());
             typeofExpression.setExpandTemplates(true);
 
-            CPlusPlus::TranslationUnit* translationUnit = doc->translationUnit();
-            ReallyFindScopeAt really(translationUnit, line, column);
+            CPlusPlus::TranslationUnit* unit = doc->translationUnit();
+            ReallyFindScopeAt really(unit, line, column);
             CPlusPlus::Scope* scope = really(doc->globalNamespace());
 
-            const QByteArray expression = tokenForAst(ast, translationUnit, src);
+            const CPlusPlus::Token& start = unit->tokenAt(ast->firstToken());
+            const CPlusPlus::Token& last = unit->tokenAt(ast->lastToken() - 1);
+            const QByteArray expression = src.mid(start.begin(), last.end() - start.begin());
+
             sym = canonicalSymbol(scope, expression, typeofExpression);
+            if (sym) {
+                unsigned startLine, startColumn;
+                //unsigned endLine, endColumn;
+                const CPlusPlus::StringLiteral* file;
+
+                unit->getTokenStartPosition(ast->firstToken(), &startLine, &startColumn, &file);
+                //unit->getTokenEndPosition(ast->lastToken() - 1, &endLine, &endColumn, 0);
+                loc = Location(file->chars(), startLine, startColumn);
+            }
         }
     }
 
     return sym;
 }
 
+static inline Database::Cursor::Kind symbolKind(CPlusPlus::Symbol* sym)
+{
+    if (sym->asScope()) {
+        return Database::Cursor::Invalid;
+    } else if (sym->asEnum()) {
+        return Database::Cursor::Enum;
+    } else if (sym->asFunction()) {
+        return Database::Cursor::MemberFunctionDeclaration;
+    } else if (sym->asNamespace()) {
+        return Database::Cursor::Namespace;
+    } else if (sym->asTemplate()) {
+    } else if (sym->asNamespaceAlias()) {
+    } else if (sym->asClass()) {
+        return Database::Cursor::Class;
+    } else if (sym->asBlock()) {
+    } else if (sym->asUsingNamespaceDirective()) {
+    } else if (sym->asUsingDeclaration()) {
+    } else if (sym->asDeclaration()) {
+        return Database::Cursor::Variable; // ### ???
+    } else if (sym->asArgument()) {
+        return Database::Cursor::Variable;
+    } else if (sym->asTypenameArgument()) {
+    } else if (sym->asBaseClass()) {
+    } else if (sym->asForwardClassDeclaration()) {
+        return Database::Cursor::Class;
+    } else if (sym->asQtPropertyDeclaration()) {
+    } else if (sym->asQtEnum()) {
+    } else if (sym->asObjCBaseClass()) {
+    } else if (sym->asObjCBaseProtocol()) {
+    } else if (sym->asObjCClass()) {
+    } else if (sym->asObjCForwardClassDeclaration()) {
+    } else if (sym->asObjCProtocol()) {
+    } else if (sym->asObjCForwardProtocolDeclaration()) {
+    } else if (sym->asObjCMethod()) {
+    } else if (sym->asObjCPropertyDeclaration()) {
+    }
+    return Database::Cursor::Invalid;
+}
+
 Database::Cursor DatabaseRParser::cursor(const Location &location) const
 {
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
     assert(doc != 0);
-
     const QByteArray& src = doc->utf8Source();
-
-    CPlusPlus::Symbol* sym = findSymbol(doc, location, src);
-    if (!sym)
-        return Cursor();
 
     Cursor cursor;
 
+    CPlusPlus::Symbol* sym = findSymbol(doc, location, src, cursor.location);
+    if (!sym)
+        return Cursor();
+
+    cursor.target = makeLocation(sym); // will be overridden if we find a symbol in the usages
+    if (cursor.location == cursor.target) {
+        // declaration
+        cursor.kind = symbolKind(sym);
+    } else {
+        // possible reference
+        cursor.kind = Cursor::Reference;
+    }
+
+    const CPlusPlus::Identifier* id = sym->identifier();
+    if (id) {
+        cursor.symbolName = id->chars();
+    }
+
+    /*
+    CPlusPlus::TranslationUnit* translationUnit = doc->translationUnit();
+    const unsigned loc = sym->sourceLocation();
+    const CPlusPlus::Token& tok = translationUnit->tokenAt(loc);
+    cursor.start = tok.begin();
+    cursor.end = tok.end();
+    */
+
+    bool added = false;
     const QList<CPlusPlus::Usage> usages = findUsages(manager, sym, src);
     foreach(const CPlusPlus::Usage& usage, usages) {
+        added = false;
         CPlusPlus::Document::Ptr doc = manager->document(usage.path);
         if (doc) {
             CPlusPlus::Symbol* refsym = doc->lastVisibleSymbolAt(usage.line, usage.col + 1);
             if (refsym) {
                 if (refsym->line() == static_cast<unsigned>(usage.line) &&
                     refsym->column() == static_cast<unsigned>(usage.col + 1)) {
+                    // this is a symbol, definition?
+                    // replace our target if we're a reference
+                    if (cursor.kind == Cursor::Reference) {
+                        const Location defloc = makeLocation(refsym);
+                        // if we assumed we were the reference but we really are the
+                        // definition then change our kind
+                        if (cursor.target == defloc)
+                            cursor.kind = symbolKind(refsym);
+                        cursor.target = defloc;
+                        added = true;
+                    }
                 }
             }
         }
+        if (!added) {
+            cursor.references.insert(Location(usage.path.toUtf8().constData(),
+                                              usage.line, usage.col + 1));
+        }
     }
 
-    return Cursor();
+    return cursor;
 }
 
 DatabaseRParser::DatabaseRParser()

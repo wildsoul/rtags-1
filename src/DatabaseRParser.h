@@ -49,8 +49,8 @@ private:
     friend class RParserUnit;
 
     RParserUnit* findUnit(const Path& path);
-    CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& loc,
-                                  const QByteArray& src) const;
+    CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& srcLoc,
+                                  const QByteArray& src, Location& loc) const;
 
     Map<Path, RParserUnit*> units;
     DocumentParser* parser;
