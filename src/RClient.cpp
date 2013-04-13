@@ -1,7 +1,6 @@
 #include "RClient.h"
 #include "CompileMessage.h"
 #include "CompletionMessage.h"
-#include "CreateOutputMessage.h"
 #include "RTags.h"
 #include <rct/EventLoop.h>
 #include <rct/Rct.h>
@@ -396,7 +395,8 @@ public:
     }
     virtual bool exec(RClient *rc, Client *client)
     {
-        CreateOutputMessage msg(mLevel == Default ? rc->logLevel() : mLevel);
+        QueryMessage msg(QueryMessage::LogOutput);
+        msg.setQuery(String::number(mLevel == Default ? rc->logLevel() : mLevel));
         msg.init(rc->argc(), rc->argv());
         return client->send(&msg, rc->timeout());
     }

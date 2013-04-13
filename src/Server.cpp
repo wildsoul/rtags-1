@@ -2,7 +2,6 @@
 
 #include "Client.h"
 #include "CompileMessage.h"
-#include "CreateOutputMessage.h"
 #include "Database.h"
 #include "Filter.h"
 #include "IndexerJob.h"
@@ -231,9 +230,6 @@ void Server::onNewMessage(Message *message, Connection *connection)
     case QueryMessage::MessageId:
         handleQueryMessage(static_cast<QueryMessage*>(message), connection);
         break;
-    case CreateOutputMessage::MessageId:
-        handleCreateOutputMessage(static_cast<CreateOutputMessage*>(message), connection);
-        break;
     case ResponseMessage::MessageId:
         assert(0);
         connection->finish();
@@ -254,11 +250,6 @@ void Server::handleCompileMessage(CompileMessage *message, Connection *conn)
     }
 }
 
-void Server::handleCreateOutputMessage(CreateOutputMessage *message, Connection *conn)
-{
-    new LogObject(conn, message->level());
-}
-
 void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
 {
     conn->setSilent(message->flags() & QueryMessage::Silent);
@@ -267,6 +258,9 @@ void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
     switch (message->type()) {
     case QueryMessage::Invalid:
         assert(0);
+        break;
+    case QueryMessage::LogOutput:
+        logOutput(*message, conn);
         break;
     case QueryMessage::Builds:
         builds(*message, conn);
@@ -424,6 +418,11 @@ void Server::removeFile(const QueryMessage &query, Connection *conn)
         conn->write("No matches");
     }
     conn->finish();
+}
+
+void Server::logOutput(const QueryMessage &query, Connection *conn)
+{
+    new LogObject(conn, query.query().toULongLong());
 }
 
 void Server::findFile(const QueryMessage &query, Connection *conn)

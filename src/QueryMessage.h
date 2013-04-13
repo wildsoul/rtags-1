@@ -28,6 +28,7 @@ public:
         IsIndexing,
         JobCount,
         ListSymbols,
+        LogOutput,
         PreprocessFile,
         Project,
         ReferencesLocation,

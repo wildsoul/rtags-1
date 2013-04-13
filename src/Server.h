@@ -3,7 +3,6 @@
 
 #include "QueryMessage.h"
 #include "CompileMessage.h"
-#include "CreateOutputMessage.h"
 #include "FileManager.h"
 #include "QueryMessage.h"
 #include "ScanJob.h"
@@ -80,7 +79,6 @@ private:
     void handleCompileMessage(CompileMessage *message, Connection *conn);
     void handleQueryMessage(QueryMessage *message, Connection *conn);
     void handleErrorMessage(ErrorMessage *message, Connection *conn);
-    void handleCreateOutputMessage(CreateOutputMessage *message, Connection *conn);
     void isIndexing(const QueryMessage &, Connection *conn);
     void removeFile(const QueryMessage &query, Connection *conn);
     void followLocation(const QueryMessage &query, Connection *conn);
@@ -97,6 +95,7 @@ private:
     void reloadFileManager(const QueryMessage &query, Connection *conn);
     void preprocessFile(const QueryMessage &query, Connection *conn);
     void findFile(const QueryMessage &query, Connection *conn);
+    void logOutput(const QueryMessage &query, Connection *conn);
     void dumpFile(const QueryMessage &query, Connection *conn);
     void removeProject(const QueryMessage &query, Connection *conn);
     void reloadProjects(const QueryMessage &query, Connection *conn);
