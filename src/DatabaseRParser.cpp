@@ -482,3 +482,8 @@ Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
 {
     return Set<Cursor>();
 }
+
+extern "C" Database* createInstance()
+{
+    return new DatabaseRParser;
+}
