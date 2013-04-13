@@ -18,8 +18,10 @@ public:
     }
     bool addPlugin(const Path &plugin)
     {
+        mError.clear();
         Plugin<RTagsPlugin> *p = new Plugin<RTagsPlugin>(plugin);
         if (!p->instance()) {
+            mError = p->error();
             delete p;
             return false;
         }
@@ -27,6 +29,8 @@ public:
         mPlugins.append(p);
         return true;
     }
+
+    String error() const { return mError; }
 
     shared_ptr<Database> createDatabase()
     {
@@ -39,8 +43,10 @@ public:
         }
         return ret;
     }
+
 private:
     List<Plugin<RTagsPlugin> *> mPlugins;
+    String mError;
 };
 
 #endif

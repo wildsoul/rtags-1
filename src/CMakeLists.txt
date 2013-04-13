@@ -120,6 +120,10 @@ if ("${CPLUSPLUS_LIBRARY}" STREQUAL "")
    message(FATAL_ERROR "libCPlusPlus not found. You need to get the submodule and run qmake && make in src/rparser")
 endif ()
 
-add_library(rparser MODULE DatabaseRParser.cpp)
+set(RPARSER_SRCS DatabaseRParser.cpp)
+set(RPARSER_MOC_HDRS DatabaseRParser.h)
+qt4_wrap_cpp(RPARSER_MOC_SRCS ${RPARSER_MOC_HDRS})
+
+add_library(rparser MODULE ${RPARSER_SRCS} ${RPARSER_MOC_SRCS})
 add_dependencies(rparser rtags)
 target_link_libraries(rparser rtags ${QT_LIBRARIES} ${CPLUSPLUS_LIBRARY})

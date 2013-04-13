@@ -63,6 +63,8 @@ bool Server::init(const Options &options)
         for (int i=0; i<plugins.size(); ++i) {
             if (mPluginFactory.addPlugin(plugins.at(i))) {
                 error() << "Loaded plugin" << plugins.at(i);
+                //} else {
+                //error() << "Plugin error" << mPluginFactory.error();
             }
         }
     }

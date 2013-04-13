@@ -1,5 +1,6 @@
 #include "DatabaseRParser.h"
 #include "SourceInformation.h"
+#include "RTagsPlugin.h"
 #include <searchsymbols.h>
 #include <LookupContext.h>
 #include <ASTPath.h>
@@ -483,7 +484,16 @@ Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
     return Set<Cursor>();
 }
 
-extern "C" Database* createInstance()
+class DatabaseRParserPlugin : public RTagsPlugin
 {
-    return new DatabaseRParser;
+public:
+    virtual shared_ptr<Database> createDatabase()
+    {
+        return shared_ptr<Database>(new DatabaseRParser);
+    }
+};
+
+extern "C" RTagsPlugin* createInstance()
+{
+    return new DatabaseRParserPlugin;
 }
