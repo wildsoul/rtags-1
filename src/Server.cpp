@@ -2,6 +2,7 @@
 
 #include "Client.h"
 #include "CompileMessage.h"
+#include "CompletionMessage.h"
 #include "Database.h"
 #include "Filter.h"
 #include "IndexerJob.h"
@@ -229,6 +230,9 @@ void Server::onNewMessage(Message *message, Connection *connection)
     case CompileMessage::MessageId:
         handleCompileMessage(static_cast<CompileMessage*>(message), connection);
         break;
+    case CompletionMessage::MessageId:
+        handleCompletionMessage(static_cast<CompletionMessage*>(message), connection);
+        break;
     case QueryMessage::MessageId:
         handleQueryMessage(static_cast<QueryMessage*>(message), connection);
         break;
@@ -250,6 +254,24 @@ void Server::handleCompileMessage(CompileMessage *message, Connection *conn)
     if (args.parse(message->arguments(), message->path())) {
         processSourceFile(args, message->projects());
     }
+}
+
+void Server::handleCompletionMessage(CompletionMessage *message, Connection *conn)
+{
+    updateProject(message->projects());
+    const Location loc = message->location();
+    if (loc.isNull()) {
+        conn->finish();
+        return;
+    }
+    shared_ptr<Project> project = updateProjectForLocation(loc);
+    if (!project) {
+        conn->finish();
+        return;
+    }
+    shared_ptr<Database> database = project->database();
+    database->codeCompleteAt(loc, message->contents(), conn);
+    conn->finish();
 }
 
 void Server::handleQueryMessage(QueryMessage *message, Connection *conn)

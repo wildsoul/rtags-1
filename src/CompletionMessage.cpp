@@ -2,17 +2,17 @@
 #include <rct/Serializer.h>
 
 
-CompletionMessage::CompletionMessage(unsigned flags, const Path &path, int line, int column, int pos)
-    : ClientMessage(MessageId), mFlags(flags), mPath(path), mLine(line), mColumn(column), mPos(pos)
+CompletionMessage::CompletionMessage(const Location &loc)
+    : ClientMessage(MessageId), mLocation(loc)
 {
 }
 
 void CompletionMessage::encode(Serializer &serializer) const
 {
-    serializer << mRaw << mFlags << mPath << mLine << mColumn << mPos << mContents << mProjects;
+    serializer << mRaw << mLocation << mContents << mProjects;
 }
 
 void CompletionMessage::decode(Deserializer &deserializer)
 {
-    deserializer >> mRaw >> mFlags >> mPath >> mLine >> mColumn >> mPos >> mContents >> mProjects;
+    deserializer >> mRaw >> mLocation >> mContents >> mProjects;
 }

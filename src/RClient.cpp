@@ -12,7 +12,6 @@ enum OptionType {
     AllReferences,
     Builds,
     Clear,
-    CodeComplete,
     CodeCompleteAt,
     Compile,
     ConnectTimeout,
@@ -120,8 +119,7 @@ struct Option opts[] = {
     { FindFile, "path", 'P', optional_argument, "Print files matching pattern." },
     { DumpFile, "dump-file", 'd', required_argument, "Dump source file." },
     { RdmLog, "rdm-log", 'g', no_argument, "Receive logs from rdm." },
-    { CodeCompleteAt, "code-complete-at", 'x', required_argument, "Get code completion from location (must be specified with path:line:column)." },
-    { CodeComplete, "code-complete", 0, no_argument, "Get code completion from stream written to stdin." },
+    { CodeCompleteAt, "code-complete-at", 'x', required_argument, "Get code completion from location." },
     { Compile, "compile", 'c', required_argument, "Pass compilation arguments to rdm." },
     { RemoveFile, "remove", 'D', required_argument, "Remove file from project." },
     { FindProjectRoot, "find-project-root", 0, required_argument, "Use to check behavior of find-project-root." },
@@ -284,104 +282,25 @@ public:
 class CompletionCommand : public RCCommand
 {
 public:
-    CompletionCommand(const Path &p, int l, int c)
-        : path(p), line(l), column(c), stream(false), client(0)
+    CompletionCommand(const Location &loc)
+        : location(loc)
     {}
-    CompletionCommand()
-        : line(-1), column(-1), stream(true), client(0)
-    {
-    }
 
-    const Path path;
-    const int line;
-    const int column;
-    const bool stream;
-    Client *client;
-    String data;
-
-    virtual bool exec(RClient *rc, Client *cl)
+    virtual bool exec(RClient *rc, Client *client)
     {
-        client = cl;
-        if (stream) {
-            CompletionMessage msg(CompletionMessage::Stream);
-            msg.init(rc->argc(), rc->argv());
-            msg.setProjects(rc->projects());
-            EventLoop::instance()->addFileDescriptor(STDIN_FILENO, EventLoop::Read, stdinReady, this);
-            return client->send(&msg, rc->timeout());
-        } else {
-            CompletionMessage msg(CompletionMessage::None, path, line, column);
-            msg.init(rc->argc(), rc->argv());
-            msg.setContents(rc->unsavedFiles().value(path));
-            msg.setProjects(rc->projects());
-            return client->send(&msg, rc->timeout());
-        }
+        CompletionMessage msg(location);
+        msg.init(rc->argc(), rc->argv());
+        msg.setContents(rc->unsavedFiles().value(location.path()));
+        msg.setProjects(rc->projects());
+        return client->send(&msg, rc->timeout());
     }
 
     virtual String description() const
     {
-        return String::format<128>("CompletionMessage %s:%d:%d", path.constData(), line, column);
+        return String::format<128>("CompletionMessage %s", location.key().constData());
     }
 
-    static void stdinReady(int fd, unsigned int flags, void* userData)
-    {
-        static_cast<CompletionCommand*>(userData)->processStdin();
-    }
-
-    void processStdin()
-    {
-        assert(!data.contains('\n'));
-        while (true) {
-            const int ch = getc(stdin);
-            if (ch == EOF)
-                return;
-            if (ch == '\n')
-                break;
-            data.append(static_cast<char>(ch));
-        }
-        const int colon = data.indexOf(':');
-        if (colon == -1) {
-            error() << "Failed to match completion header" << data;
-            EventLoop::instance()->removeFileDescriptor(STDIN_FILENO);
-            EventLoop::instance()->exit();
-            return;
-        }
-
-        int line, column, contentsSize, pos;
-        const int ret = sscanf(data.constData() + colon + 1, "%d:%d:%d:%d", &line, &column, &pos, &contentsSize);
-        if (ret != 4) {
-            error() << "Failed to match completion header" << ret << "\n" << data;
-            EventLoop::instance()->removeFileDescriptor(STDIN_FILENO);
-            EventLoop::instance()->exit();
-            return;
-        }
-        String contents(contentsSize, ' ');
-        int read = 0;
-        char *c = contents.data();
-        while (read < contentsSize) {
-            const int r = fread(c + read, sizeof(char), contentsSize - read, stdin);
-            if (r < 0) {
-                EventLoop::instance()->removeFileDescriptor(STDIN_FILENO);
-                EventLoop::instance()->exit();
-                return;
-            }
-            read += r;
-        }
-        Path path(data.constData(), colon);
-        data.clear();
-        if (!path.resolve(Path::MakeAbsolute)) {
-            error() << "Can't resolve" << path;
-            return;
-        }
-        // error() << path << line << column << contentsSize << pos << "\n" << contents.left(100)
-        //         << contents.right(100);
-
-        CompletionMessage msg(CompletionMessage::None, path, line, column, pos);
-        const String args = String::format<64>("%s:%d:%d:%d:%d", path.constData(), line, column, pos, contentsSize);
-        const char *argv[] = { "completionStream", args.constData() };
-        msg.init(2, argv);
-        msg.setContents(contents);
-        client->connection()->send(&msg);
-    }
+    const Location location;
 };
 
 class RdmLogCommand : public RCCommand
@@ -454,6 +373,11 @@ void RClient::addLog(int level)
 void RClient::addCompile(const Path &cwd, const String &args)
 {
     mCommands.append(new CompileCommand(cwd, args));
+}
+
+void RClient::addCompletionCommand(const Location &loc)
+{
+    mCommands.append(new CompletionCommand(loc));
 }
 
 bool RClient::exec()
@@ -605,34 +529,17 @@ bool RClient::parse(int &argc, char **argv)
         case CursorInfoIncludeReferences:
             mQueryFlags |= QueryMessage::CursorInfoIncludeReferences;
             break;
-        case CodeComplete:
-            logFile = "/tmp/rc.log";
-            mCommands.append(new CompletionCommand);
-            break;
         case Context:
             mContext = optarg;
             break;
         case CodeCompleteAt: {
-            const String arg = optarg;
-            List<RegExp::Capture> caps;
-            RegExp rx("^\\(.*\\):\\([0-9][0-9]*\\):\\([0-9][0-9]*\\)$");
-            if (rx.indexIn(arg, 0, &caps) != 0 || caps.size() != 4) {
-                fprintf(stderr, "Can't decode argument for --code-complete-at [%s]\n", optarg);
-                return false;
-            }
-            const Path path = Path::resolved(caps[1].capture, Path::MakeAbsolute);
-            if (!path.exists()) {
+            const Location loc = Location::decode(optarg);
+            if (!loc.isValid()) {
                 fprintf(stderr, "Can't decode argument for --code-complete-at [%s]\n", optarg);
                 return false;
             }
 
-            String out;
-            {
-                Serializer serializer(out);
-                serializer << path << atoi(caps[2].capture.constData()) << atoi(caps[3].capture.constData());
-            }
-            CompletionCommand *cmd = new CompletionCommand(path, atoi(caps[2].capture.constData()), atoi(caps[3].capture.constData()));
-            mCommands.append(cmd);
+            addCompletionCommand(loc);
             break; }
         case AllReferences:
             mQueryFlags |= QueryMessage::AllReferences;

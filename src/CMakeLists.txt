@@ -76,7 +76,7 @@ include_directories(${CMAKE_CURRENT_LIST_DIR}
 
 add_executable(rc rc.cpp RClient.cpp)
 add_dependencies(rc rct shared)
-target_link_libraries(rc rct shared ${SYSTEM_LIBS})
+target_link_libraries(rc shared rct ${SYSTEM_LIBS})
 
 add_library(rtags SHARED ${RDM_SOURCES})
 target_link_libraries(rtags ${CORESERVICES_LIBRARY} ${COREFOUNDATION_LIBRARY} shared rct ${SYSTEM_LIBS})
@@ -125,5 +125,5 @@ set(RPARSER_MOC_HDRS DatabaseRParser.h)
 qt4_wrap_cpp(RPARSER_MOC_SRCS ${RPARSER_MOC_HDRS})
 
 add_library(rparser MODULE ${RPARSER_SRCS} ${RPARSER_MOC_SRCS})
-add_dependencies(rparser rtags)
-target_link_libraries(rparser rtags ${QT_LIBRARIES} ${CPLUSPLUS_LIBRARY})
+add_dependencies(rparser rtags rct)
+target_link_libraries(rparser rtags ${QT_LIBRARIES} ${CPLUSPLUS_LIBRARY} rct)

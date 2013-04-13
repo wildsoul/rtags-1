@@ -41,6 +41,7 @@ private:
 
     void addLog(int level);
     void addCompile(const Path &cwd, const String &args);
+    void addCompletionCommand(const Location &loc);
 
     unsigned mQueryFlags;
     int mMax, mLogLevel, mTimeout, mMinLine, mMaxLine, mConnectTimeout;

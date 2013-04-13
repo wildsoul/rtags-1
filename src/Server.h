@@ -18,8 +18,8 @@
 class Connection;
 class Message;
 class ErrorMessage;
-class OutputMessage;
 class CompileMessage;
+class CompletionMessage;
 class SocketServer;
 class GccArguments;
 class Job;
@@ -79,6 +79,7 @@ private:
     void handleCompileMessage(CompileMessage *message, Connection *conn);
     void handleQueryMessage(QueryMessage *message, Connection *conn);
     void handleErrorMessage(ErrorMessage *message, Connection *conn);
+    void handleCompletionMessage(CompletionMessage *message, Connection *conn);
     void isIndexing(const QueryMessage &, Connection *conn);
     void removeFile(const QueryMessage &query, Connection *conn);
     void followLocation(const QueryMessage &query, Connection *conn);
