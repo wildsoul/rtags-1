@@ -35,7 +35,7 @@ public:
         Path compiler;
         List<String> defines;
         List<Path> includePaths;
-        List<String> includes;
+        List<Path> includes;
         List<String> args;
     };
     List<Build> builds;

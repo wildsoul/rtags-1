@@ -198,7 +198,7 @@ bool GccArguments::parse(String args, const Path &base)
                 }
                 if (ok) {
                     mIncludePaths.append(inc);
-                    mArgs.append("-D" + inc);
+                    mArgs.append("-I" + inc);
                 }
             } else if (arg == "-include") {
                 if (i + 1 < s) {
