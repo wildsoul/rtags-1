@@ -120,6 +120,14 @@ endif ()
 include(${QT_USE_FILE})
 add_definitions(${QT_DEFINITIONS})
 
+set(RPARSER_INCLUDES rparser/src/plugins/cpptools rparser/src/libs rparser/src/libs/3rdparty rparser/src/libs/cplusplus)
+include_directories(${RPARSER_INCLUDES})
+
+find_library(CPLUSPLUS_LIBRARY CPlusPlus rparser/lib/qtcreator "rparser/bin/Qt Creator.app/Contents/PlugIns")
+if ("${CPLUSPLUS_LIBRARY}" STREQUAL "")
+   message(FATAL_ERROR "libCPlusPlus not found. You need to get the submodule and run qmake && make in src/rparser")
+endif ()
+
 add_library(rparser MODULE DatabaseRParser.cpp)
 add_dependencies(rparser rtags)
-target_link_libraries(rparser rtags ${QT_LIBRARIES})
+target_link_libraries(rparser rtags ${QT_LIBRARIES} ${CPLUSPLUS_LIBRARY})
