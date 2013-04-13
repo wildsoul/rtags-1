@@ -119,7 +119,7 @@ struct Option opts[] = {
     { FindFile, "path", 'P', optional_argument, "Print files matching pattern." },
     { DumpFile, "dump-file", 'd', required_argument, "Dump source file." },
     { RdmLog, "rdm-log", 'g', no_argument, "Receive logs from rdm." },
-    { CodeCompleteAt, "code-complete-at", 'x', required_argument, "Get code completion from location." },
+    { CodeCompleteAt, "code-complete-at", 'o', required_argument, "Get code completion from location." },
     { Compile, "compile", 'c', required_argument, "Pass compilation arguments to rdm." },
     { RemoveFile, "remove", 'D', required_argument, "Remove file from project." },
     { FindProjectRoot, "find-project-root", 0, required_argument, "Use to check behavior of find-project-root." },
