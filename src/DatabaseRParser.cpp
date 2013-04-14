@@ -148,41 +148,62 @@ public:
 
     FindSymbols(Mode m) : mode(m) { }
 
-    void setFilter(const String& string);
+    void setFilter(const String& string, const List<Path>& paths);
     bool preVisit(CPlusPlus::Symbol* symbol);
 
-    QSet<CPlusPlus::Symbol*> operator()(CPlusPlus::Symbol* symbol);
+    void operator()(CPlusPlus::Symbol* symbol);
+
+    Set<CPlusPlus::Symbol*> symbols() { return syms; }
+    Set<String> symbolNames() { return names; };
 
 private:
     Mode mode;
     String filter;
-    QSet<CPlusPlus::Symbol*> symbols;
+    Set<Path> pathFilter;
+    Set<CPlusPlus::Symbol*> syms;
+    Set<String> names;
 };
 
-void FindSymbols::setFilter(const String& string)
+void FindSymbols::setFilter(const String& string, const List<Path>& paths)
 {
+    pathFilter = paths.toSet();
     filter = string;
 }
 
 bool FindSymbols::preVisit(CPlusPlus::Symbol* symbol)
 {
     if (mode == Cursors || filter.isEmpty()) {
-        symbols.insert(symbol);
+        if (pathFilter.isEmpty() || pathFilter.contains(Path(symbol->fileName())))
+            syms.insert(symbol);
     } else {
-        // ### this might be too heavy
-        // perhaps it would be better to collect all symbols and post-process?
-        const String name = symbolName(symbol);
-        if (name.startsWith(filter))
-            symbols.insert(symbol);
+        // ### this is likely too heavy
+        if (pathFilter.isEmpty() || pathFilter.contains(Path(symbol->fileName()))) {
+            static CPlusPlus::Overview overview;
+
+            bool found = false;
+            String symbolName;
+            QList<const CPlusPlus::Name*> fullName = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
+            while (!fullName.isEmpty()) {
+                const CPlusPlus::Name* name = fullName.takeLast();
+                if (!symbolName.isEmpty())
+                    symbolName.prepend("::");
+                symbolName.prepend(fromQString(overview.prettyName(name)));
+                if (found || symbolName.startsWith(filter)) {
+                    found = true;
+                    names.insert(symbolName);
+                    syms.insert(symbol);
+                }
+            }
+        }
     }
     return true;
 }
 
-QSet<CPlusPlus::Symbol*> FindSymbols::operator()(CPlusPlus::Symbol* symbol)
+void FindSymbols::operator()(CPlusPlus::Symbol* symbol)
 {
-    symbols.clear();
+    syms.clear();
+    names.clear();
     accept(symbol);
-    return symbols;
 }
 
 static inline CPlusPlus::Symbol *canonicalSymbol(CPlusPlus::Scope *scope, const QString &code,
@@ -593,33 +614,9 @@ Set<Path> DatabaseRParser::dependencies(const Path &path) const
     return result;
 }
 
-static inline void addNamePermutations(CPlusPlus::Symbol* sym, CPlusPlus::Namespace* global, Set<String>& names)
-{
-    CPlusPlus::Symbol* cur = sym;
-    String name;
-    for (;;) {
-        if (!name.isEmpty())
-            name.prepend("::");
-        name.prepend(symbolName(cur));
-        names.insert(name);
-
-        if (CPlusPlus::Class* cls = cur->enclosingClass()) {
-            cur = cls;
-        } else if (CPlusPlus::Namespace* ns = cur->enclosingNamespace()) {
-            if (ns == global)
-                break;
-            cur = ns;
-        } else {
-            break;
-        }
-    }
-}
-
 Set<String> DatabaseRParser::listSymbols(const String &string, const List<Path> &pathFilter) const
 {
     Set<String> names;
-    const bool filterEmpty = pathFilter.isEmpty();
-
     const CPlusPlus::Snapshot& snapshot = manager->snapshot();
 
     // ### Use QFuture for this?
@@ -632,13 +629,9 @@ Set<String> DatabaseRParser::listSymbols(const String &string, const List<Path> 
         CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
         if (globalNamespace) {
             FindSymbols find(FindSymbols::ListSymbols);
-            find.setFilter(string);
-            QSet<CPlusPlus::Symbol*> syms = find(globalNamespace);
-            foreach(CPlusPlus::Symbol* sym, syms) {
-                if (filterEmpty || pathFilter.contains(sym->fileName())) {
-                    addNamePermutations(sym, globalNamespace, names);
-                }
-            }
+            find.setFilter(string, pathFilter);
+            find(globalNamespace);
+            names += find.symbolNames();
         }
         ++snap;
     }
@@ -662,7 +655,8 @@ Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
     CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
     if (globalNamespace) {
         FindSymbols find(FindSymbols::Cursors);
-        QSet<CPlusPlus::Symbol*> syms = find(globalNamespace);
+        find(globalNamespace);
+        Set<CPlusPlus::Symbol*> syms = find.symbols();
         foreach(const CPlusPlus::Symbol* sym, syms) {
             cursors.insert(makeCursor(sym, unit));
         }
