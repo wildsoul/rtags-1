@@ -319,6 +319,7 @@ void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
         referencesForName(*message, conn);
         break;
     case QueryMessage::ListSymbols:
+    case QueryMessage::LocalSymbols:
         listSymbols(*message, conn);
         break;
     case QueryMessage::FindSymbols:
@@ -732,7 +733,7 @@ void Server::listSymbols(const QueryMessage &query, Connection *conn)
 
     shared_ptr<Database> db = project->database();
     Set<String> strings;
-    if (query.flags() & QueryMessage::IMenu) {
+    if (query.type() & QueryMessage::LocalSymbols) {
         Set<Database::Cursor> cursors = db->cursors(query.query());
         for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
             switch (it->kind) {

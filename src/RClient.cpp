@@ -34,7 +34,7 @@ enum OptionType {
     FollowLocation,
     HasFileManager,
     Help,
-    IMenu,
+    LocalSymbols,
     IsIndexed,
     IsIndexing,
     JobCount,
@@ -154,7 +154,7 @@ struct Option opts[] = {
     { CursorInfoIncludeReferences, "cursorinfo-include-references", 0, no_argument, "Use to make --cursor-info include reference cursors." },
     { WithProject, "with-project", 0, required_argument, "Like --project but pass as a flag." },
     { DeclarationOnly, "declaration-only", 0, no_argument, "Filter out definitions (unless inline).", },
-    { IMenu, "imenu", 0, no_argument, "Use with --list-symbols to provide output for (rtags-imenu) (filter namespaces, fully qualified function names, ignore certain cursors etc)." },
+    { LocalSymbols, "local-symbols", 'l', required_argument, "List symbols in file (filter namespaces, fully qualified function names, ignore certain cursors etc)." },
     { Context, "context", 't', required_argument, "Context for current symbol (for fuzzy matching with dirty files)." }, // ### multiple context doesn't work
     { None, 0, 0, 0, 0 }
 };
@@ -511,9 +511,6 @@ bool RClient::parse(int &argc, char **argv)
         case SocketFile:
             mSocketFile = optarg;
             break;
-        case IMenu:
-            mQueryFlags |= QueryMessage::IMenu;
-            break;
         case DeclarationOnly:
             mQueryFlags |= QueryMessage::DeclarationOnly;
             break;
@@ -762,6 +759,7 @@ bool RClient::parse(int &argc, char **argv)
             break;
         case IsIndexed:
         case DumpFile:
+        case LocalSymbols:
         case Dependencies: {
             Path p = optarg;
             if (!p.exists()) {
@@ -785,6 +783,7 @@ bool RClient::parse(int &argc, char **argv)
             case Dependencies: type = QueryMessage::Dependencies; break;
             case IsIndexed: type = QueryMessage::IsIndexed; break;
             case DumpFile: type = QueryMessage::DumpFile; break;
+            case LocalSymbols: type = QueryMessage::LocalSymbols; break;
             default: assert(0); break;
             }
 

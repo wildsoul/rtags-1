@@ -1585,7 +1585,7 @@ References to references will be treated as references to the referenced symbol"
   (rtags-save-location)
   (rtags-setup-filters (buffer-file-name))
   (let* ((alternatives (with-temp-buffer
-                        (rtags-call-rc default-directory "--imenu" "--list-symbols" (buffer-file-name) "-Y")
+                        (rtags-call-rc default-directory "--local-symbols" (buffer-file-name) "-Y")
                         (eval (read (buffer-string)))))
          (match (car alternatives)))
     (if (> (length alternatives) 1)
