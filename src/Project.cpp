@@ -379,7 +379,7 @@ int Project::dirty(const Set<Path> &dirty)
     Set<Path> dirtyFiles;
     Map<Path, List<String> > toIndex;
     for (Set<Path>::const_iterator it = dirty.begin(); it != dirty.end(); ++it)
-        dirtyFiles += mDependencies.value(*it);
+        dirtyFiles += mDatabase->dependencies(*it);
     for (Set<Path>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
         const SourceInformationMap::const_iterator found = mSources.find(*it);
         if (found != mSources.end()) {
