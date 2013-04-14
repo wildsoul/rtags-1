@@ -109,8 +109,6 @@ bool Project::restore()
     if (restoreError) {
         Path::rm(p);
         return false;
-    } else {
-        error() << "Restored project" << mPath << "in" << timer.elapsed() << "ms";
     }
 
     return true;
