@@ -65,8 +65,6 @@ bool Project::save()
     {
         Serializer o(f);
         o << static_cast<int>(Server::DatabaseVersion) << SHA256::hash(out) << out;
-        printf("FIST LITTLE PIECE OF SHIT: %d\n", *reinterpret_cast<const int*>(out.constData()));
-        error() << "out size" << out.size();
     }
     fclose(f);
     return true;
