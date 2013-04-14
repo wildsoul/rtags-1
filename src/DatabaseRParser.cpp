@@ -12,6 +12,40 @@
 using namespace CppTools;
 using namespace CppTools::Internal;
 
+static inline String fromQString(const QString& str)
+{
+    const QByteArray& utf8 = str.toUtf8();
+    return String(utf8.constData(), utf8.size());
+}
+
+static inline String symbolName(const CPlusPlus::Symbol* symbol)
+{
+    static CPlusPlus::Overview overview;
+
+    String symbolName = fromQString(overview.prettyName(symbol->name()));
+    if (symbolName.isEmpty()) {
+        String type;
+        if (symbol->isNamespace()) {
+            type = "namespace";
+        } else if (symbol->isEnum()) {
+            type = "enum";
+        } else if (const CPlusPlus::Class *c = symbol->asClass())  {
+            if (c->isUnion())
+                type = "union";
+            else if (c->isStruct())
+                type = "struct";
+            else
+                type = "class";
+        } else {
+            type = "symbol";
+        }
+        symbolName = "<anonymous ";
+        symbolName += type;
+        symbolName += '>';
+    }
+    return symbolName;
+}
+
 class ReallyFindScopeAt: protected CPlusPlus::SymbolVisitor
 {
     CPlusPlus::TranslationUnit *_unit;
@@ -110,22 +144,37 @@ protected:
 class FindSymbols : public CPlusPlus::SymbolVisitor
 {
 public:
-    enum Mode { Cursors };
+    enum Mode { Cursors, ListSymbols };
 
     FindSymbols(Mode m) : mode(m) { }
 
+    void setFilter(const String& string);
     bool preVisit(CPlusPlus::Symbol* symbol);
 
     QSet<CPlusPlus::Symbol*> operator()(CPlusPlus::Symbol* symbol);
 
 private:
     Mode mode;
+    String filter;
     QSet<CPlusPlus::Symbol*> symbols;
 };
 
+void FindSymbols::setFilter(const String& string)
+{
+    filter = string;
+}
+
 bool FindSymbols::preVisit(CPlusPlus::Symbol* symbol)
 {
-    symbols.insert(symbol);
+    if (mode == Cursors || filter.isEmpty()) {
+        symbols.insert(symbol);
+    } else {
+        // ### this might be too heavy
+        // perhaps it would be better to collect all symbols and post-process?
+        const String name = symbolName(symbol);
+        if (name.startsWith(filter))
+            symbols.insert(symbol);
+    }
     return true;
 }
 
@@ -274,12 +323,6 @@ static inline QStringList toQStringList(const T& t)
     return list;
 }
 
-static inline String fromQString(const QString& str)
-{
-    const QByteArray& utf8 = str.toUtf8();
-    return String(utf8.constData(), utf8.size());
-}
-
 void RParserUnit::reindex(QPointer<CppModelManager> manager)
 {
     CppPreprocessor preprocessor(manager);
@@ -358,11 +401,7 @@ static inline Database::Cursor makeCursor(const CPlusPlus::Symbol* sym,
     cursor.start = token.begin();
     cursor.end = token.end();
     cursor.kind = symbolKind(sym);
-    const CPlusPlus::Identifier* id = sym->identifier();
-    if (id)
-        cursor.symbolName = id->chars();
-    else
-        cursor.symbolName = token.spell();
+    cursor.symbolName = symbolName(sym);
     return cursor;
 }
 
@@ -460,10 +499,7 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
         cursor.kind = Cursor::Reference;
     }
 
-    const CPlusPlus::Identifier* id = sym->identifier();
-    if (id) {
-        cursor.symbolName = id->chars();
-    }
+    cursor.symbolName = symbolName(sym);
 
     bool added = false;
     const QList<CPlusPlus::Usage> usages = findUsages(manager, sym, src);
@@ -557,9 +593,57 @@ Set<Path> DatabaseRParser::dependencies(const Path &path) const
     return result;
 }
 
+static inline void addNamePermutations(CPlusPlus::Symbol* sym, CPlusPlus::Namespace* global, Set<String>& names)
+{
+    CPlusPlus::Symbol* cur = sym;
+    String name;
+    for (;;) {
+        if (!name.isEmpty())
+            name.prepend("::");
+        name.prepend(symbolName(cur));
+        names.insert(name);
+
+        if (CPlusPlus::Class* cls = cur->enclosingClass()) {
+            cur = cls;
+        } else if (CPlusPlus::Namespace* ns = cur->enclosingNamespace()) {
+            if (ns == global)
+                break;
+            cur = ns;
+        } else {
+            break;
+        }
+    }
+}
+
 Set<String> DatabaseRParser::listSymbols(const String &string, const List<Path> &pathFilter) const
 {
-    return Set<String>();
+    Set<String> names;
+    const bool filterEmpty = pathFilter.isEmpty();
+
+    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+
+    // ### Use QFuture for this?
+
+    CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
+    const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
+    while (snap != end) {
+        CPlusPlus::Document::Ptr doc = snap.value();
+
+        CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
+        if (globalNamespace) {
+            FindSymbols find(FindSymbols::ListSymbols);
+            find.setFilter(string);
+            QSet<CPlusPlus::Symbol*> syms = find(globalNamespace);
+            foreach(CPlusPlus::Symbol* sym, syms) {
+                if (filterEmpty || pathFilter.contains(sym->fileName())) {
+                    addNamePermutations(sym, globalNamespace, names);
+                }
+            }
+        }
+        ++snap;
+    }
+
+    return names;
 }
 
 Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const List<Path> &pathFilter) const
