@@ -731,7 +731,23 @@ void Server::listSymbols(const QueryMessage &query, Connection *conn)
     }
 
     shared_ptr<Database> db = project->database();
-    const Set<String> strings = db->listSymbols(query.query(), query.pathFilters());
+    Set<String> strings;
+    if (query.flags() & QueryMessage::IMenu) {
+        Set<Database::Cursor> cursors = db->cursors(query.query());
+        for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
+            switch (it->kind) {
+            case Database::Cursor::Reference:
+            case Database::Cursor::EnumValue:
+            case Database::Cursor::Namespace:
+                break;
+            default:
+                strings.insert(it->symbolName);
+                break;
+            }
+        }
+    } else {
+        strings = db->listSymbols(query.query(), query.pathFilters());
+    }
 
     const bool elispList = query.flags() & QueryMessage::ElispList;
 
