@@ -59,7 +59,6 @@ void Server::clear()
 
 bool Server::init(const Options &options)
 {
-    error() << options.dataDir;
     {
         List<Path> plugins = Rct::executablePath().parentDir().files(Path::File);
         for (int i=0; i<plugins.size(); ++i) {
@@ -152,10 +151,10 @@ int Server::reloadProjects()
     List<Path> projects = mOptions.dataDir.files(Path::File);
     const Path home = Path::home();
     for (int i=0; i<projects.size(); ++i) {
-        Path file = projects.at(i);
-        Path p = file.mid(mOptions.dataDir.size());
-        Server::decodePath(p);
-        addProject(p);
+        Path path = projects.at(i).fileName();
+        Server::decodePath(path);
+        if (path.isAbsolute() && path.isDir())
+            addProject(path);
     }
     return mProjects.size();
 }
@@ -930,11 +929,12 @@ void Server::processSourceFile(const GccArguments &args, const List<String> &pro
         project = addProject(srcRoot);
         assert(project);
     }
-    loadProject(project);
 
-    if (!mCurrentProject.lock())
-        mCurrentProject = project;
-
+    if (!mCurrentProject.lock()) {
+        setCurrentProject(project);
+    } else {
+        loadProject(project);
+    }
 
     for (int i=0; i<count; ++i) {
         project->index(inputFiles.at(i), args);
@@ -964,6 +964,7 @@ shared_ptr<Project> Server::setCurrentProject(const shared_ptr<Project> &project
 {
     if (project && project != mCurrentProject.lock()) {
         mCurrentProject = project;
+        Path::mkdir(mOptions.dataDir);
         FILE *f = fopen((mOptions.dataDir + ".currentProject").constData(), "w");
         if (f) {
             if (!fwrite(project->path().constData(), project->path().size(), 1, f) || !fwrite("\n", 1, 1, f)) {

@@ -31,6 +31,47 @@ void Project::init()
     mFileManager->init(static_pointer_cast<Project>(shared_from_this()));
 }
 
+
+bool Project::save()
+{
+    Path srcPath = mPath;
+    Server::encodePath(srcPath);
+    const Server::Options &options = Server::instance()->options();
+    Path p = options.dataDir;
+    if (!p.exists()) {
+        if (!Path::mkdir(p)) {
+            error("Unable to make path %s", p.constData());
+            return false;
+        }
+    } else if (!p.isDir()) {
+        error("Path is not a directory %s", p.constData());
+        return false;
+    }
+    p += srcPath;
+    FILE *f = fopen(p.constData(), "w");
+    if (!f) {
+        error("Can't open file %s", p.constData());
+        return false;
+    }
+    String out;
+    {
+        Serializer o(out);
+        o << mSources;
+        Deserializer i(out);
+        SourceInformationMap map;
+        i >> map;
+        error() << (map == mSources);
+    }
+    {
+        Serializer o(f);
+        o << static_cast<int>(Server::DatabaseVersion) << SHA256::hash(out) << out;
+        printf("FIST LITTLE PIECE OF SHIT: %d\n", *reinterpret_cast<const int*>(out.constData()));
+        error() << "out size" << out.size();
+    }
+    fclose(f);
+    return true;
+}
+
 bool Project::restore()
 {
     StopWatch timer;
@@ -57,8 +98,7 @@ bool Project::restore()
             restoreError = true;
         } else {
             Deserializer s(contents);
-            in >> mSources;
-            error() << "restoring" << contents.size() << mSources.size();
+            s >> mSources;
             for (SourceInformationMap::const_iterator it = mSources.begin(); it != mSources.end(); ++it) {
                 index(it->second, IndexerJob::Restore);
             }
@@ -130,40 +170,6 @@ void Project::onJobFinished(shared_ptr<IndexerJob> job)
         error("%d jobs finished in %dms", mJobCounter, static_cast<int>(mTimer.elapsed()));
         mJobCounter = 0;
     }
-}
-
-bool Project::save()
-{
-    Path srcPath = mPath;
-    Server::encodePath(srcPath);
-    const Server::Options &options = Server::instance()->options();
-    Path p = options.dataDir;
-    if (!p.exists()) {
-        if (!Path::mkdir(p)) {
-            error("Unable to make path %s", p.constData());
-            return false;
-        }
-    } else if (!p.isDir()) {
-        error("Path is not a directory %s", p.constData());
-        return false;
-    }
-    p += srcPath;
-    FILE *f = fopen(p.constData(), "w");
-    if (!f) {
-        error("Can't open file %s", p.constData());
-        return false;
-    }
-    String out;
-    {
-        Serializer o(out);
-        o << mSources;
-    }
-    {
-        Serializer o(f);
-        o << static_cast<uint32_t>(Server::DatabaseVersion) << SHA256::hash(out) << out;
-    }
-    fclose(f);
-    return true;
 }
 
 void Project::index(const SourceInformation &sourceInformation, IndexerJob::Type type)
