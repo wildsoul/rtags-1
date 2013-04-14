@@ -199,24 +199,29 @@ static inline QList<CPlusPlus::Usage> findUsages(QPointer<CppModelManager> manag
                                                  const QByteArray& unpreprocessedSource)
 {
     const CPlusPlus::Identifier *symbolId = symbol->identifier();
-    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+    if (!symbolId) {
+        error("no symbol id in findUsages");
+        return QList<CPlusPlus::Usage>();
+    }
 
-    CPlusPlus::Document::Ptr doc = snapshot.preprocessedDocument(unpreprocessedSource,
-                                                                 symbol->fileName());
-    doc->tokenize();
+    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
 
     QList<CPlusPlus::Usage> usages;
 
-    CPlusPlus::Control *control = doc->control();
-    if (control->findIdentifier(symbolId->chars(), symbolId->size()) != 0) {
-        //doc->setGlobalNamespace(0);
-        //doc->check();
-        doc->check();
+    // ### Use QFuture for this?
 
-        CPlusPlus::FindUsages process(unpreprocessedSource, doc, snapshot);
-        process(symbol);
-
-        usages = process.usages();
+    CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
+    const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
+    while (snap != end) {
+        CPlusPlus::Document::Ptr doc = snap.value();
+        const CPlusPlus::Control* control = doc->control();
+        if (control->findIdentifier(symbolId->chars(), symbolId->size())) {
+            CPlusPlus::LookupContext lookup(doc, snapshot);
+            CPlusPlus::FindUsages find(lookup);
+            find(symbol);
+            usages.append(find.usages());
+        }
+        ++snap;
     }
 
     return usages;
