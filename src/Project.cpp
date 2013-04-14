@@ -2,6 +2,7 @@
 #include "FileManager.h"
 #include "IndexerJob.h"
 #include "Server.h"
+#include "Database.h"
 #include <math.h>
 #include <rct/Log.h>
 #include <rct/MemoryMonitor.h>
@@ -321,33 +322,15 @@ SourceInformation Project::sourceInfo(const Path &path) const
     return mSources.value(path);
 }
 
-Set<Path> Project::dependencies(const Path &path, DependencyMode mode) const
-{
-    if (mode == DependsOnArg)
-        return mDependencies.value(path);
-
-    Set<Path> ret;
-    const DependencyMap::const_iterator end = mDependencies.end();
-    for (DependencyMap::const_iterator it = mDependencies.begin(); it != end; ++it) {
-        if (it->second.contains(path))
-            ret.insert(it->first);
-    }
-    return ret;
-}
-
-void Project::setDependencies(const Path &path, const Set<Path> &paths)
-{
-    if (paths.isEmpty()) {
-        mDependencies.remove(path);
-    } else {
-        mDependencies[path] = paths;
-    }
-}
-
 int Project::reindex(const Match &match)
 {
-    Set<Path> files;
-    const DependencyMap::const_iterator end = mDependencies.end();
+    for (SourceInformationMap::const_iterator it = mSources.begin(); it != mSources.end(); ++it) {
+        bool matched = match.isEmpty();
+        if (!matched) {
+            const Set<Path> files = mDatabase->dependencies(it->first, Database::ArgDependsOn);
+            for (Set<Path>::const_iterator f = files.begin(); f != files.end(); ++f) {
+
+            const DependencyMap::const_iterator end = mDependencies.end();
     for (DependencyMap::const_iterator it = mDependencies.begin(); it != end; ++it) {
         if (match.isEmpty() || match.match(it->first)) {
             files += it->first;
@@ -379,7 +362,7 @@ int Project::dirty(const Set<Path> &dirty)
     Set<Path> dirtyFiles;
     Map<Path, List<String> > toIndex;
     for (Set<Path>::const_iterator it = dirty.begin(); it != dirty.end(); ++it)
-        dirtyFiles += mDatabase->dependencies(*it);
+        dirtyFiles += mDatabase->dependencies(*it, Database::DependsOnArg);
     for (Set<Path>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
         const SourceInformationMap::const_iterator found = mSources.find(*it);
         if (found != mSources.end()) {
