@@ -589,18 +589,15 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
 
     const Path srcRoot = project->path();
 
-    // const bool absolute = (queryFlags() & QueryMessage::AbsolutePath);
-    Set<Path> dependencies = project->dependencies(path, Project::DependsOnArg);
+    Set<Path> dependencies = project->database()->dependencies(path, Database::DependsOnArg);
     dependencies.remove(path);
-    // if (!absolute && path.startsWith(srcRoot))
-    //     absolute.remove(0, srcRoot.size());
     if (!dependencies.isEmpty()) {
         conn->write<64>("%s is depended on by:", path.constData());
         for (Set<Path>::const_iterator it = dependencies.begin(); it != dependencies.end(); ++it) {
             conn->write<64>("  %s", it->constData());
         }
     }
-    dependencies = project->dependencies(path, Project::ArgDependsOn);
+    dependencies = project->database()->dependencies(path, Database::ArgDependsOn);
     if (!dependencies.isEmpty()) {
         conn->write<64>("%s depends on:", path.constData());
         for (Set<Path>::const_iterator it = dependencies.begin(); it != dependencies.end(); ++it) {

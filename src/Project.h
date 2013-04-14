@@ -10,7 +10,6 @@
 
 typedef Map<Path, Set<String> > FilesMap;
 typedef Map<Path, SourceInformation> SourceInformationMap;
-typedef Map<Path, Set<Path> > DependencyMap;
 class FileManager;
 class TimerEvent;
 class Database;
@@ -39,17 +38,10 @@ public:
     bool index(const Path &sourceFile, const GccArguments &args);
     SourceInformationMap sourceInfos() const;
     SourceInformation sourceInfo(const Path &path) const;
-    enum DependencyMode {
-        DependsOnArg,
-        ArgDependsOn // slow
-    };
-    Set<Path> dependencies(const Path &path, DependencyMode mode) const;
-    void setDependencies(const Path &path, const Set<Path> &dependencies);
     int reindex(const Match &match);
     int remove(const Match &match);
     void onJobFinished(shared_ptr<IndexerJob> job);
     SourceInformationMap sources() const;
-    DependencyMap dependencies() const;
     Set<Path> watchedPaths() const { return mWatchedPaths; }
     bool isIndexing() const { return !mJobs.isEmpty(); }
     int dirty(const Set<Path> &files);
@@ -69,7 +61,6 @@ private:
     Map<Path, shared_ptr<IndexerJob> > mJobs;
     StopWatch mTimer;
 
-    DependencyMap mDependencies;
     SourceInformationMap mSources;
 
     FileSystemWatcher mWatcher;

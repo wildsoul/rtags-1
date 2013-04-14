@@ -598,7 +598,7 @@ int DatabaseRParser::index(const SourceInformation &sourceInformation)
     return -1;
 }
 
-Set<Path> DatabaseRParser::dependencies(const Path &path) const
+Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) const
 {
     Set<Path> result;
 
