@@ -3,6 +3,7 @@
 #include "RTagsPlugin.h"
 #include <rct/Log.h>
 #include <QMutexLocker>
+#include <QQueue>
 
 #include <searchsymbols.h>
 #include <ASTPath.h>
@@ -148,52 +149,54 @@ public:
 
     FindSymbols(Mode m) : mode(m) { }
 
-    void setFilter(const String& string, const List<Path>& paths);
     bool preVisit(CPlusPlus::Symbol* symbol);
 
     void operator()(CPlusPlus::Symbol* symbol);
 
     Set<CPlusPlus::Symbol*> symbols() { return syms; }
-    Set<String> symbolNames() { return names; };
+    Map<String, DatabaseRParser::RParserName> symbolNames() { return names; };
 
 private:
     Mode mode;
-    String filter;
-    Set<Path> pathFilter;
     Set<CPlusPlus::Symbol*> syms;
-    Set<String> names;
+    Map<String, DatabaseRParser::RParserName> names;
 };
 
-void FindSymbols::setFilter(const String& string, const List<Path>& paths)
+void DatabaseRParser::RParserName::merge(const RParserName& other)
 {
-    pathFilter = paths.toSet();
-    filter = string;
+    paths += other.paths;
+    names += other.names;
 }
 
 bool FindSymbols::preVisit(CPlusPlus::Symbol* symbol)
 {
-    if (mode == Cursors || filter.isEmpty()) {
-        if (pathFilter.isEmpty() || pathFilter.contains(Path(symbol->fileName())))
-            syms.insert(symbol);
+    if (mode == Cursors) {
+        syms.insert(symbol);
     } else {
-        // ### this is likely too heavy
-        if (pathFilter.isEmpty() || pathFilter.contains(Path(symbol->fileName()))) {
-            static CPlusPlus::Overview overview;
+        static CPlusPlus::Overview overview;
 
-            bool found = false;
-            String symbolName;
-            QList<const CPlusPlus::Name*> fullName = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
-            while (!fullName.isEmpty()) {
-                const CPlusPlus::Name* name = fullName.takeLast();
-                if (!symbolName.isEmpty())
-                    symbolName.prepend("::");
-                symbolName.prepend(fromQString(overview.prettyName(name)));
-                if (found || symbolName.startsWith(filter)) {
-                    found = true;
-                    names.insert(symbolName);
-                    syms.insert(symbol);
-                }
+        DatabaseRParser::RParserName cur;
+        cur.paths.insert(Path(symbol->fileName()));
+
+        QVector<int> seps;
+        String symbolName;
+        QList<const CPlusPlus::Name*> fullName = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
+        foreach(const CPlusPlus::Name* name, fullName) {
+            if (!symbolName.isEmpty()) {
+                symbolName.append("::");
+                seps.append(symbolName.size());
             }
+            symbolName.append(fromQString(overview.prettyName(name)));
+        }
+        assert(!symbolName.isEmpty());
+
+        cur.names.insert(symbolName);
+        names[symbolName].merge(cur);
+
+        foreach(int s, seps) {
+            const String& sub = symbolName.mid(s);
+            cur.names.insert(sub);
+            names[sub].merge(cur);
         }
     }
     return true;
@@ -557,12 +560,10 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
 }
 
 DatabaseRParser::DatabaseRParser()
+    : state(Starting), parser(0)
 {
-    manager = new CppModelManager;
-    parser = new DocumentParser(manager);
-    QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
-                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)),
-                     Qt::DirectConnection);
+    start();
+    moveToThread(this);
 }
 
 DatabaseRParser::~DatabaseRParser()
@@ -576,6 +577,81 @@ DatabaseRParser::~DatabaseRParser()
     delete parser;
 }
 
+void DatabaseRParser::run()
+{
+    manager = new CppModelManager;
+    parser = new DocumentParser(manager);
+    QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
+                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
+
+    QMutexLocker locker(&mutex);
+    if (state == Starting)
+        changeState(Idle);
+    locker.unlock();
+
+    for (;;) {
+        locker.relock();
+        while (jobs.isEmpty()) {
+            assert(state == Idle);
+            waitForState(Equal, Processing);
+        }
+
+        assert(!jobs.isEmpty());
+        changeState(Indexing);
+        while (!jobs.isEmpty()) {
+            RParserJob* job = jobs.dequeue();
+            locker.unlock();
+            processJob(job);
+            locker.relock();
+        }
+
+        changeState(CollectingNames);
+        locker.unlock();
+        collectNames();
+        locker.relock();
+
+        changeState(Idle);
+        locker.unlock();
+    }
+}
+
+static inline const char* stateName(DatabaseRParser::State st)
+{
+    struct states {
+        DatabaseRParser::State state;
+        const char* name;
+    } static s[] = { { DatabaseRParser::Starting, "starting" },
+                     { DatabaseRParser::Processing, "processing" },
+                     { DatabaseRParser::Indexing, "indexing" },
+                     { DatabaseRParser::CollectingNames, "collectingnames" },
+                     { DatabaseRParser::Idle, "idle" } };
+    for (unsigned int i = 0; i < sizeof(s); ++i) {
+        if (s[i].state == st)
+            return s[i].name;
+    }
+    return 0;
+}
+
+// needs to be called with mutex locked
+void DatabaseRParser::changeState(State st)
+{
+    error() << "rparser thread state changed from " << stateName(state) << " to " << stateName(st);
+    state = st;
+    wait.wakeAll();
+}
+
+// needs to be called with mutex locked
+void DatabaseRParser::waitForState(WaitMode m, State st) const
+{
+    for (;;) {
+        if (m == GreaterOrEqual && state >= st)
+            break;
+        if (m == Equal && state == st)
+            break;
+        wait.wait(&mutex);
+    }
+}
+
 void DatabaseRParser::status(const String &query, Connection *conn) const
 {
 }
@@ -584,23 +660,74 @@ void DatabaseRParser::dump(const SourceInformation &sourceInformation, Connectio
 {
 }
 
+class RParserJob
+{
+public:
+    RParserJob(const SourceInformation& i)
+        : info(i)
+    {
+    }
+
+    SourceInformation info;
+};
+
+void DatabaseRParser::processJob(RParserJob* job)
+{
+    const Path& fileName = job->info.sourceFile;
+    RParserUnit* unit = findUnit(fileName);
+    if (!unit) {
+        unit = new RParserUnit;
+        unit->info = job->info;
+        units[fileName] = unit;
+    }
+    unit->reindex(manager);
+}
+
+void DatabaseRParser::collectNames()
+{
+    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+
+    // ### Use QFuture for this?
+
+    CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
+    const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
+    while (snap != end) {
+        CPlusPlus::Document::Ptr doc = snap.value();
+
+        CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
+        if (globalNamespace) {
+            FindSymbols find(FindSymbols::ListSymbols);
+            find(globalNamespace);
+            names += find.symbolNames();
+        }
+        ++snap;
+    }
+}
+
+// needs to be called with mutex locked
+void DatabaseRParser::startJob(RParserJob* job)
+{
+    jobs.enqueue(job);
+    if (state == Idle || state == Starting) {
+        changeState(Processing);
+    }
+}
+
 int DatabaseRParser::index(const SourceInformation &sourceInformation)
 {
     QMutexLocker locker(&mutex);
+    startJob(new RParserJob(sourceInformation));
+    waitForState(GreaterOrEqual, CollectingNames);
 
-    RParserUnit* unit = findUnit(sourceInformation.sourceFile);
-    if (!unit) {
-        unit = new RParserUnit;
-        unit->info = sourceInformation;
-        units[sourceInformation.sourceFile] = unit;
-    }
-    unit->reindex(manager);
     return -1;
 }
 
 Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) const
 {
     Set<Path> result;
+
+    QMutexLocker locker(&mutex);
+    waitForState(GreaterOrEqual, CollectingNames);
 
     // ### perhaps keep this around
     CPlusPlus::DependencyTable table;
@@ -616,27 +743,18 @@ Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) c
 
 Set<String> DatabaseRParser::listSymbols(const String &string, const List<Path> &pathFilter) const
 {
-    Set<String> names;
-    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+    QMutexLocker locker(&mutex);
+    waitForState(GreaterOrEqual, Idle);
 
-    // ### Use QFuture for this?
+    Set<String> ret;
 
-    CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
-    const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
-    while (snap != end) {
-        CPlusPlus::Document::Ptr doc = snap.value();
-
-        CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
-        if (globalNamespace) {
-            FindSymbols find(FindSymbols::ListSymbols);
-            find.setFilter(string, pathFilter);
-            find(globalNamespace);
-            names += find.symbolNames();
-        }
-        ++snap;
+    Map<String, RParserName>::const_iterator name = names.lower_bound(string);
+    const Map<String, RParserName>::const_iterator end = names.end();
+    while (name != end && name->first.startsWith(string)) {
+        ret += name->second.names;
+        ++name;
     }
-
-    return names;
+    return ret;
 }
 
 Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const List<Path> &pathFilter) const
@@ -646,6 +764,9 @@ Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const L
 
 Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
 {
+    QMutexLocker locker(&mutex);
+    waitForState(GreaterOrEqual, CollectingNames);
+
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(path));
     if (!doc)
         return Set<Cursor>();
