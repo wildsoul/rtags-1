@@ -9,12 +9,14 @@ IndexerJob::IndexerJob(const shared_ptr<Database> &db, Type type,
     : ThreadPool::Job(), mDatabase(db), mType(type), mSourceInformation(sourceInformation),
       mParseTime(0), mSymbolCount(-1), mElapsed(-1)
 {
+    assert(!sourceInformation.sourceFile.isEmpty());
     assert((connection != 0) == (type == Dump));
 }
 
 void IndexerJob::run()
 {
-    StopWatch timer(StopWatch::Microsecond);
+    StopWatch timer(StopWatch::Millisecond);
+    timer.start();
     assert(mDatabase);
     if (mType == Dump) {
         assert(mConnection);

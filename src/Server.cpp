@@ -59,6 +59,7 @@ void Server::clear()
 
 bool Server::init(const Options &options)
 {
+    error() << options.dataDir;
     {
         List<Path> plugins = Rct::executablePath().parentDir().files(Path::File);
         for (int i=0; i<plugins.size(); ++i) {
@@ -154,33 +155,7 @@ int Server::reloadProjects()
         Path file = projects.at(i);
         Path p = file.mid(mOptions.dataDir.size());
         Server::decodePath(p);
-        if (p.isDir()) {
-            bool remove = false;
-            if (FILE *f = fopen(file.constData(), "r")) {
-                Deserializer in(f);
-                int version;
-                in >> version;
-
-                if (version == Server::DatabaseVersion) {
-                    int fs;
-                    in >> fs;
-                    if (fs != Rct::fileSize(f)) {
-                        error("%s seems to be corrupted, refusing to restore. Removing.",
-                              file.constData());
-                        remove = true;
-                    } else {
-                        addProject(p);
-                    }
-                } else {
-                    remove = true;
-                    error() << file << "has wrong format. Got" << version << "expected" << Server::DatabaseVersion << "Removing";
-                }
-                fclose(f);
-            }
-            if (remove) {
-                Path::rm(file);
-            }
-        }
+        addProject(p);
     }
     return mProjects.size();
 }

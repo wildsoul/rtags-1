@@ -12,9 +12,10 @@ class IndexerJob : public ThreadPool::Job, public enable_shared_from_this<Indexe
 {
 public:
     enum Type {
-        Makefile,
+        Index,
         Dirty,
-        Dump
+        Dump,
+        Restore
     };
     IndexerJob(const shared_ptr<Database> &project, Type type,
                const SourceInformation &sourceInformation,
@@ -30,9 +31,7 @@ public:
         NotStarted,
         Running,
     };
-protected:
     virtual void run();
-
 private:
     shared_ptr<Database> mDatabase;
     const Type mType;

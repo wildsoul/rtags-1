@@ -7,13 +7,14 @@
 #include <rct/MemoryMonitor.h>
 #include <rct/Path.h>
 #include <rct/Rct.h>
+#include <rct/SHA256.h>
 #include <rct/ReadLocker.h>
 #include <rct/RegExp.h>
 #include <rct/WriteLocker.h>
 
 static void *ModifiedFiles = &ModifiedFiles;
 static void *Save = &Save;
-enum { ModifiedFilesTimeout = 50, SaveTimeout = 500 };
+enum { ModifiedFilesTimeout = 50, SaveTimeout = 1000 };
 
 Project::Project(const Path &path)
     : mPath(path), mJobCounter(0)
@@ -47,27 +48,23 @@ bool Project::restore()
     if (version != Server::DatabaseVersion) {
         error("Wrong database version. Expected %d, got %d for %s. Removing.", Server::DatabaseVersion, version, p.constData());
         restoreError = true;
-        goto end;
-    }
-    {
-        int fs;
-        in >> fs;
-        if (fs != Rct::fileSize(f)) {
+    } else {
+        String sha, contents;
+        in >> sha >> contents;
+        if (sha != SHA256::hash(contents)) {
             error("%s seems to be corrupted, refusing to restore %s",
                   p.constData(), mPath.constData());
             restoreError = true;
-            goto end;
+        } else {
+            Deserializer s(contents);
+            in >> mSources;
+            error() << "restoring" << contents.size() << mSources.size();
+            for (SourceInformationMap::const_iterator it = mSources.begin(); it != mSources.end(); ++it) {
+                index(it->second, IndexerJob::Restore);
+            }
+            mSaveTimer.stop();
         }
     }
-    {
-
-        SourceInformationMap sources;
-        in >> sources;
-        for (SourceInformationMap::const_iterator it = sources.begin(); it != sources.end(); ++it) {
-            index(it->second, IndexerJob::Makefile);
-        }
-    }
-end:
     fclose(f);
     if (restoreError) {
         Path::rm(p);
@@ -121,12 +118,18 @@ void Project::onJobFinished(shared_ptr<IndexerJob> job)
     mJobs.remove(path);
 
     const int idx = mJobCounter - mJobs.size();
+    assert(!job->path().isEmpty());
+    assert(mJobCounter);
 
     error("[%3d%%] %d/%d %s Parsed %s in %dms: %s.",
           static_cast<int>(round((double(idx) / double(mJobCounter)) * 100.0)), idx, mJobCounter,
           String::formatTime(time(0), String::Time).constData(),
-          job->path().constData(), job->elapsed(),
+          job->path().constData(), static_cast<int>(job->elapsed()),
           job->symbolCount() == -1 ? "Error" : String::format<32>("%d symbols", job->symbolCount()).constData());
+    if (idx == mJobCounter) {
+        error("%d jobs finished in %dms", mJobCounter, static_cast<int>(mTimer.elapsed()));
+        mJobCounter = 0;
+    }
 }
 
 bool Project::save()
@@ -150,15 +153,15 @@ bool Project::save()
         error("Can't open file %s", p.constData());
         return false;
     }
-    Serializer out(f);
-    out << static_cast<int>(Server::DatabaseVersion);
-    const int pos = ftell(f);
-    out << mSources;
-    const int size = ftell(f);
-    fseek(f, pos, SEEK_SET);
-    out << size;
-
-    // error() << "saved project" << path() << "in" << String::format<12>("%dms", timer.elapsed()).constData();
+    String out;
+    {
+        Serializer o(out);
+        o << mSources;
+    }
+    {
+        Serializer o(f);
+        o << static_cast<uint32_t>(Server::DatabaseVersion) << SHA256::hash(out) << out;
+    }
     fclose(f);
     return true;
 }
@@ -168,18 +171,20 @@ void Project::index(const SourceInformation &sourceInformation, IndexerJob::Type
     static const char *fileFilter = getenv("RTAGS_FILE_FILTER");
     if (fileFilter && !strstr(sourceInformation.sourceFile.constData(), fileFilter))
         return;
+
+    shared_ptr<Project> project = static_pointer_cast<Project>(shared_from_this());
     shared_ptr<IndexerJob> &job = mJobs[sourceInformation.sourceFile];
     if (job && job->state() == ThreadPool::Job::NotStarted) {
         return;
     }
-    shared_ptr<Project> project = static_pointer_cast<Project>(shared_from_this());
 
-    mSources[sourceInformation.sourceFile] = sourceInformation;
-
-    mSaveTimer.start(shared_from_this(), SaveTimeout, SingleShot, Save);
+    if (type != IndexerJob::Restore) {
+        mSources[sourceInformation.sourceFile] = sourceInformation;
+        mSaveTimer.start(shared_from_this(), SaveTimeout, SingleShot, Save);
+    }
 
     if (!mJobCounter++)
-        mTimer.start();
+        mTimer.restart();
 
     job.reset(new IndexerJob(project->database(), type, sourceInformation));
     job->finished().connectAsync(this, &Project::onJobFinished);
@@ -278,7 +283,7 @@ bool Project::index(const Path &sourceFile, const GccArguments &args)
     }
     if (!added)
         sourceInformation.builds.append(build);
-    index(sourceInformation, IndexerJob::Makefile);
+    index(sourceInformation, IndexerJob::Index);
     return true;
 }
 
@@ -389,7 +394,6 @@ void Project::timerEvent(TimerEvent *e)
         dirty(mModifiedFiles);
         mModifiedFiles.clear();
     } else if (e->userData() == Save) {
-        printf("[%s] %s:%d: save(); [before]\n", __func__, __FILE__, __LINE__);
         save();
     }
 }
