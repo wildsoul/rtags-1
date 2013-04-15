@@ -803,9 +803,23 @@ Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) c
     CPlusPlus::DependencyTable table;
     table.build(manager->snapshot());
 
-    const QStringList deps = table.filesDependingOn(QString::fromStdString(path));
-    foreach(const QString dep, deps) {
-        result.insert(fromQString(dep));
+    if (mode == DependsOnArg) {
+        const QStringList deps = table.filesDependingOn(QString::fromStdString(path));
+        foreach(const QString dep, deps) {
+            result.insert(fromQString(dep));
+        }
+    } else {
+        assert(mode == ArgDependsOn);
+        const QString qpath = QString::fromStdString(path);
+
+        const QHash<QString, QStringList>& t = table.dependencyTable();
+        QHash<QString, QStringList>::const_iterator it = t.begin();
+        const QHash<QString, QStringList>::const_iterator end = t.end();
+        while (it != end) {
+            if (it.value().contains(qpath))
+                result.insert(fromQString(it.key()));
+            ++it;
+        }
     }
 
     return result;
