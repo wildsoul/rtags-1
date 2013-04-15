@@ -40,7 +40,7 @@ public:
         Dump,
         Restore
     };
-    
+
     void index(const SourceInformation &args, Type type);
     bool index(const Path &sourceFile, const GccArguments &args);
     SourceInformationMap sourceInfos() const;

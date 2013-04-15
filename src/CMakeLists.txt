@@ -11,6 +11,7 @@ endif ()
 
 find_package(Qt4 REQUIRED)
 find_package(V8 REQUIRED)
+find_package(LibClang REQUIRED)
 
 add_subdirectory(rct)
 include(${CMAKE_CURRENT_LIST_DIR}/rct/compiler.cmake)
@@ -58,6 +59,7 @@ set(RTAGS_SHARED_SOURCES
 add_library(shared ${RTAGS_SHARED_SOURCES})
 
 set(RDM_SOURCES
+  ClangThread.cpp
   Database.cpp
   FileManager.cpp
   GccArguments.cpp
