@@ -280,7 +280,8 @@ void Project::onFileModified(const Path &file)
 
 void Project::onFileRemoved(const Path &path)
 {
-    mDatabase->remove(path);
+    if (mSources.remove(path))
+        mDatabase->remove(path);
 }
 
 SourceInformationMap Project::sourceInfos() const
