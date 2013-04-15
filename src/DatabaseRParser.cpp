@@ -187,7 +187,8 @@ bool FindSymbols::preVisit(CPlusPlus::Symbol* symbol)
             }
             symbolName.append(fromQString(overview.prettyName(name)));
         }
-        assert(!symbolName.isEmpty());
+        if (symbolName.isEmpty())
+            return true;
 
         cur.names.insert(symbolName);
         names[symbolName].merge(cur);
@@ -388,31 +389,41 @@ RParserUnit* DatabaseRParser::findUnit(const Path& path)
 
 static inline Database::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
 {
-    if (sym->asScope()) {
-        return Database::Cursor::Invalid;
-    } else if (sym->asEnum()) {
+    if (sym->asEnum()) {
+        //error("enum");
         return Database::Cursor::Enum;
     } else if (sym->asFunction()) {
+        //error("function");
         return Database::Cursor::MemberFunctionDeclaration;
     } else if (sym->asNamespace()) {
+        //error("namespace");
         return Database::Cursor::Namespace;
     } else if (sym->asTemplate()) {
+        //error("template");
     } else if (sym->asNamespaceAlias()) {
-    } else if (sym->asClass()) {
+        //error("namespaceAlias");
+    } else if (sym->asForwardClassDeclaration()) {
+        //error("forward class");
         return Database::Cursor::Class;
-    } else if (sym->asBlock()) {
+    } else if (sym->asClass()) {
+        //error("class");
+        return Database::Cursor::Class;
     } else if (sym->asUsingNamespaceDirective()) {
+        //error("using 1");
     } else if (sym->asUsingDeclaration()) {
+        //error("using 2");
     } else if (sym->asDeclaration()) {
+        //error("decl");
         return Database::Cursor::Variable; // ### ???
     } else if (sym->asArgument()) {
+        //error("arg");
         return Database::Cursor::Variable;
     } else if (sym->asTypenameArgument()) {
+        //error("typename");
     } else if (sym->asBaseClass()) {
-    } else if (sym->asForwardClassDeclaration()) {
-        return Database::Cursor::Class;
+        //error("baseclass");
     } else if (sym->asQtPropertyDeclaration()) {
-    } else if (sym->asQtEnum()) {
+    } else if (sym->asQtEnum()){
     } else if (sym->asObjCBaseClass()) {
     } else if (sym->asObjCBaseProtocol()) {
     } else if (sym->asObjCClass()) {
@@ -505,6 +516,9 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                 //unit->getTokenEndPosition(ast->lastToken() - 1, &endLine, &endColumn, 0);
                 loc = Location(file->chars(), startLine, startColumn);
 
+                static int faen = 0;
+                if (++faen >= 10)
+                    abort();
                 error("got it!");
                 break;
             }
@@ -566,6 +580,7 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
             }
         }
         if (!added) {
+            //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
             cursor.references.insert(Location(fromQString(usage.path),
                                               usage.line, usage.col + 1));
         }

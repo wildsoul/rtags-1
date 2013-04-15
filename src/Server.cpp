@@ -637,16 +637,22 @@ static void references(const QueryMessage &query, const Set<Database::Cursor> &c
 {
     assert(!cursors.isEmpty());
     List<Node> locations;
-    const bool references = !(query.flags() & QueryMessage::FindVirtuals);
+    //const bool references = !(query.flags() & QueryMessage::FindVirtuals);
     for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
-        for (Set<Location>::const_iterator loc = it->references.begin(); loc != it->references.end(); ++it) {
+        //error("geh! %u", it->references.size());
+        for (Set<Location>::const_iterator loc = it->references.begin(); loc != it->references.end(); ++loc) {
+            //error() << "gah!" << *loc;
             if (query.flags() & QueryMessage::AllReferences) {
                 locations.append(Node(*loc, false));
             } else {
+                /*
                 const Database::Cursor c = db->cursor(*loc);
                 if (c.isValid() && (c.kind == Database::Cursor::Reference) == references) {
                     locations.append(Node(c.location, c.isDefinition()));
                 }
+                */
+                // hack for now
+                locations.append(Node(*loc, false));
             }
         }
     }
