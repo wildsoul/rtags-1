@@ -33,10 +33,10 @@ public:
         int diff = mPath.compare(other.mPath);
         if (diff)
             return diff;
-        diff = other.mLine - mLine;
+        diff = mLine - other.mLine;
         if (diff)
             return diff;
-        diff = other.mColumn - mColumn;
+        diff = mColumn - other.mColumn;
         return diff;
     }
     inline bool operator==(const Location &other) const { return !compare(other); }
