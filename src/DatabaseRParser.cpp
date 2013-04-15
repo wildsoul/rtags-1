@@ -2,6 +2,7 @@
 #include "SourceInformation.h"
 #include "RTagsPlugin.h"
 #include <rct/Log.h>
+#include <rct/StopWatch.h>
 #include <QMutexLocker>
 
 #include <searchsymbols.h>
@@ -575,6 +576,8 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
     return sym;
 }
 
+//#define TIMECURSOR
+
 Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) const
 {
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
@@ -584,8 +587,14 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
 
     Cursor cursor;
 
+#ifdef TIMECURSOR
+    StopWatch watch;
+#endif
     CPlusPlus::LookupContext lookup(doc, manager->snapshot());
     CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
+#ifdef TIMECURSOR
+    error() << "after findsym" << watch.elapsed();
+#endif
     if (!sym) {
         error() << "no symbol whatsoever for" << location;
         return Cursor();
@@ -599,7 +608,13 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
     if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
         // if we find a definition that's different from the declaration then replace
         CppTools::SymbolFinder finder;
+#ifdef TIMECURSOR
+        error() << "before find def" << watch.elapsed();
+#endif
         CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot());
+#ifdef TIMECURSOR
+        error() << "after find def" << watch.elapsed();
+#endif
         if (definition) {
             if (definition != sym) {
                 // assume we were a declaration, find our usages before replacing
@@ -608,7 +623,13 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
                 sym = definition;
             } else {
                 // see if we can find our declaration
+#ifdef TIMECURSOR
+                error() << "before find decl" << watch.elapsed();
+#endif
                 QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
+#ifdef TIMECURSOR
+                error() << "after find decl" << watch.elapsed();
+#endif
                 if (!decls.isEmpty()) {
                     // ### take the first one I guess?
                     sym = decls.first();
@@ -622,18 +643,33 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
         }
     } else {
         // check if we are a forward class declaration
+#ifdef TIMECURSOR
+        error() << "before forwardclass findsym" << watch.elapsed();
+#endif
         if (CPlusPlus::ForwardClassDeclaration* fwd = sym->asForwardClassDeclaration()) {
             // we are, try to find our real declaration
             CppTools::SymbolFinder finder;
+#ifdef TIMECURSOR
+            error() << "before forwardclass" << watch.elapsed();
+#endif
             CPlusPlus::Class* cls = finder.findMatchingClassDeclaration(fwd, manager->snapshot());
+#ifdef TIMECURSOR
+            error() << "after forwardclass" << watch.elapsed();
+#endif
             if (cls)
                 sym = cls;
         }
+#ifdef TIMECURSOR
+        error() << "after forwardclass findsym" << wantUsages << mode << watch.elapsed();
+#endif
         if (wantUsages)
             usages = findUsages(manager, sym, src);
     }
 
     if (wantTarget) {
+#ifdef TIMECURSOR
+        error() << "before make target/loc" << watch.elapsed();
+#endif
         cursor.target = makeLocation(sym);
         if (cursor.location == cursor.target) {
             // declaration
@@ -643,8 +679,14 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
             cursor.kind = Cursor::Reference;
         }
         cursor.symbolName = symbolName(sym);
+#ifdef TIMECURSOR
+        error() << "after make target/loc" << watch.elapsed();
+#endif
     }
 
+#ifdef TIMECURSOR
+    error() << "before usages" << watch.elapsed();
+#endif
     foreach(const CPlusPlus::Usage& usage, usages) {
         CPlusPlus::Document::Ptr doc = manager->document(usage.path);
         if (doc) {
@@ -661,6 +703,9 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
         cursor.references.insert(Location(fromQString(usage.path),
                                           usage.line, usage.col + 1));
     }
+#ifdef TIMECURSOR
+    error() << "after usages" << watch.elapsed();
+#endif
 
     error() << "got a symbol, tried" << location << "ended up with target" << cursor.target;
     return cursor;
