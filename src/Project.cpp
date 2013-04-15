@@ -31,7 +31,6 @@ void Project::init()
     mFileManager->init(static_pointer_cast<Project>(shared_from_this()));
 }
 
-
 bool Project::save()
 {
     Path srcPath = mPath;
@@ -157,6 +156,9 @@ void Project::index(const SourceInformation &sourceInformation, Type type)
         mSources[sourceInformation.sourceFile] = sourceInformation;
         mSaveTimer.start(shared_from_this(), SaveTimeout, SingleShot, Save);
     }
+    const Path dir = sourceInformation.sourceFile.parentDir();
+    if (mWatchedPaths.insert(dir))
+        mWatcher.watch(dir);
 
     mDatabase->index(sourceInformation);
 
@@ -278,9 +280,8 @@ void Project::onFileModified(const Path &file)
 
 void Project::onFileRemoved(const Path &path)
 {
-    error() << "Need to tell db to remove path";
+    mDatabase->remove(path);
 }
-
 
 SourceInformationMap Project::sourceInfos() const
 {
@@ -334,7 +335,7 @@ int Project::remove(const Match &match)
 int Project::dirty(const Set<Path> &dirty)
 {
     int ret = 0;
-    Set<Path> dirtyFiles;
+    Set<Path> dirtyFiles = dirty;
     Map<Path, List<String> > toIndex;
     for (Set<Path>::const_iterator it = dirty.begin(); it != dirty.end(); ++it)
         dirtyFiles += mDatabase->dependencies(*it, Database::DependsOnArg);

@@ -73,7 +73,7 @@ public:
     virtual void status(const String &query, Connection *conn) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
     virtual int index(const SourceInformation &sourceInformation) = 0;
-    virtual void remove(const SourceInformation &sourceInformation) = 0;
+    virtual void remove(const Path &sourceFile) = 0;
     virtual bool isIndexing() const = 0;
     enum DependencyMode {
         DependsOnArg,

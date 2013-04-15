@@ -901,7 +901,7 @@ bool DatabaseRParser::isIndexing() const
     return state == Indexing;
 }
 
-void DatabaseRParser::remove(const SourceInformation &sourceInformation)
+void DatabaseRParser::remove(const Path &sourceFile)
 {
     error() << "Not implemented";
 }

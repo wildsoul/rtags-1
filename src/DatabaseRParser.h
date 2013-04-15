@@ -52,7 +52,7 @@ public:
     virtual Set<Cursor> cursors(const Path &path) const;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
     virtual bool isIndexing() const;
-    virtual void remove(const SourceInformation &sourceInformation);
+    virtual void remove(const Path &sourceFile);
 
     enum State { Starting,
                  Indexing,
