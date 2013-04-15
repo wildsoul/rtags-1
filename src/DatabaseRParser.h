@@ -42,7 +42,7 @@ public:
     DatabaseRParser();
     virtual ~DatabaseRParser();
 
-    virtual Cursor cursor(const Location &location) const;
+    virtual Cursor cursor(const Location &location, int mode) const;
     virtual void status(const String &query, Connection *conn) const;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const;
     virtual int index(const SourceInformation &sourceInformation);

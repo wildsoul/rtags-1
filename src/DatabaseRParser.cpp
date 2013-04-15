@@ -555,7 +555,7 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
     return sym;
 }
 
-Database::Cursor DatabaseRParser::cursor(const Location &location) const
+Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) const
 {
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
     if (!doc)
@@ -571,6 +571,9 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
         return Cursor();
     }
 
+    const bool wantUsages = (mode & References);
+    const bool wantTarget = (mode & Target);
+
     QList<CPlusPlus::Usage> usages;
 
     if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
@@ -580,7 +583,8 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
         if (definition) {
             if (definition != sym) {
                 // assume we were a declaration, find our usages before replacing
-                usages = findUsages(manager, sym, src);
+                if (wantUsages)
+                    usages = findUsages(manager, sym, src);
                 sym = definition;
             } else {
                 // see if we can find our declaration
@@ -589,25 +593,29 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
                     // ### take the first one I guess?
                     sym = decls.first();
                 }
-                usages = findUsages(manager, sym, src);
+                if (wantUsages)
+                    usages = findUsages(manager, sym, src);
             }
         } else {
-            usages = findUsages(manager, sym, src);
+            if (wantUsages)
+                usages = findUsages(manager, sym, src);
         }
     } else {
-        usages = findUsages(manager, sym, src);
+        if (wantUsages)
+            usages = findUsages(manager, sym, src);
     }
 
-    cursor.target = makeLocation(sym);
-    if (cursor.location == cursor.target) {
-        // declaration
-        cursor.kind = symbolKind(sym);
-    } else {
-        // possible reference
-        cursor.kind = Cursor::Reference;
+    if (wantTarget) {
+        cursor.target = makeLocation(sym);
+        if (cursor.location == cursor.target) {
+            // declaration
+            cursor.kind = symbolKind(sym);
+        } else {
+            // possible reference
+            cursor.kind = Cursor::Reference;
+        }
+        cursor.symbolName = symbolName(sym);
     }
-
-    cursor.symbolName = symbolName(sym);
 
     foreach(const CPlusPlus::Usage& usage, usages) {
         CPlusPlus::Document::Ptr doc = manager->document(usage.path);

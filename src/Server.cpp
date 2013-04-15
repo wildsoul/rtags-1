@@ -345,7 +345,7 @@ void Server::followLocation(const QueryMessage &query, Connection *conn)
     shared_ptr<Database> database = project->database();
     Database::Cursor cursor = database->cursor(loc);
     if (query.flags() & QueryMessage::DeclarationOnly && cursor.isDefinition() && cursor.target.isValid())
-        cursor = database->cursor(cursor.target);
+        cursor = database->cursor(cursor.target, Database::Target);
 
     if (cursor.location.isValid() && !isFiltered(cursor.location, query))
         conn->write(cursor.target.key(query.keyFlags()).constData());

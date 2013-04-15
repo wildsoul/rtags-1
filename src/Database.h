@@ -69,7 +69,12 @@ public:
         }
 
     };
-    virtual Cursor cursor(const Location &location) const = 0;
+    enum CursorMode {
+        Target = 0x1,
+        References = 0x2,
+        Full = Target | References
+    };
+    virtual Cursor cursor(const Location &location, int mode = Full) const = 0;
     virtual void status(const String &query, Connection *conn) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
     virtual int index(const SourceInformation &sourceInformation) = 0;
