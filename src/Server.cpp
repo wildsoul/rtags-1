@@ -343,7 +343,7 @@ void Server::followLocation(const QueryMessage &query, Connection *conn)
     }
 
     shared_ptr<Database> database = project->database();
-    Database::Cursor cursor = database->cursor(loc);
+    Database::Cursor cursor = database->cursor(loc, Database::Target);
     if (query.flags() & QueryMessage::DeclarationOnly && cursor.isDefinition() && cursor.target.isValid())
         cursor = database->cursor(cursor.target, Database::Target);
 
