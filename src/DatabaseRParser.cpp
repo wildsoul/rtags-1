@@ -601,6 +601,14 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
                 usages = findUsages(manager, sym, src);
         }
     } else {
+        // check if we are a forward class declaration
+        if (CPlusPlus::ForwardClassDeclaration* fwd = sym->asForwardClassDeclaration()) {
+            // we are, try to find our real declaration
+            CppTools::SymbolFinder finder;
+            CPlusPlus::Class* cls = finder.findMatchingClassDeclaration(fwd, manager->snapshot());
+            if (cls)
+                sym = cls;
+        }
         if (wantUsages)
             usages = findUsages(manager, sym, src);
     }
