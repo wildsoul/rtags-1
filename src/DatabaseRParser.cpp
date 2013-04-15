@@ -3,7 +3,6 @@
 #include "RTagsPlugin.h"
 #include <rct/Log.h>
 #include <QMutexLocker>
-#include <QQueue>
 
 #include <searchsymbols.h>
 #include <ASTPath.h>
@@ -207,6 +206,21 @@ void FindSymbols::operator()(CPlusPlus::Symbol* symbol)
     syms.clear();
     names.clear();
     accept(symbol);
+}
+
+static inline bool nameMatch(CPlusPlus::Symbol* symbol, const String& name, const CPlusPlus::Overview& overview)
+{
+    String current;
+    QList<const CPlusPlus::Name*> fullName = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
+    while (!fullName.isEmpty()) {
+        const CPlusPlus::Name* n = fullName.takeLast();
+        if (!current.isEmpty())
+            current.prepend("::");
+        current.prepend(fromQString(overview.prettyName(n)));
+        if (current.startsWith(name))
+            return true;
+    }
+    return false;
 }
 
 static inline CPlusPlus::Symbol *canonicalSymbol(CPlusPlus::Scope *scope, const QString &code,
@@ -762,7 +776,53 @@ Set<String> DatabaseRParser::listSymbols(const String &string, const List<Path> 
 
 Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const List<Path> &pathFilter) const
 {
-    return Set<Cursor>();
+    QMutexLocker locker(&mutex);
+    waitForState(GreaterOrEqual, Idle);
+
+    Set<Path> cand, paths = pathFilter.toSet();
+    {
+        const bool pass = paths.isEmpty();
+        Map<String, RParserName>::const_iterator name = names.lower_bound(string);
+        const Map<String, RParserName>::const_iterator end = names.end();
+        while (name != end && name->first.startsWith(string)) {
+            if (pass)
+                cand += name->second.paths;
+            else
+                cand += paths.intersected(name->second.paths);
+            ++name;
+        }
+    }
+
+    Set<Cursor> cursors;
+    {
+        CPlusPlus::Overview overview;
+
+        Set<Path>::const_iterator path = cand.begin();
+        const Set<Path>::const_iterator end = cand.end();
+        while (path != end) {
+            CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(*path));
+            if (!doc) {
+                error() << "No document for" << *path << "in findCursors";
+                ++path;
+                continue;
+            }
+
+            CPlusPlus::TranslationUnit* unit = doc->translationUnit();
+            CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
+            if (globalNamespace) {
+                FindSymbols find(FindSymbols::Cursors);
+                find(globalNamespace);
+                Set<CPlusPlus::Symbol*> syms = find.symbols();
+                foreach(CPlusPlus::Symbol* sym, syms) {
+                    if (nameMatch(sym, string, overview))
+                        cursors.insert(makeCursor(sym, unit));
+                }
+            }
+
+            ++path;
+        }
+    }
+    return cursors;
 }
 
 Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
