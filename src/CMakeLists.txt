@@ -65,7 +65,6 @@ set(RDM_SOURCES
   GccArguments.cpp
   Preprocessor.cpp
   Project.cpp
-  ScanJob.cpp
   Server.cpp
   )
 

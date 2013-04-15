@@ -5,7 +5,6 @@
 #include "CompileMessage.h"
 #include "FileManager.h"
 #include "QueryMessage.h"
-#include "ScanJob.h"
 #include "RTagsPluginFactory.h"
 #include <rct/Connection.h>
 #include <rct/EventReceiver.h>
@@ -13,7 +12,6 @@
 #include <rct/List.h>
 #include <rct/Map.h>
 #include <rct/String.h>
-#include <rct/ThreadPool.h>
 
 class Connection;
 class Message;
@@ -46,13 +44,11 @@ public:
         AllowMultipleBuildsForSameCompiler = 0x080,
         NoStartupCurrentProject = 0x100
     };
-    ThreadPool *threadPool() const { return mThreadPool; }
-    void startJob(const shared_ptr<ThreadPool::Job> &job);
     struct Options {
-        Options() : options(0), threadCount(0), unloadTimer(0), stackSize(0) {}
+        Options() : options(0), unloadTimer(0), stackSize(0) {}
         Path socketFile, dataDir;
         unsigned options;
-        int threadCount, unloadTimer, stackSize;
+        int unloadTimer, stackSize;
         List<String> defaultArguments, excludeFilters;
         Set<Path> ignoredCompilers;
     };
@@ -74,7 +70,6 @@ private:
     shared_ptr<Project> setCurrentProject(const shared_ptr<Project> &project);
     void processSourceFile(const GccArguments &args, const List<String> &projects);
     void onNewMessage(Message *message, Connection *conn);
-    void onConnectionDestroyed(Connection *o);
     void clearProjects();
     void handleCompileMessage(CompileMessage *message, Connection *conn);
     void handleQueryMessage(QueryMessage *message, Connection *conn);
@@ -85,7 +80,6 @@ private:
     void followLocation(const QueryMessage &query, Connection *conn);
     void cursorInfo(const QueryMessage &query, Connection *conn);
     void dependencies(const QueryMessage &query, Connection *conn);
-    void jobCount(const QueryMessage &query, Connection *conn);
     void referencesForLocation(const QueryMessage &query, Connection *conn);
     void referencesForName(const QueryMessage &query, Connection *conn);
     void findSymbols(const QueryMessage &query, Connection *conn);
@@ -104,7 +98,6 @@ private:
     void clearProjects(const QueryMessage &query, Connection *conn);
     void shutdown(const QueryMessage &query, Connection *conn);
     void builds(const QueryMessage &query, Connection *conn);
-    int nextId();
     void reindex(const QueryMessage &query, Connection *conn);
     shared_ptr<Project> updateProjectForLocation(const Match &match);
     shared_ptr<Project> updateProjectForLocation(const Location &location);
@@ -124,11 +117,8 @@ private:
     static Server *sInstance;
     Options mOptions;
     SocketServer *mServer;
-    Map<int, Connection*> mPendingLookups;
     bool mVerbose;
-    int mJobId;
 
-    ThreadPool *mThreadPool;
     signalslot::Signal2<int, const List<String> &> mComplete;
 
     Timer mUnloadTimer;

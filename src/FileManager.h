@@ -17,7 +17,7 @@ public:
     void recurseDirs();
     void onFileAdded(const Path &path);
     void onFileRemoved(const Path &path);
-    void onRecurseJobFinished(Set<Path> mPaths);
+    void onScanFinished(Set<Path> mPaths);
     bool contains(const Path &path) const;
     void reload();
     Set<Path> jsFiles() const;

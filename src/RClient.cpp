@@ -37,7 +37,6 @@ enum OptionType {
     LocalSymbols,
     IsIndexed,
     IsIndexing,
-    JobCount,
     ListSymbols,
     LogFile,
     Man,
@@ -100,7 +99,6 @@ struct Option opts[] = {
     { DeleteProject, "delete-project", 'W', required_argument, "Delete all projects matching regexp." },
     { UnloadProject, "unload", 'u', required_argument, "Unload project(s) matching argument." },
     { ReloadProjects, "reload-projects", 'z', no_argument, "Reload projects from projects file." },
-    { JobCount, "jobcount", 'j', required_argument, "Set or query current job count." },
 
     { None, 0, 0, 0, "" },
     { None, 0, 0, 0, "Commands:" },
@@ -660,14 +658,6 @@ bool RClient::parse(int &argc, char **argv)
             break; }
         case WithProject:
             mProjects.append(optarg);
-            break;
-        case JobCount:
-            if (const int count = atoi(optarg)) {
-                addQuery(QueryMessage::JobCount, String::number(count));
-            } else {
-                fprintf(stderr, "%s is not a positive integer\n", optarg);
-                return false;
-            }
             break;
         case ReloadFileManager:
             addQuery(QueryMessage::ReloadFileManager);

@@ -29,7 +29,7 @@
 void *UnloadTimer = &UnloadTimer;
 Server *Server::sInstance = 0;
 Server::Server()
-    : mServer(0), mVerbose(false), mJobId(0), mThreadPool(0)
+    : mServer(0), mVerbose(false)
 {
     assert(!sInstance);
     sInstance = this;
@@ -45,11 +45,6 @@ Server::~Server()
 
 void Server::clear()
 {
-    if (mThreadPool) {
-        mThreadPool->clearBackLog();
-        delete mThreadPool;
-        mThreadPool = 0;
-    }
     Path::rm(mOptions.socketFile);
     delete mServer;
     mServer = 0;
@@ -69,8 +64,6 @@ bool Server::init(const Options &options)
         }
     }
     RTags::initMessages();
-
-    mThreadPool = new ThreadPool(options.threadCount, options.stackSize);
 
     mOptions = options;
     if (options.options & NoBuiltinIncludes) {
@@ -166,21 +159,7 @@ void Server::onNewConnection()
             break;
         Connection *conn = new Connection(client);
         conn->newMessage().connect(this, &Server::onNewMessage);
-        conn->destroyed().connect(this, &Server::onConnectionDestroyed);
         // client->disconnected().connect(conn, &Connection::onLoop);
-    }
-}
-
-void Server::onConnectionDestroyed(Connection *o)
-{
-    Map<int, Connection*>::iterator it = mPendingLookups.begin();
-    const Map<int, Connection*>::const_iterator end = mPendingLookups.end();
-    while (it != end) {
-        if (it->second == o) {
-            mPendingLookups.erase(it++);
-        } else {
-            ++it;
-        }
     }
 }
 
@@ -272,9 +251,6 @@ void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
     case QueryMessage::RemoveFile:
         removeFile(*message, conn);
         break;
-    case QueryMessage::JobCount:
-        jobCount(*message, conn);
-        break;
     case QueryMessage::FindFile:
         findFile(*message, conn);
         break;
@@ -340,14 +316,6 @@ void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
         reloadFileManager(*message, conn);
         break;
     }
-}
-
-int Server::nextId()
-{
-    ++mJobId;
-    if (!mJobId)
-        ++mJobId;
-    return mJobId;
 }
 
 static bool isFiltered(const Location &loc, const QueryMessage &query)
@@ -901,11 +869,6 @@ void Server::reindex(const QueryMessage &query, Connection *conn)
     conn->finish();
 }
 
-void Server::startJob(const shared_ptr<ThreadPool::Job> &job)
-{
-    mThreadPool->start(job);
-}
-
 void Server::processSourceFile(const GccArguments &args, const List<String> &projects)
 {
     if (args.language() == GccArguments::NoLang || mOptions.ignoredCompilers.contains(args.compiler())) {
@@ -1156,23 +1119,6 @@ void Server::project(const QueryMessage &query, Connection *conn)
             }
         } else if (!error) {
             conn->write<128>("No matches for %s", match.pattern().constData());
-        }
-    }
-    conn->finish();
-}
-
-void Server::jobCount(const QueryMessage &query, Connection *conn)
-{
-    if (query.query().isEmpty()) {
-        conn->write<128>("Running with %d jobs", mOptions.threadCount);
-    } else {
-        const int jobCount = query.query().toLongLong();
-        if (jobCount <= 0 || jobCount > 100) {
-            conn->write<128>("Invalid job count %s (%d)", query.query().constData(), jobCount);
-        } else {
-            mOptions.threadCount = jobCount;
-            mThreadPool->setConcurrentJobs(jobCount);
-            conn->write<128>("Changed jobs to %d", jobCount);
         }
     }
     conn->finish();

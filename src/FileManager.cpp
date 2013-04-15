@@ -1,5 +1,4 @@
 #include "FileManager.h"
-#include "ScanJob.h"
 #include "Server.h"
 #include "Filter.h"
 #include "Project.h"
@@ -16,16 +15,58 @@ void FileManager::init(const shared_ptr<Project> &proj)
     recurseDirs();
 }
 
+class ScanThread : public Thread
+{
+public:
+    ScanThread(const Path &path)
+        : mPath(path), mFilters(Server::instance()->options().excludeFilters)
+    {
+        if (!mPath.endsWith('/'))
+            mPath.append('/');
+    }
+
+    signalslot::Signal1<Set<Path> > &finished() { return mFinished; }
+protected:
+    virtual void run()
+    {
+        mPath.visit(&ScanThread::visit, this);
+        mFinished(mPaths);
+    }
+private:
+    static Path::VisitResult visit(const Path &path, void *userData)
+    {
+        ScanThread *thread = reinterpret_cast<ScanThread*>(userData);
+        const Filter::Result result = Filter::filter(path, thread->mFilters);
+        switch (result) {
+        case Filter::Filtered:
+            return Path::Continue;
+        case Filter::Directory:
+            return Path::Recurse;
+        case Filter::File:
+        case Filter::Source:
+            thread->mPaths.insert(path);
+            break;
+        }
+        return Path::Continue;
+    }
+
+    Path mPath;
+    const List<Path> mFilters;
+    Set<Path> mPaths;
+    signalslot::Signal1<Set<Path> > mFinished;
+};
+
 void FileManager::recurseDirs()
 {
     shared_ptr<Project> project = mProject.lock();
     assert(project);
-    shared_ptr<ScanJob> job(new ScanJob(project->path()));
-    job->finished().connectAsync(this, &FileManager::onRecurseJobFinished);
-    Server::instance()->threadPool()->start(job);
+    ScanThread *thread = new ScanThread(project->path());
+    thread->setAutoDelete(true);
+    thread->finished().connectAsync(this, &FileManager::onScanFinished);
+    thread->start();
 }
 
-void FileManager::onRecurseJobFinished(Set<Path> paths)
+void FileManager::onScanFinished(Set<Path> paths)
 {
     bool emitJS = false;
     {

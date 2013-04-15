@@ -9,7 +9,6 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "ScanJob.h"
 #ifdef HAVE_BACKTRACE
 #include <execinfo.h>
 #include <cxxabi.h>
@@ -67,7 +66,6 @@ void usage(FILE *f)
             "  --no-current-project|-o           Don't restore the last current project on startup.\n"
             "  --allow-multiple-builds|-m        Without this setting different flags for the same compiler will be merged for each source file.\n"
             "  --unload-timer|-u [arg]           Number of minutes to wait before unloading non-current projects (disabled by default).\n"
-            "  --thread-count|-j [arg]           Spawn this many threads for thread pool.\n"
             "  --ignore-compiler|-b [arg]        Alias this compiler (Might be practical to avoid duplicated builds for things like icecc).\n"
             "  --disable-plugin|-p [arg]         Don't load this plugin\n"
             "  --stack-size|-t [arg]             Use this much stack for indexing threads (default %d).\n", defaultStackSize);
@@ -96,7 +94,6 @@ int main(int argc, char** argv)
         { "no-Wall", no_argument, 0, 'W' },
         { "append", no_argument, 0, 'A' },
         { "verbose", no_argument, 0, 'v' },
-        { "thread-count", required_argument, 0, 'j' },
         { "clean-slate", no_argument, 0, 'C' },
         { "enable-sighandler", no_argument, 0, 's' },
         { "silent", no_argument, 0, 'S' },
@@ -195,7 +192,6 @@ int main(int argc, char** argv)
 
     Server::Options serverOpts;
     serverOpts.socketFile = String::format<128>("%s.rdm-rewrite", Path::home().constData());
-    serverOpts.threadCount = ThreadPool::idealThreadCount();
     serverOpts.options = Server::Wall|Server::SpellChecking;
     serverOpts.excludeFilters = String(EXCLUDEFILTER_DEFAULT).split(';');
     serverOpts.dataDir = String::format<128>("%s.rtags-rewrite", Path::home().constData());
@@ -284,13 +280,6 @@ int main(int argc, char** argv)
                 return 1;
             }
             break; }
-        case 'j':
-            serverOpts.threadCount = atoi(optarg);
-            if (serverOpts.threadCount <= 0) {
-                fprintf(stderr, "Can't parse argument to -j %s\n", optarg);
-                return 1;
-            }
-            break;
         case 'r': {
             int large = atoi(optarg);
             if (large <= 0) {
@@ -339,8 +328,6 @@ int main(int argc, char** argv)
                 logLevel, logFile ? logFile : "", logFlags);
         return 1;
     }
-    warning("Running with %d jobs", serverOpts.threadCount);
-
     EventLoop loop;
 
     shared_ptr<Server> server(new Server);
