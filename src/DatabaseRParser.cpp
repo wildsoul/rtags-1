@@ -936,7 +936,13 @@ void DatabaseRParser::remove(const Path &sourceFile)
 {
     QMutexLocker locker(&mutex);
     waitForState(GreaterOrEqual, Idle);
-    manager->removeFromSnapshot(QString::fromStdString(sourceFile));
+    const QString qfile = QString::fromStdString(sourceFile);
+    {
+        CPlusPlus::Document::Ptr doc = manager->document(qfile);
+        if (doc)
+            doc->releaseSourceAndAST();
+    }
+    manager->removeFromSnapshot(qfile);
 }
 
 class DatabaseRParserPlugin : public RTagsPlugin
