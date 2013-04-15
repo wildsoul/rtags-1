@@ -642,7 +642,7 @@ void DatabaseRParser::run()
                      parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
 
     QMutexLocker locker(&mutex);
-    assert(state == Starting);
+    assert(state == Starting || state == Indexing);
     if (jobs.isEmpty())
         changeState(Idle);
     locker.unlock();
@@ -667,6 +667,7 @@ void DatabaseRParser::run()
         }
 
         changeState(CollectingNames);
+        assert(jobs.isEmpty());
         locker.unlock();
         collectNames(indexed);
         locker.relock();
@@ -700,6 +701,8 @@ static inline const char* stateName(DatabaseRParser::State st)
 // needs to be called with mutex locked
 void DatabaseRParser::changeState(State st)
 {
+    if (state == st)
+        return;
     error() << "rparser thread state changed from " << stateName(state) << " to " << stateName(st);
     state = st;
     wait.wakeAll();
@@ -786,10 +789,11 @@ int DatabaseRParser::index(const SourceInformation &sourceInformation)
 {
     QMutexLocker locker(&mutex);
     jobs.enqueue(new RParserJob(sourceInformation));
+    state = Indexing; // ### a bit of a hack
     jobsAvailable.wakeOne();
-    waitForState(GreaterOrEqual, CollectingNames);
-
-    return symbolCount(sourceInformation.sourceFile);
+    //waitForState(GreaterOrEqual, CollectingNames);
+    //return symbolCount(sourceInformation.sourceFile);
+    return 0;
 }
 
 Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) const
