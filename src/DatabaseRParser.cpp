@@ -5,6 +5,7 @@
 #include <QMutexLocker>
 
 #include <searchsymbols.h>
+#include <symbolfinder.h>
 #include <ASTPath.h>
 #include <DependencyTable.h>
 #include <cplusplus/SymbolVisitor.h>
@@ -554,7 +555,34 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
         return Cursor();
     }
 
-    cursor.target = makeLocation(sym); // will be overridden if we find a symbol in the usages
+    QList<CPlusPlus::Usage> usages;
+
+    if (CPlusPlus::Function* func = sym->asFunction()) {
+        // if we find a definition that's different from the declaration then replace
+        CppTools::SymbolFinder finder;
+        CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot(), /*strict*/true);
+        if (definition) {
+            if (definition != sym) {
+                // assume we were a declaration, find our usages before replacing
+                usages = findUsages(manager, sym, src);
+                sym = definition;
+            } else {
+                // see if we can find our declaration
+                QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
+                if (!decls.isEmpty()) {
+                    // ### take the first one I guess?
+                    sym = decls.first();
+                }
+                usages = findUsages(manager, sym, src);
+            }
+        } else {
+            usages = findUsages(manager, sym, src);
+        }
+    } else {
+        usages = findUsages(manager, sym, src);
+    }
+
+    cursor.target = makeLocation(sym);
     if (cursor.location == cursor.target) {
         // declaration
         cursor.kind = symbolKind(sym);
@@ -565,35 +593,21 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
 
     cursor.symbolName = symbolName(sym);
 
-    bool added = false;
-    const QList<CPlusPlus::Usage> usages = findUsages(manager, sym, src);
     foreach(const CPlusPlus::Usage& usage, usages) {
-        added = false;
         CPlusPlus::Document::Ptr doc = manager->document(usage.path);
         if (doc) {
             CPlusPlus::Symbol* refsym = doc->lastVisibleSymbolAt(usage.line, usage.col + 1);
             if (refsym) {
                 if (refsym->line() == static_cast<unsigned>(usage.line) &&
                     refsym->column() == static_cast<unsigned>(usage.col + 1)) {
-                    // this is a symbol, definition?
-                    // replace our target if we're a reference
-                    if (cursor.kind == Cursor::Reference) {
-                        const Location defloc = makeLocation(refsym);
-                        // if we assumed we were the reference but we really are the
-                        // definition then change our kind
-                        if (cursor.target == defloc)
-                            cursor.kind = symbolKind(refsym);
-                        cursor.target = defloc;
-                        added = true;
-                    }
+                    // this is a symbol, ignore it
+                    continue;
                 }
             }
         }
-        if (!added) {
-            //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
-            cursor.references.insert(Location(fromQString(usage.path),
-                                              usage.line, usage.col + 1));
-        }
+        //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
+        cursor.references.insert(Location(fromQString(usage.path),
+                                          usage.line, usage.col + 1));
     }
 
     error() << "got a symbol, tried" << location << "ended up with target" << cursor.target;
@@ -626,7 +640,8 @@ void DatabaseRParser::run()
                      parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
 
     QMutexLocker locker(&mutex);
-    if (state == Starting && jobs.isEmpty())
+    assert(state == Starting);
+    if (jobs.isEmpty())
         changeState(Idle);
     locker.unlock();
 
