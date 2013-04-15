@@ -747,11 +747,14 @@ Set<String> DatabaseRParser::listSymbols(const String &string, const List<Path> 
     waitForState(GreaterOrEqual, Idle);
 
     Set<String> ret;
+    Set<Path> paths = pathFilter.toSet();
+    const bool pass = paths.isEmpty();
 
     Map<String, RParserName>::const_iterator name = names.lower_bound(string);
     const Map<String, RParserName>::const_iterator end = names.end();
     while (name != end && name->first.startsWith(string)) {
-        ret += name->second.names;
+        if (pass || paths.intersects(name->second.paths))
+            ret += name->second.names;
         ++name;
     }
     return ret;
