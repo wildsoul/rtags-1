@@ -1,6 +1,5 @@
 #include "Project.h"
 #include "FileManager.h"
-#include "IndexerJob.h"
 #include "Server.h"
 #include "Database.h"
 #include <math.h>
@@ -18,7 +17,7 @@ static void *Save = &Save;
 enum { ModifiedFilesTimeout = 50, SaveTimeout = 1000 };
 
 Project::Project(const Path &path)
-    : mPath(path), mJobCounter(0)
+    : mPath(path)
 {
     mWatcher.modified().connect(this, &Project::onFileModified);
     mWatcher.removed().connect(this, &Project::onFileRemoved);
@@ -99,7 +98,7 @@ bool Project::restore()
             Deserializer s(contents);
             s >> mSources;
             for (SourceInformationMap::const_iterator it = mSources.begin(); it != mSources.end(); ++it) {
-                index(it->second, IndexerJob::Restore);
+                index(it->second, Restore);
             }
             mSaveTimer.stop();
         }
@@ -120,7 +119,7 @@ bool Project::isValid() const
 
 void Project::unload()
 {
-    mJobs.clear();
+    mDatabase.reset();
     mFileManager.reset();
 }
 
@@ -147,51 +146,22 @@ bool Project::match(const Match &p, bool *indexed) const
     return ret;
 }
 
-void Project::onJobFinished(shared_ptr<IndexerJob> job)
-{
-    const Path path = job->path();
-    if (mJobs.value(path) != job)
-        return;
-    mJobs.remove(path);
-
-    const int idx = mJobCounter - mJobs.size();
-    assert(!job->path().isEmpty());
-    assert(mJobCounter);
-
-    error("[%3d%%] %d/%d %s Parsed %s in %dms: %s.",
-          static_cast<int>(round((double(idx) / double(mJobCounter)) * 100.0)), idx, mJobCounter,
-          String::formatTime(time(0), String::Time).constData(),
-          job->path().constData(), static_cast<int>(job->elapsed()),
-          job->symbolCount() == -1 ? "Error" : String::format<32>("%d symbols", job->symbolCount()).constData());
-    if (idx == mJobCounter) {
-        error("%d jobs finished in %dms", mJobCounter, static_cast<int>(mTimer.elapsed()));
-        mJobCounter = 0;
-    }
-}
-
-void Project::index(const SourceInformation &sourceInformation, IndexerJob::Type type)
+void Project::index(const SourceInformation &sourceInformation, Type type)
 {
     static const char *fileFilter = getenv("RTAGS_FILE_FILTER");
     if (fileFilter && !strstr(sourceInformation.sourceFile.constData(), fileFilter))
         return;
 
     shared_ptr<Project> project = static_pointer_cast<Project>(shared_from_this());
-    shared_ptr<IndexerJob> &job = mJobs[sourceInformation.sourceFile];
-    if (job && job->state() == ThreadPool::Job::NotStarted) {
-        return;
-    }
-
-    if (type != IndexerJob::Restore) {
+    if (type != Restore) {
         mSources[sourceInformation.sourceFile] = sourceInformation;
         mSaveTimer.start(shared_from_this(), SaveTimeout, SingleShot, Save);
     }
 
-    if (!mJobCounter++)
-        mTimer.restart();
+    mDatabase->index(sourceInformation);
 
-    job.reset(new IndexerJob(project->database(), type, sourceInformation));
-    job->finished().connectAsync(this, &Project::onJobFinished);
-    Server::instance()->startJob(job);
+    static const char *names[] = { "index", "dirty", "dump", "restore" };
+    error("Indexed %s (%s)", sourceInformation.sourceFile.constData(), names[type]);
 }
 
 static inline Path resolveCompiler(const Path &compiler)
@@ -286,7 +256,7 @@ bool Project::index(const Path &sourceFile, const GccArguments &args)
     }
     if (!added)
         sourceInformation.builds.append(build);
-    index(sourceInformation, IndexerJob::Index);
+    index(sourceInformation, Index);
     return true;
 }
 
@@ -337,7 +307,7 @@ int Project::reindex(const Match &match)
             }
         }
         if (matched) {
-            index(it->second, IndexerJob::Dirty);
+            index(it->second, Dirty);
             ++ret;
         }
     }
@@ -350,8 +320,8 @@ int Project::remove(const Match &match)
     SourceInformationMap::iterator it = mSources.begin();
     while (it != mSources.end()) {
         if (match.match(it->second.sourceFile)) {
-            mJobs.remove(it->first);
             mSources.erase(it++);
+            // ### gotta remove from database
             ++count;
         } else {
             ++it;
@@ -371,7 +341,7 @@ int Project::dirty(const Set<Path> &dirty)
     for (Set<Path>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
         const SourceInformationMap::const_iterator found = mSources.find(*it);
         if (found != mSources.end()) {
-            index(found->second, IndexerJob::Dirty);
+            index(found->second, Dirty);
             ++ret;
         }
     }
@@ -397,4 +367,9 @@ bool Project::isIndexed(const Path &file) const
 SourceInformationMap Project::sources() const
 {
     return mSources;
+}
+
+bool Project::isIndexing() const
+{
+    return mDatabase->isIndexing();
 }

@@ -5,7 +5,6 @@
 #include "CompletionMessage.h"
 #include "Database.h"
 #include "Filter.h"
-#include "IndexerJob.h"
 #include "LogObject.h"
 #include "Match.h"
 #include "Preprocessor.h"
@@ -554,8 +553,8 @@ void Server::dumpFile(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    shared_ptr<IndexerJob> job(new IndexerJob(project->database(), IndexerJob::Dump, c, conn));
-    startJob(job);
+    project->database()->dump(c, conn);
+    conn->finish(); // this might block the main thread too long
 }
 
 void Server::cursorInfo(const QueryMessage &query, Connection *conn)

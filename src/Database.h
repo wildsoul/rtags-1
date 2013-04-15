@@ -73,11 +73,13 @@ public:
     virtual void status(const String &query, Connection *conn) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
     virtual int index(const SourceInformation &sourceInformation) = 0;
+    virtual void remove(const SourceInformation &sourceInformation) = 0;
+    virtual bool isIndexing() const = 0;
     enum DependencyMode {
         DependsOnArg,
         ArgDependsOn // slow
     };
-    
+
     virtual Set<Path> dependencies(const Path &path, DependencyMode mode) const = 0;
     virtual Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const = 0;
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const = 0;

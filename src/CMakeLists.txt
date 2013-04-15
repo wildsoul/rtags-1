@@ -61,7 +61,6 @@ set(RDM_SOURCES
   Database.cpp
   FileManager.cpp
   GccArguments.cpp
-  IndexerJob.cpp
   Preprocessor.cpp
   Project.cpp
   ScanJob.cpp

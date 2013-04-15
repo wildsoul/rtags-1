@@ -895,6 +895,17 @@ bool DatabaseRParser::codeCompleteAt(const Location &location, const String &sou
     return false;
 }
 
+bool DatabaseRParser::isIndexing() const
+{
+    QMutexLocker locker(&mutex);
+    return state == Indexing;
+}
+
+void DatabaseRParser::remove(const SourceInformation &sourceInformation)
+{
+    error() << "Not implemented";
+}
+
 class DatabaseRParserPlugin : public RTagsPlugin
 {
 public:

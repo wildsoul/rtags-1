@@ -51,6 +51,8 @@ public:
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
     virtual Set<Cursor> cursors(const Path &path) const;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
+    virtual bool isIndexing() const;
+    virtual void remove(const SourceInformation &sourceInformation);
 
     enum State { Starting,
                  Indexing,
