@@ -46,6 +46,19 @@ static inline String symbolName(const CPlusPlus::Symbol* symbol)
     return symbolName;
 }
 
+class RParserJob
+{
+public:
+    RParserJob(const SourceInformation& i)
+        : info(i)
+    {
+    }
+
+    Path fileName() const { return info.sourceFile; }
+
+    SourceInformation info;
+};
+
 class ReallyFindScopeAt: protected CPlusPlus::SymbolVisitor
 {
     CPlusPlus::TranslationUnit *_unit;
@@ -613,7 +626,7 @@ void DatabaseRParser::run()
                      parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
 
     QMutexLocker locker(&mutex);
-    if (state == Starting)
+    if (state == Starting && jobs.isEmpty())
         changeState(Idle);
     locker.unlock();
 
@@ -621,8 +634,10 @@ void DatabaseRParser::run()
         locker.relock();
         while (jobs.isEmpty()) {
             assert(state == Idle);
-            waitForState(Equal, Processing);
+            jobsAvailable.wait(&mutex);
         }
+
+        Set<Path> indexed;
 
         assert(!jobs.isEmpty());
         changeState(Indexing);
@@ -630,13 +645,19 @@ void DatabaseRParser::run()
             RParserJob* job = jobs.dequeue();
             locker.unlock();
             processJob(job);
+            indexed.insert(job->fileName());
             locker.relock();
         }
 
         changeState(CollectingNames);
         locker.unlock();
-        collectNames();
+        collectNames(indexed);
         locker.relock();
+
+        if (!jobs.isEmpty()) {
+            locker.unlock();
+            continue;
+        }
 
         changeState(Idle);
         locker.unlock();
@@ -649,7 +670,6 @@ static inline const char* stateName(DatabaseRParser::State st)
         DatabaseRParser::State state;
         const char* name;
     } static s[] = { { DatabaseRParser::Starting, "starting" },
-                     { DatabaseRParser::Processing, "processing" },
                      { DatabaseRParser::Indexing, "indexing" },
                      { DatabaseRParser::CollectingNames, "collectingnames" },
                      { DatabaseRParser::Idle, "idle" } };
@@ -688,20 +708,10 @@ void DatabaseRParser::dump(const SourceInformation &sourceInformation, Connectio
 {
 }
 
-class RParserJob
-{
-public:
-    RParserJob(const SourceInformation& i)
-        : info(i)
-    {
-    }
-
-    SourceInformation info;
-};
-
 void DatabaseRParser::processJob(RParserJob* job)
 {
     const Path& fileName = job->info.sourceFile;
+    //error() << "  indexing" << fileName;
     RParserUnit* unit = findUnit(fileName);
     if (!unit) {
         unit = new RParserUnit;
@@ -711,16 +721,30 @@ void DatabaseRParser::processJob(RParserJob* job)
     unit->reindex(manager);
 }
 
-void DatabaseRParser::collectNames()
+inline void DatabaseRParser::dirty(const Set<Path>& files)
 {
-    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+    Map<String, RParserName>::iterator name = names.begin();
+    while (name != names.end()) {
+        if ((name->second.paths - files).isEmpty())
+            names.erase(name++);
+        else
+            ++name;
+    }
+}
 
-    names.clear();
+void DatabaseRParser::collectNames(const Set<Path>& files)
+{
+    dirty(files);
 
-    CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
-    const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
-    while (snap != end) {
-        CPlusPlus::Document::Ptr doc = snap.value();
+    Set<Path>::const_iterator file = files.begin();
+    const Set<Path>::const_iterator end = files.end();
+    while (file != end) {
+        CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(*file));
+        if (!doc) {
+            error() << "No document for" << *file << "in collectNames";
+            ++file;
+            continue;
+        }
 
         CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
         if (globalNamespace) {
@@ -728,26 +752,27 @@ void DatabaseRParser::collectNames()
             find(globalNamespace);
             names += find.symbolNames();
         }
-        ++snap;
+        ++file;
     }
 }
 
-// needs to be called with mutex locked
-void DatabaseRParser::startJob(RParserJob* job)
+int DatabaseRParser::symbolCount(const Path& file)
 {
-    jobs.enqueue(job);
-    if (state == Idle || state == Starting) {
-        changeState(Processing);
-    }
+    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(file));
+    if (!doc)
+        return -1;
+    // ### do something better here
+    return doc->globalSymbolCount();
 }
 
 int DatabaseRParser::index(const SourceInformation &sourceInformation)
 {
     QMutexLocker locker(&mutex);
-    startJob(new RParserJob(sourceInformation));
+    jobs.enqueue(new RParserJob(sourceInformation));
+    jobsAvailable.wakeOne();
     waitForState(GreaterOrEqual, CollectingNames);
 
-    return -1;
+    return symbolCount(sourceInformation.sourceFile);
 }
 
 Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) const

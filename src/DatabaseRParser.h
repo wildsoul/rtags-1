@@ -53,7 +53,6 @@ public:
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
 
     enum State { Starting,
-                 Processing,
                  Indexing,
                  CollectingNames,
                  Idle };
@@ -66,9 +65,9 @@ private:
     enum WaitMode { GreaterOrEqual, Equal };
     void waitForState(WaitMode m, State st) const;
 
-    void startJob(RParserJob* job);
     void processJob(RParserJob* job);
-    void collectNames();
+    void collectNames(const Set<Path>& files);
+    int symbolCount(const Path& file);
 
     friend class RParserUnit;
 
@@ -76,9 +75,11 @@ private:
     CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& srcLoc,
                                   const QByteArray& src, CPlusPlus::LookupContext& ctx,
                                   Location& loc) const;
+    void dirty(const Set<Path>& files);
 
     mutable QMutex mutex;
     mutable QWaitCondition wait;
+    QWaitCondition jobsAvailable;
     State state;
     QQueue<RParserJob*> jobs;
     Map<Path, RParserUnit*> units;
