@@ -127,6 +127,7 @@ struct Option opts[] = {
     { Dependencies, "dependencies", 0, required_argument, "Dump dependencies for source file." },
     { ReloadFileManager, "reload-file-manager", 'B', no_argument, "Reload file manager." },
     { Man, "man", 0, no_argument, "Output XML for xmltoman to generate man page for rc :-)" },
+    { LocalSymbols, "local-symbols", 'l', required_argument, "List symbols in file (filter namespaces, fully qualified function names, ignore certain cursors etc)." },
 
     { None, 0, 0, 0, "" },
     { None, 0, 0, 0, "Command flags:" },
@@ -154,7 +155,6 @@ struct Option opts[] = {
     { CursorInfoIncludeReferences, "cursorinfo-include-references", 0, no_argument, "Use to make --cursor-info include reference cursors." },
     { WithProject, "with-project", 0, required_argument, "Like --project but pass as a flag." },
     { DeclarationOnly, "declaration-only", 0, no_argument, "Filter out definitions (unless inline).", },
-    { LocalSymbols, "local-symbols", 'l', required_argument, "List symbols in file (filter namespaces, fully qualified function names, ignore certain cursors etc)." },
     { Context, "context", 't', required_argument, "Context for current symbol (for fuzzy matching with dirty files)." }, // ### multiple context doesn't work
     { None, 0, 0, 0, 0 }
 };
