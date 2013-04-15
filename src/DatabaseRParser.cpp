@@ -379,15 +379,17 @@ static inline QStringList toQStringList(const T& t)
 void RParserUnit::reindex(QPointer<CppModelManager> manager)
 {
     CppPreprocessor preprocessor(manager);
+    const QString srcFile = QString::fromStdString(info.sourceFile);
     const QString srcPath = QString::fromStdString(info.sourceFile.parentDir());
     static QStringList incs = QStringList() << QLatin1String("/usr/include") << QLatin1String("/usr/include/c++/4.6") << srcPath;
     List<SourceInformation::Build>::const_iterator build = info.builds.begin();
     const List<SourceInformation::Build>::const_iterator end = info.builds.end();
     while (build != end) {
         //error() << "reindexing" << info.sourceFile << build->includePaths << build->defines;
+        preprocessor.removeFromCache(srcFile);
         preprocessor.setIncludePaths(toQStringList(build->includePaths) + incs);
         preprocessor.addDefinitions(toQStringList(build->defines));
-        preprocessor.run(QString::fromStdString(info.sourceFile));
+        preprocessor.run(srcFile);
         preprocessor.resetEnvironment();
         ++build;
     }
@@ -557,10 +559,10 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
 
     QList<CPlusPlus::Usage> usages;
 
-    if (CPlusPlus::Function* func = sym->asFunction()) {
+    if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
         // if we find a definition that's different from the declaration then replace
         CppTools::SymbolFinder finder;
-        CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot(), /*strict*/true);
+        CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot());
         if (definition) {
             if (definition != sym) {
                 // assume we were a declaration, find our usages before replacing
