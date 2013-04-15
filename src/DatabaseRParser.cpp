@@ -379,14 +379,28 @@ static inline QStringList toQStringList(const T& t)
 void RParserUnit::reindex(QPointer<CppModelManager> manager)
 {
     CppPreprocessor preprocessor(manager);
+
     const QString srcFile = QString::fromStdString(info.sourceFile);
     const QString srcPath = QString::fromStdString(info.sourceFile.parentDir());
+    QList<CPlusPlus::Document::Include> includes;
+    {
+        CPlusPlus::Document::Ptr doc = manager->document(srcFile);
+        if (doc)
+            includes = doc->includes();
+    }
+    const bool hasIncludes = !includes.isEmpty();
+
     static QStringList incs = QStringList() << QLatin1String("/usr/include") << QLatin1String("/usr/include/c++/4.6") << srcPath;
     List<SourceInformation::Build>::const_iterator build = info.builds.begin();
     const List<SourceInformation::Build>::const_iterator end = info.builds.end();
     while (build != end) {
         //error() << "reindexing" << info.sourceFile << build->includePaths << build->defines;
         preprocessor.removeFromCache(srcFile);
+        if (hasIncludes) {
+            foreach(const CPlusPlus::Document::Include& include, includes) {
+                preprocessor.removeFromCache(include.fileName());
+            }
+        }
         preprocessor.setIncludePaths(toQStringList(build->includePaths) + incs);
         preprocessor.addDefinitions(toQStringList(build->defines));
         preprocessor.run(srcFile);
