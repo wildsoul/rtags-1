@@ -51,9 +51,9 @@ static inline GccArguments::Lang guessLang(const Path &fullPath)
     }
 
     GccArguments::Lang lang = GccArguments::NoLang;
-    if (c.startsWith("g++") || c.startsWith("c++")) {
+    if (c.startsWith("g++") || c.startsWith("c++") || c.startsWith("clang++")) {
         lang = GccArguments::CPlusPlus;
-    } else if (c.startsWith("gcc") || c.startsWith("cc")) {
+    } else if (c.startsWith("gcc") || c.startsWith("cc") || c.startsWith("clang")) {
         lang = GccArguments::C;
     }
     return lang;
