@@ -481,6 +481,8 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
         CPlusPlus::TranslationUnit* unit = doc->translationUnit();
         ReallyFindScopeAt really(unit, line, column);
         CPlusPlus::Scope* scope = really(doc->globalNamespace());
+        if (!scope)
+            scope = doc->globalNamespace();
 
         CPlusPlus::ASTPath path(doc);
         QList<CPlusPlus::AST*> asts = path(line, column);
