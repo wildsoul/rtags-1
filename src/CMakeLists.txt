@@ -72,6 +72,7 @@ set(RDM_SOURCES
 include_directories(${CMAKE_CURRENT_LIST_DIR}
                     ${CORESERVICES_INCLUDE}
                     ${COREFOUNDATION_INCLUDE}
+                    ${CLANG_INCLUDE}
                     rct/include/
                     rct
                     ${CMAKE_CURRENT_BINARY_DIR}/rct/include/rct)
@@ -81,7 +82,7 @@ add_dependencies(rc rct shared)
 target_link_libraries(rc shared rct ${SYSTEM_LIBS})
 
 add_library(rtags SHARED ${RDM_SOURCES})
-target_link_libraries(rtags ${CORESERVICES_LIBRARY} ${COREFOUNDATION_LIBRARY} shared rct ${SYSTEM_LIBS})
+target_link_libraries(rtags ${CORESERVICES_LIBRARY} ${COREFOUNDATION_LIBRARY} shared rct ${SYSTEM_LIBS} ${CLANG_LIBS})
 add_dependencies(rtags rct)
 
 add_executable(rdm rdm.cpp)
