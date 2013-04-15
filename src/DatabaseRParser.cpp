@@ -934,7 +934,9 @@ bool DatabaseRParser::isIndexing() const
 
 void DatabaseRParser::remove(const Path &sourceFile)
 {
-    error() << "Not implemented";
+    QMutexLocker locker(&mutex);
+    waitForState(GreaterOrEqual, Idle);
+    manager->removeFromSnapshot(QString::fromStdString(sourceFile));
 }
 
 class DatabaseRParserPlugin : public RTagsPlugin
