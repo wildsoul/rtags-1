@@ -516,9 +516,6 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                 //unit->getTokenEndPosition(ast->lastToken() - 1, &endLine, &endColumn, 0);
                 loc = Location(file->chars(), startLine, startColumn);
 
-                static int faen = 0;
-                if (++faen >= 10)
-                    abort();
                 error("got it!");
                 break;
             }
