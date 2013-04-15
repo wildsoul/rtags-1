@@ -530,7 +530,27 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
         while (!asts.isEmpty()) {
             CPlusPlus::AST* ast = asts.takeLast();
 
-            const CPlusPlus::Token& start = unit->tokenAt(ast->firstToken());
+            const int startIndex = ast->firstToken();
+            if (startIndex > 0) {
+                // check if our previous token is an accessor token
+                bool ok = true;
+                const CPlusPlus::Token& prev = unit->tokenAt(startIndex - 1);
+                switch (prev.kind()) {
+                case CPlusPlus::T_COLON_COLON:
+                case CPlusPlus::T_DOT:
+                case CPlusPlus::T_ARROW:
+                case CPlusPlus::T_DOT_STAR:
+                case CPlusPlus::T_ARROW_STAR:
+                    // yes, we need to look at our next AST
+                    ok = false;
+                    break;
+                default:
+                    break;
+                }
+                if (!ok)
+                    continue;
+            }
+            const CPlusPlus::Token& start = unit->tokenAt(startIndex);
             const CPlusPlus::Token& last = unit->tokenAt(ast->lastToken() - 1);
             const QByteArray expression = src.mid(start.begin(), last.end() - start.begin());
 
