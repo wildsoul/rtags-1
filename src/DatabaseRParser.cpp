@@ -687,7 +687,7 @@ void DatabaseRParser::collectNames()
 {
     const CPlusPlus::Snapshot& snapshot = manager->snapshot();
 
-    // ### Use QFuture for this?
+    names.clear();
 
     CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
     const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
