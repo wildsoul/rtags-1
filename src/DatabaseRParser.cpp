@@ -906,6 +906,37 @@ Database::References DatabaseRParser::references(const Location& location) const
     return refs;
 }
 
+Set<Path> DatabaseRParser::files(int mode) const
+{
+    Set<Path> result;
+
+    QMutexLocker locker(&mutex);
+    waitForState(GreaterOrEqual, CollectingNames);
+
+    const bool wantHeaders = (mode & HeaderFiles);
+    const bool wantSources = (mode & SourceFiles);
+
+    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+    CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
+    const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
+    while (snap != end) {
+        CPlusPlus::Document::Ptr doc = snap.value();
+        assert(doc);
+        if (wantSources)
+            result.insert(fromQString(doc->fileName()));
+        if (wantHeaders) {
+            QList<CPlusPlus::Document::Include> includes = doc->includes();
+            foreach(const CPlusPlus::Document::Include& include, includes) {
+                result.insert(fromQString(include.fileName()));
+            }
+        }
+
+        ++snap;
+    }
+
+    return result;
+}
+
 Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) const
 {
     Set<Path> result;

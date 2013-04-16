@@ -84,6 +84,12 @@ public:
     };
 
     virtual Set<Path> dependencies(const Path &path, DependencyMode mode) const = 0;
+    enum FilesMode {
+        SourceFiles = 0x1,
+        HeaderFiles = 0x2,
+        AllFiles = SourceFiles | HeaderFiles
+    };
+    virtual Set<Path> files(int mode = AllFiles) const = 0;
     virtual Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const = 0;
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const = 0;
     virtual Set<Cursor> cursors(const Path &path) const = 0;

@@ -53,6 +53,7 @@ public:
     virtual int index(const SourceInformation &sourceInformation);
     virtual References references(const Location& location) const;
     virtual Set<Path> dependencies(const Path &path, DependencyMode mode) const;
+    virtual Set<Path> files(int mode) const;
     virtual Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const;
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
     virtual Set<Cursor> cursors(const Path &path) const;

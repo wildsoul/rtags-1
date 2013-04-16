@@ -298,21 +298,36 @@ SourceInformation Project::sourceInfo(const Path &path) const
 int Project::reindex(const Match &match)
 {
     int ret = 0;
-    for (SourceInformationMap::const_iterator it = mSources.begin(); it != mSources.end(); ++it) {
-        bool matched = match.isEmpty();
-        if (!matched) {
-            const Set<Path> files = mDatabase->dependencies(it->first, Database::ArgDependsOn);
-            for (Set<Path>::const_iterator f = files.begin(); f != files.end(); ++f) {
-                if (match.match(*f)) {
-                    matched = true;
-                    break;
-                }
+
+    Set<Path> files = mDatabase->files();
+    Set<Path>::const_iterator file = files.begin();
+    Set<Path>::const_iterator end = files.end();
+    while (file != end) {
+        if (match.match(*file)) {
+            SourceInformationMap::const_iterator info = mSources.find(*file);
+            if (info == mSources.end()) {
+                ++file;
+                continue;
             }
-        }
-        if (matched) {
-            index(it->second, Dirty);
+
+            index(info->second, Dirty);
             ++ret;
+
+            files = mDatabase->dependencies(*file, Database::DependsOnArg);
+            file = files.begin(); end = files.end();
+            while (file != end) {
+                info = mSources.find(*file);
+                if (info == mSources.end()) {
+                    ++file;
+                    continue;
+                }
+                index(info->second, Dirty);
+                ++ret;
+                ++file;
+            }
+            break;
         }
+        ++file;
     }
     return ret;
 }
