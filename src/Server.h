@@ -1,11 +1,12 @@
 #ifndef Server_h
 #define Server_h
 
-#include "QueryMessage.h"
 #include "CompileMessage.h"
 #include "FileManager.h"
 #include "QueryMessage.h"
+#include "QueryMessage.h"
 #include "RTagsPluginFactory.h"
+#include "SourceInformation.h"
 #include <rct/Connection.h>
 #include <rct/EventReceiver.h>
 #include <rct/FileSystemWatcher.h>
@@ -54,6 +55,7 @@ public:
     RTagsPluginFactory &factory() { return mPluginFactory; }
     static bool encodePath(Path &path);
     static void decodePath(Path &path);
+    Path currentSourceFile() const { return mCurrentSourceFile; }
 private:
     bool selectProject(const Match &match, Connection *conn);
     bool updateProject(const List<String> &projects);
@@ -65,7 +67,7 @@ private:
     signalslot::Signal2<int, const List<String> &> &complete() { return mComplete; }
     shared_ptr<Project> setCurrentProject(const Path &path);
     shared_ptr<Project> setCurrentProject(const shared_ptr<Project> &project);
-    void processSourceFile(const GccArguments &args, const List<String> &projects);
+    void onSourceIndexed(const SourceInformation &source);
     void onNewMessage(Message *message, Connection *conn);
     void clearProjects();
     void handleCompileMessage(CompileMessage *message, Connection *conn);
@@ -115,6 +117,7 @@ private:
     static Server *sInstance;
     Options mOptions;
     SocketServer *mServer;
+    Path mCurrentSourceFile;
     bool mVerbose;
 
     signalslot::Signal2<int, const List<String> &> mComplete;

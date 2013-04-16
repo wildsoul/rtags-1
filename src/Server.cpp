@@ -137,6 +137,8 @@ shared_ptr<Project> Server::addProject(const Path &path)
         if (!project->database()) {
             error("Can't load plugin");
             project.reset();
+        } else if (mClangThread) {
+            project->sourceIndexed().connect(this, &Server::onSourceIndexed);
         }
 
         return project;
@@ -1076,8 +1078,12 @@ bool Server::selectProject(const Match &match, Connection *conn)
 bool Server::updateProject(const List<String> &projects)
 {
     for (int i=0; i<projects.size(); ++i) {
-        if (selectProject(projects.at(i), 0))
+        if (selectProject(projects.at(i), 0)) {
+            const Path p = Path::resolved(projects.at(i));
+            if (p.isFile())
+                mCurrentSourceFile = p;
             return true;
+        }
     }
     return false;
 }
@@ -1229,5 +1235,12 @@ void Server::decodePath(Path &path)
             }
             break;
         }
+    }
+}
+
+void Server::onSourceIndexed(const SourceInformation &source)
+{
+    if (source.sourceFile == mCurrentSourceFile) {
+        mClangThread->index(source);
     }
 }

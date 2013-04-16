@@ -161,6 +161,7 @@ void Project::index(const SourceInformation &sourceInformation, Type type)
         mWatcher.watch(dir);
 
     mDatabase->index(sourceInformation);
+    mSourceIndexed(sourceInformation);
 
     static const char *names[] = { "index", "dirty", "dump", "restore" };
     error("Indexed %s (%s)", sourceInformation.sourceFile.constData(), names[type]);
