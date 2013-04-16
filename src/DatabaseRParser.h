@@ -17,7 +17,10 @@ class DocumentParser : public QObject
 {
     Q_OBJECT
 public:
-    DocumentParser(QPointer<CppTools::Internal::CppModelManager> mgr, QObject* parent = 0);
+    DocumentParser(QPointer<CppTools::Internal::CppModelManager> mgr,
+                   Map<QString, QString>& hts,
+                   QMutex& mtx,
+                   QObject* parent = 0);
     ~DocumentParser();
 
     QByteArray tokenForAst(CPlusPlus::AST* ast, CPlusPlus::TranslationUnit* unit, const QByteArray& src);
@@ -30,6 +33,8 @@ private slots:
 public:
     int symbolCount;
     QPointer<CppTools::Internal::CppModelManager> manager;
+    Map<QString, QString>& headerToSource;
+    QMutex& mutex;
     QSet<QString> seen;
 };
 
@@ -92,6 +97,7 @@ private:
         void merge(const RParserName& other);
     };
     Map<String, RParserName> names;
+    Map<QString, QString> headerToSource;
     DocumentParser* parser;
     QPointer<CppTools::Internal::CppModelManager> manager;
 

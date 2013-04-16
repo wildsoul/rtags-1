@@ -276,8 +276,11 @@ static inline CPlusPlus::Symbol *canonicalSymbol(CPlusPlus::Scope *scope, const 
     return 0;
 }
 
-DocumentParser::DocumentParser(QPointer<CppModelManager> mgr, QObject* parent)
-    : QObject(parent), symbolCount(0), manager(mgr)
+DocumentParser::DocumentParser(QPointer<CppModelManager> mgr,
+                               Map<QString, QString>& hts,
+                               QMutex& mtx,
+                               QObject* parent)
+    : QObject(parent), symbolCount(0), manager(mgr), headerToSource(hts), mutex(mtx)
 {
 }
 
@@ -334,6 +337,17 @@ void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
 {
     // seems I need to keep this around
     doc->keepSourceAndAST();
+
+    {
+        QList<CPlusPlus::Document::Include> includes = doc->includes();
+        if (!includes.isEmpty()) {
+            QString srcFile = doc->fileName();
+            QMutexLocker locker(&mutex);
+            foreach(CPlusPlus::Document::Include include, includes) {
+                headerToSource[include.fileName()] = srcFile;
+            }
+        }
+    }
 
     const QFileInfo info(doc->fileName());
     const QString canonical = info.canonicalFilePath();
@@ -597,7 +611,7 @@ DatabaseRParser::~DatabaseRParser()
 void DatabaseRParser::run()
 {
     manager = new CppModelManager;
-    parser = new DocumentParser(manager);
+    parser = new DocumentParser(manager, headerToSource, mutex);
     QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
                      parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
 
@@ -773,7 +787,14 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
 #ifdef TIMECURSOR
     StopWatch watch;
 #endif
-    CPlusPlus::LookupContext lookup(doc, manager->snapshot());
+    CPlusPlus::Document::Ptr altDoc;
+    {
+        Map<QString, QString>::const_iterator src = headerToSource.find(QString::fromStdString(location.path()));
+        if (src != headerToSource.end()) {
+            altDoc = manager->document(src->second);
+        }
+    }
+    CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
     CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
 #ifdef TIMECURSOR
     error() << "after findsym" << watch.elapsed();
