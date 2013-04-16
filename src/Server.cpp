@@ -398,9 +398,9 @@ void Server::followLocation(const QueryMessage &query, Connection *conn)
     }
 
     shared_ptr<Database> database = project->database();
-    Database::Cursor cursor = database->cursor(loc, Database::Target);
+    Database::Cursor cursor = database->cursor(loc);
     if (query.flags() & QueryMessage::DeclarationOnly && cursor.isDefinition() && cursor.target.isValid())
-        cursor = database->cursor(cursor.target, Database::Target);
+        cursor = database->cursor(cursor.target);
 
     if (cursor.location.isValid() && !isFiltered(cursor.location, query))
         conn->write(cursor.target.key(query.keyFlags()).constData());
@@ -673,9 +673,12 @@ static void references(const QueryMessage &query, const Set<Database::Cursor> &c
     List<Node> locations;
     //const bool references = !(query.flags() & QueryMessage::FindVirtuals);
     for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
-        //error("geh! %u", it->references.size());
-        for (Set<Location>::const_iterator loc = it->references.begin(); loc != it->references.end(); ++loc) {
-            //error() << "gah!" << *loc;
+        if (!it->location.isValid())
+            continue;
+        const Database::References& refs = db->references(it->location);
+        error("geh! %u", refs.size());
+        for (Set<Location>::const_iterator loc = refs.begin(); loc != refs.end(); ++loc) {
+            error() << "gah!" << *loc;
             if (query.flags() & QueryMessage::AllReferences) {
                 locations.append(Node(*loc, false));
             } else {

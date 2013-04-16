@@ -226,16 +226,16 @@ void FindSymbols::operator()(CPlusPlus::Symbol* symbol)
 
 static inline bool nameMatch(CPlusPlus::Symbol* symbol, const String& name, const CPlusPlus::Overview& overview)
 {
-    String current;
+    String full;
     QList<const CPlusPlus::Name*> fullName = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
     while (!fullName.isEmpty()) {
         const CPlusPlus::Name* n = fullName.takeLast();
-        if (!current.isEmpty())
-            current.prepend("::");
-        current.prepend(fromQString(overview.prettyName(n)));
-        if (current.startsWith(name))
-            return true;
+        if (!full.isEmpty())
+            full.prepend("::");
+        full.prepend(fromQString(overview.prettyName(n)));
     }
+    if (full == name)
+        return true;
     return false;
 }
 
@@ -301,8 +301,7 @@ QByteArray DocumentParser::debugScope(CPlusPlus::Scope* scope, const QByteArray&
 }
 
 static inline QList<CPlusPlus::Usage> findUsages(QPointer<CppModelManager> manager,
-                                                 CPlusPlus::Symbol* symbol,
-                                                 const QByteArray& unpreprocessedSource)
+                                                 CPlusPlus::Symbol* symbol)
 {
     const CPlusPlus::Identifier *symbolId = symbol->identifier();
     if (!symbolId) {
@@ -587,6 +586,36 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
         }
     }
 
+    if (!sym)
+        return 0;
+
+    if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
+        // if we find a definition that's different from the declaration then replace
+        CppTools::SymbolFinder finder;
+        CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot());
+        if (definition) {
+            if (definition != sym) {
+                sym = definition;
+            } else {
+                // see if we can find our declaration
+                QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
+                if (!decls.isEmpty()) {
+                    // ### take the first one I guess?
+                    sym = decls.first();
+                }
+            }
+        }
+    } else {
+        // check if we are a forward class declaration
+        if (CPlusPlus::ForwardClassDeclaration* fwd = sym->asForwardClassDeclaration()) {
+            // we are, try to find our real declaration
+            CppTools::SymbolFinder finder;
+            CPlusPlus::Class* cls = finder.findMatchingClassDeclaration(fwd, manager->snapshot());
+            if (cls)
+                sym = cls;
+        }
+    }
+
     return sym;
 }
 
@@ -777,9 +806,7 @@ int DatabaseRParser::index(const SourceInformation &sourceInformation)
     return 0;
 }
 
-//#define TIMECURSOR
-
-Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) const
+Database::Cursor DatabaseRParser::cursor(const Location &location) const
 {
     QMutexLocker locker(&mutex);
     waitForState(GreaterOrEqual, CollectingNames);
@@ -791,9 +818,6 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
 
     Cursor cursor;
 
-#ifdef TIMECURSOR
-    StopWatch watch;
-#endif
     CPlusPlus::Document::Ptr altDoc;
     {
         Map<QString, QString>::const_iterator src = headerToSource.find(QString::fromStdString(location.path()));
@@ -801,103 +825,67 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
             altDoc = manager->document(src->second);
         }
     }
+
     CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
     CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
-#ifdef TIMECURSOR
-    error() << "after findsym" << watch.elapsed();
-#endif
     if (!sym) {
         error() << "no symbol whatsoever for" << location;
         return Cursor();
     }
 
-    const bool wantUsages = (mode & References);
-    const bool wantTarget = (mode & Target);
-
-    QList<CPlusPlus::Usage> usages;
-
-    if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
-        // if we find a definition that's different from the declaration then replace
-        CppTools::SymbolFinder finder;
-#ifdef TIMECURSOR
-        error() << "before find def" << watch.elapsed();
-#endif
-        CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot());
-#ifdef TIMECURSOR
-        error() << "after find def" << watch.elapsed();
-#endif
-        if (definition) {
-            if (definition != sym) {
-                // assume we were a declaration, find our usages before replacing
-                if (wantUsages)
-                    usages = findUsages(manager, sym, src);
-                sym = definition;
-            } else {
-                // see if we can find our declaration
-#ifdef TIMECURSOR
-                error() << "before find decl" << watch.elapsed();
-#endif
-                QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
-#ifdef TIMECURSOR
-                error() << "after find decl" << watch.elapsed();
-#endif
-                if (!decls.isEmpty()) {
-                    // ### take the first one I guess?
-                    sym = decls.first();
-                }
-                if (wantUsages)
-                    usages = findUsages(manager, sym, src);
-            }
-        } else {
-            if (wantUsages)
-                usages = findUsages(manager, sym, src);
-        }
+    cursor.target = makeLocation(sym);
+    if (cursor.location == cursor.target) {
+        // declaration
+        cursor.kind = symbolKind(sym);
     } else {
-        // check if we are a forward class declaration
-#ifdef TIMECURSOR
-        error() << "before forwardclass findsym" << watch.elapsed();
-#endif
-        if (CPlusPlus::ForwardClassDeclaration* fwd = sym->asForwardClassDeclaration()) {
-            // we are, try to find our real declaration
-            CppTools::SymbolFinder finder;
-#ifdef TIMECURSOR
-            error() << "before forwardclass" << watch.elapsed();
-#endif
-            CPlusPlus::Class* cls = finder.findMatchingClassDeclaration(fwd, manager->snapshot());
-#ifdef TIMECURSOR
-            error() << "after forwardclass" << watch.elapsed();
-#endif
-            if (cls)
-                sym = cls;
+        // possible reference
+        cursor.kind = Cursor::Reference;
+    }
+    cursor.symbolName = symbolName(sym);
+
+    error() << "got a symbol, tried" << location << "ended up with target" << cursor.target;
+    return cursor;
+}
+
+Database::References DatabaseRParser::references(const Location& location) const
+{
+    QMutexLocker locker(&mutex);
+    waitForState(GreaterOrEqual, CollectingNames);
+
+    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
+    if (!doc)
+        return References();
+    const QByteArray& src = doc->utf8Source();
+
+    Cursor cursor;
+
+    CPlusPlus::Document::Ptr altDoc;
+    {
+        Map<QString, QString>::const_iterator src = headerToSource.find(QString::fromStdString(location.path()));
+        if (src != headerToSource.end()) {
+            altDoc = manager->document(src->second);
         }
-#ifdef TIMECURSOR
-        error() << "after forwardclass findsym" << wantUsages << mode << watch.elapsed();
-#endif
-        if (wantUsages)
-            usages = findUsages(manager, sym, src);
     }
 
-    if (wantTarget) {
-#ifdef TIMECURSOR
-        error() << "before make target/loc" << watch.elapsed();
-#endif
-        cursor.target = makeLocation(sym);
-        if (cursor.location == cursor.target) {
-            // declaration
-            cursor.kind = symbolKind(sym);
-        } else {
-            // possible reference
-            cursor.kind = Cursor::Reference;
+    CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
+    CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
+    if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
+        CppTools::SymbolFinder finder;
+        QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
+        if (!decls.isEmpty()) {
+            // ### take the first one I guess?
+            sym = decls.first();
         }
-        cursor.symbolName = symbolName(sym);
-#ifdef TIMECURSOR
-        error() << "after make target/loc" << watch.elapsed();
-#endif
     }
+    if (!sym) {
+        error() << "no symbol whatsoever for" << location;
+        return References();
+    }
+    error() << "faen" << makeLocation(sym);
 
-#ifdef TIMECURSOR
-    error() << "before usages" << watch.elapsed();
-#endif
+    References refs;
+
+    QList<CPlusPlus::Usage> usages = findUsages(manager, sym);
     foreach(const CPlusPlus::Usage& usage, usages) {
         CPlusPlus::Document::Ptr doc = manager->document(usage.path);
         if (doc) {
@@ -911,15 +899,11 @@ Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) con
             }
         }
         //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
-        cursor.references.insert(Location(fromQString(usage.path),
-                                          usage.line, usage.col + 1));
+        refs.insert(Location(fromQString(usage.path),
+                             usage.line, usage.col + 1));
     }
-#ifdef TIMECURSOR
-    error() << "after usages" << watch.elapsed();
-#endif
 
-    error() << "got a symbol, tried" << location << "ended up with target" << cursor.target;
-    return cursor;
+    return refs;
 }
 
 Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) const
@@ -982,9 +966,9 @@ Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const L
     Set<Path> cand, paths = pathFilter.toSet();
     {
         const bool pass = paths.isEmpty();
-        Map<String, RParserName>::const_iterator name = names.lower_bound(string);
+        Map<String, RParserName>::const_iterator name = names.find(string);
         const Map<String, RParserName>::const_iterator end = names.end();
-        while (name != end && name->first.startsWith(string)) {
+        if (name != end) {
             if (pass)
                 cand += name->second.paths;
             else

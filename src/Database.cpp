@@ -39,6 +39,8 @@ String Database::Cursor::toString(unsigned flags) const
         ret.append("Target: ");
         ret.append(target.key(flags));
     }
+#warning need to do this, will need the Database pointer to do it though
+    /*
     if (!references.isEmpty() && !(flags & IncludeReferences)) {
         ret.append("References:");
         for (Set<Location>::const_iterator rit = references.begin(); rit != references.end(); ++rit) {
@@ -48,6 +50,7 @@ String Database::Cursor::toString(unsigned flags) const
         }
         ret.append('\n');
     }
+    */
     return ret;
 }
 

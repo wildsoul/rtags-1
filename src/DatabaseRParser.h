@@ -47,10 +47,11 @@ public:
     DatabaseRParser();
     virtual ~DatabaseRParser();
 
-    virtual Cursor cursor(const Location &location, int mode) const;
+    virtual Cursor cursor(const Location &location) const;
     virtual void status(const String &query, Connection *conn) const;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const;
     virtual int index(const SourceInformation &sourceInformation);
+    virtual References references(const Location& location) const;
     virtual Set<Path> dependencies(const Path &path, DependencyMode mode) const;
     virtual Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const;
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
