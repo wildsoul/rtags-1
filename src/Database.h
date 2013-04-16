@@ -23,6 +23,7 @@ public:
         Cursor() : kind(Invalid), start(-1), end(-1) {}
         enum Kind {
             Invalid,
+            File,
             MemberFunctionDefinition,
             MemberFunctionDeclaration,
             MethodDefinition,

@@ -746,6 +746,13 @@ void DatabaseRParser::collectNames(const Set<Path>& files)
             find(globalNamespace);
             names += find.symbolNames();
         }
+
+        const String fileName(file->fileName());
+        RParserName rname;
+        rname.names.insert(fileName);
+        rname.paths.insert(*file);
+        names[fileName].merge(rname);
+
         ++file;
     }
 }
@@ -1010,6 +1017,14 @@ Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const L
                     if (nameMatch(sym, string, overview))
                         cursors.insert(makeCursor(sym, unit));
                 }
+            }
+
+            if (path->endsWith(string)) { // file name, add custom target for the file
+                Cursor fileCursor;
+                fileCursor.kind = Cursor::File;
+                fileCursor.location = fileCursor.target = Location(*path, 1, 1);
+                fileCursor.symbolName = *path;
+                cursors.insert(fileCursor);
             }
 
             ++path;

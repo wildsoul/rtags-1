@@ -4,6 +4,7 @@ const char * Database::Cursor::kindToString(Kind kind)
 {
     const char *names[] = {
         "Invalid",
+        "File",
         "MemberFunctionDefinition",
         "MemberFunctionDeclaration",
         "MethodDefinition",
@@ -58,6 +59,7 @@ bool Database::Cursor::isDefinition() const
     case MethodDeclaration:
     case Reference:
         return false;
+    case File:
     case Macro:
     case MemberFunctionDefinition:
     case MethodDefinition:
