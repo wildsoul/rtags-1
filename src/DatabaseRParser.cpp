@@ -576,141 +576,6 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
     return sym;
 }
 
-//#define TIMECURSOR
-
-Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) const
-{
-    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
-    if (!doc)
-        return Cursor();
-    const QByteArray& src = doc->utf8Source();
-
-    Cursor cursor;
-
-#ifdef TIMECURSOR
-    StopWatch watch;
-#endif
-    CPlusPlus::LookupContext lookup(doc, manager->snapshot());
-    CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
-#ifdef TIMECURSOR
-    error() << "after findsym" << watch.elapsed();
-#endif
-    if (!sym) {
-        error() << "no symbol whatsoever for" << location;
-        return Cursor();
-    }
-
-    const bool wantUsages = (mode & References);
-    const bool wantTarget = (mode & Target);
-
-    QList<CPlusPlus::Usage> usages;
-
-    if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
-        // if we find a definition that's different from the declaration then replace
-        CppTools::SymbolFinder finder;
-#ifdef TIMECURSOR
-        error() << "before find def" << watch.elapsed();
-#endif
-        CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot());
-#ifdef TIMECURSOR
-        error() << "after find def" << watch.elapsed();
-#endif
-        if (definition) {
-            if (definition != sym) {
-                // assume we were a declaration, find our usages before replacing
-                if (wantUsages)
-                    usages = findUsages(manager, sym, src);
-                sym = definition;
-            } else {
-                // see if we can find our declaration
-#ifdef TIMECURSOR
-                error() << "before find decl" << watch.elapsed();
-#endif
-                QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
-#ifdef TIMECURSOR
-                error() << "after find decl" << watch.elapsed();
-#endif
-                if (!decls.isEmpty()) {
-                    // ### take the first one I guess?
-                    sym = decls.first();
-                }
-                if (wantUsages)
-                    usages = findUsages(manager, sym, src);
-            }
-        } else {
-            if (wantUsages)
-                usages = findUsages(manager, sym, src);
-        }
-    } else {
-        // check if we are a forward class declaration
-#ifdef TIMECURSOR
-        error() << "before forwardclass findsym" << watch.elapsed();
-#endif
-        if (CPlusPlus::ForwardClassDeclaration* fwd = sym->asForwardClassDeclaration()) {
-            // we are, try to find our real declaration
-            CppTools::SymbolFinder finder;
-#ifdef TIMECURSOR
-            error() << "before forwardclass" << watch.elapsed();
-#endif
-            CPlusPlus::Class* cls = finder.findMatchingClassDeclaration(fwd, manager->snapshot());
-#ifdef TIMECURSOR
-            error() << "after forwardclass" << watch.elapsed();
-#endif
-            if (cls)
-                sym = cls;
-        }
-#ifdef TIMECURSOR
-        error() << "after forwardclass findsym" << wantUsages << mode << watch.elapsed();
-#endif
-        if (wantUsages)
-            usages = findUsages(manager, sym, src);
-    }
-
-    if (wantTarget) {
-#ifdef TIMECURSOR
-        error() << "before make target/loc" << watch.elapsed();
-#endif
-        cursor.target = makeLocation(sym);
-        if (cursor.location == cursor.target) {
-            // declaration
-            cursor.kind = symbolKind(sym);
-        } else {
-            // possible reference
-            cursor.kind = Cursor::Reference;
-        }
-        cursor.symbolName = symbolName(sym);
-#ifdef TIMECURSOR
-        error() << "after make target/loc" << watch.elapsed();
-#endif
-    }
-
-#ifdef TIMECURSOR
-    error() << "before usages" << watch.elapsed();
-#endif
-    foreach(const CPlusPlus::Usage& usage, usages) {
-        CPlusPlus::Document::Ptr doc = manager->document(usage.path);
-        if (doc) {
-            CPlusPlus::Symbol* refsym = doc->lastVisibleSymbolAt(usage.line, usage.col + 1);
-            if (refsym) {
-                if (refsym->line() == static_cast<unsigned>(usage.line) &&
-                    refsym->column() == static_cast<unsigned>(usage.col + 1)) {
-                    // this is a symbol, ignore it
-                    continue;
-                }
-            }
-        }
-        //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
-        cursor.references.insert(Location(fromQString(usage.path),
-                                          usage.line, usage.col + 1));
-    }
-#ifdef TIMECURSOR
-    error() << "after usages" << watch.elapsed();
-#endif
-
-    error() << "got a symbol, tried" << location << "ended up with target" << cursor.target;
-    return cursor;
-}
-
 DatabaseRParser::DatabaseRParser()
     : state(Starting), parser(0)
 {
@@ -889,6 +754,144 @@ int DatabaseRParser::index(const SourceInformation &sourceInformation)
     //waitForState(GreaterOrEqual, CollectingNames);
     //return symbolCount(sourceInformation.sourceFile);
     return 0;
+}
+
+//#define TIMECURSOR
+
+Database::Cursor DatabaseRParser::cursor(const Location &location, int mode) const
+{
+    QMutexLocker locker(&mutex);
+    waitForState(GreaterOrEqual, CollectingNames);
+
+    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
+    if (!doc)
+        return Cursor();
+    const QByteArray& src = doc->utf8Source();
+
+    Cursor cursor;
+
+#ifdef TIMECURSOR
+    StopWatch watch;
+#endif
+    CPlusPlus::LookupContext lookup(doc, manager->snapshot());
+    CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
+#ifdef TIMECURSOR
+    error() << "after findsym" << watch.elapsed();
+#endif
+    if (!sym) {
+        error() << "no symbol whatsoever for" << location;
+        return Cursor();
+    }
+
+    const bool wantUsages = (mode & References);
+    const bool wantTarget = (mode & Target);
+
+    QList<CPlusPlus::Usage> usages;
+
+    if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
+        // if we find a definition that's different from the declaration then replace
+        CppTools::SymbolFinder finder;
+#ifdef TIMECURSOR
+        error() << "before find def" << watch.elapsed();
+#endif
+        CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot());
+#ifdef TIMECURSOR
+        error() << "after find def" << watch.elapsed();
+#endif
+        if (definition) {
+            if (definition != sym) {
+                // assume we were a declaration, find our usages before replacing
+                if (wantUsages)
+                    usages = findUsages(manager, sym, src);
+                sym = definition;
+            } else {
+                // see if we can find our declaration
+#ifdef TIMECURSOR
+                error() << "before find decl" << watch.elapsed();
+#endif
+                QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
+#ifdef TIMECURSOR
+                error() << "after find decl" << watch.elapsed();
+#endif
+                if (!decls.isEmpty()) {
+                    // ### take the first one I guess?
+                    sym = decls.first();
+                }
+                if (wantUsages)
+                    usages = findUsages(manager, sym, src);
+            }
+        } else {
+            if (wantUsages)
+                usages = findUsages(manager, sym, src);
+        }
+    } else {
+        // check if we are a forward class declaration
+#ifdef TIMECURSOR
+        error() << "before forwardclass findsym" << watch.elapsed();
+#endif
+        if (CPlusPlus::ForwardClassDeclaration* fwd = sym->asForwardClassDeclaration()) {
+            // we are, try to find our real declaration
+            CppTools::SymbolFinder finder;
+#ifdef TIMECURSOR
+            error() << "before forwardclass" << watch.elapsed();
+#endif
+            CPlusPlus::Class* cls = finder.findMatchingClassDeclaration(fwd, manager->snapshot());
+#ifdef TIMECURSOR
+            error() << "after forwardclass" << watch.elapsed();
+#endif
+            if (cls)
+                sym = cls;
+        }
+#ifdef TIMECURSOR
+        error() << "after forwardclass findsym" << wantUsages << mode << watch.elapsed();
+#endif
+        if (wantUsages)
+            usages = findUsages(manager, sym, src);
+    }
+
+    if (wantTarget) {
+#ifdef TIMECURSOR
+        error() << "before make target/loc" << watch.elapsed();
+#endif
+        cursor.target = makeLocation(sym);
+        if (cursor.location == cursor.target) {
+            // declaration
+            cursor.kind = symbolKind(sym);
+        } else {
+            // possible reference
+            cursor.kind = Cursor::Reference;
+        }
+        cursor.symbolName = symbolName(sym);
+#ifdef TIMECURSOR
+        error() << "after make target/loc" << watch.elapsed();
+#endif
+    }
+
+#ifdef TIMECURSOR
+    error() << "before usages" << watch.elapsed();
+#endif
+    foreach(const CPlusPlus::Usage& usage, usages) {
+        CPlusPlus::Document::Ptr doc = manager->document(usage.path);
+        if (doc) {
+            CPlusPlus::Symbol* refsym = doc->lastVisibleSymbolAt(usage.line, usage.col + 1);
+            if (refsym) {
+                if (refsym->line() == static_cast<unsigned>(usage.line) &&
+                    refsym->column() == static_cast<unsigned>(usage.col + 1)) {
+                    // this is a symbol, ignore it
+                    continue;
+                }
+            }
+        }
+        //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
+        cursor.references.insert(Location(fromQString(usage.path),
+                                          usage.line, usage.col + 1));
+    }
+#ifdef TIMECURSOR
+    error() << "after usages" << watch.elapsed();
+#endif
+
+    error() << "got a symbol, tried" << location << "ended up with target" << cursor.target;
+    return cursor;
 }
 
 Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) const
