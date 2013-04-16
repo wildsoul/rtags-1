@@ -23,7 +23,7 @@ class GccArguments;
 class Job;
 class TimerEvent;
 class Project;
-class IndexerJob;
+class ClangThread;
 class Server : public EventReceiver
 {
 public:
@@ -39,18 +39,15 @@ public:
         ClearProjects = 0x004,
         Wall = 0x008,
         IgnorePrintfFixits = 0x010,
-        UnlimitedErrors = 0x020,
-        SpellChecking = 0x040,
         AllowMultipleBuildsForSameCompiler = 0x080,
-        NoStartupCurrentProject = 0x100
+        NoStartupCurrentProject = 0x100,
+        NoClangThread = 0x200
     };
     struct Options {
-        Options() : options(0), unloadTimer(0), stackSize(0) {}
+        Options() : options(0) {}
         Path socketFile, dataDir;
         unsigned options;
-        int unloadTimer, stackSize;
         List<String> defaultArguments, excludeFilters;
-        Set<Path> ignoredCompilers;
     };
     bool init(const Options &options);
     const Options &options() const { return mOptions; }
@@ -80,6 +77,7 @@ private:
     void followLocation(const QueryMessage &query, Connection *conn);
     void cursorInfo(const QueryMessage &query, Connection *conn);
     void dependencies(const QueryMessage &query, Connection *conn);
+    void fixIts(const QueryMessage &query, Connection *conn);
     void referencesForLocation(const QueryMessage &query, Connection *conn);
     void referencesForName(const QueryMessage &query, Connection *conn);
     void findSymbols(const QueryMessage &query, Connection *conn);
@@ -121,9 +119,8 @@ private:
 
     signalslot::Signal2<int, const List<String> &> mComplete;
 
-    Timer mUnloadTimer;
-
     RTagsPluginFactory mPluginFactory;
+    ClangThread *mClangThread;
 
     friend class CommandProcess;
 };

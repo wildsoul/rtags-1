@@ -18,13 +18,34 @@ public:
 
     void stop();
     void index(const SourceInformation &sourceInfo);
+
     String fixIts(const Path &path) const;
 private:
-    void diagnose(const SourceInformation &sourceInfo, CXTranslationUnit unit);
+    void diagnose(const SourceInformation &sourceInfo, CXTranslationUnit unit, const Set<Path> &files);
     mutable Mutex mMutex;
     WaitCondition mCondition;
     bool mDone;
-    Map<Path, String> mFixIts;
+
+    struct FixIt
+    {
+        inline FixIt(uint32_t s = 0, uint32_t e = 0, const String &t = String())
+            : start(s), end(e), text(t)
+        {
+        }
+        inline bool operator<(const FixIt &other) const
+        {
+            return start < other.start;
+        }
+        inline bool operator==(const FixIt &other) const
+        {
+            return (start == other.start && end == other.end && text == other.text);
+        }
+
+        uint32_t start, end;
+        String text;
+    };
+    
+    Map<Path, Set<FixIt> > mFixIts;
     SourceInformation mPending;
 };
 

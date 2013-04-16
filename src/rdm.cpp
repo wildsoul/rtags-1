@@ -34,7 +34,6 @@ void sigIntHandler(int)
 }
 
 #define EXCLUDEFILTER_DEFAULT "*/CMakeFiles/*;*/cmake*/Modules/*;*/conftest.c*;/tmp/*"
-int defaultStackSize = -1;
 void usage(FILE *f)
 {
     fprintf(f,
@@ -52,8 +51,6 @@ void usage(FILE *f)
             "  --clang-includepath|-P            Use clang include paths by default.\n"
             "  --no-Wall|-W                      Don't use -Wall.\n"
             "  --Wlarge-by-value-copy|-r [arg]   Use -Wlarge-by-value-copy=[arg] when invoking clang.\n"
-            "  --no-spell-checking|-l            Don't pass -fspell-checking.\n"
-            "  --unlimited-error|-f              Pass -ferror-limit=0 to clang.\n"
             "  --silent|-S                       No logging to stdout.\n"
             "  --validate|-V                     Enable validation of database on startup and after indexing.\n"
             "  --exclude-filter|-x [arg]         Files to exclude from rdm, default \"" EXCLUDEFILTER_DEFAULT "\".\n"
@@ -62,25 +59,15 @@ void usage(FILE *f)
             "  --rc-file|-c [arg]                Use this file instead of ~/.rdmrc.\n"
             "  --data-dir|-d [arg]               Use this directory to store persistent data (default ~/.rtags).\n"
             "  --socket-file|-n [arg]            Use this file for the server socket (default ~/.rdm).\n"
-            "  --setenv|-e [arg]                 Set this environment variable (--setenv \"foobar=1\").\n"
             "  --no-current-project|-o           Don't restore the last current project on startup.\n"
             "  --allow-multiple-builds|-m        Without this setting different flags for the same compiler will be merged for each source file.\n"
             "  --unload-timer|-u [arg]           Number of minutes to wait before unloading non-current projects (disabled by default).\n"
-            "  --ignore-compiler|-b [arg]        Alias this compiler (Might be practical to avoid duplicated builds for things like icecc).\n"
-            "  --disable-plugin|-p [arg]         Don't load this plugin\n"
-            "  --stack-size|-t [arg]             Use this much stack for indexing threads (default %d).\n", defaultStackSize);
+            "  --no-clang-thread|-O              Don't run clang thread (for fixits)\n"
+            "  --disable-plugin|-p [arg]         Don't load this plugin\n");
 }
 
 int main(int argc, char** argv)
 {
-    {
-        size_t stacksize;
-        pthread_attr_t attr;
-        pthread_attr_init(&attr);
-        pthread_attr_getstacksize(&attr, &stacksize);
-        defaultStackSize = stacksize * 2;
-    }
-
     Rct::findExecutablePath(*argv);
 
     struct option opts[] = {
@@ -90,7 +77,6 @@ int main(int argc, char** argv)
         { "define", required_argument, 0, 'D' },
         { "log-file", required_argument, 0, 'L' },
         { "no-builtin-includes", no_argument, 0, 'U' },
-        { "setenv", required_argument, 0, 'e' },
         { "no-Wall", no_argument, 0, 'W' },
         { "append", no_argument, 0, 'A' },
         { "verbose", no_argument, 0, 'v' },
@@ -104,14 +90,10 @@ int main(int argc, char** argv)
         { "no-rc", no_argument, 0, 'N' },
         { "data-dir", required_argument, 0, 'd' },
         { "ignore-printf-fixits", no_argument, 0, 'F' },
-        { "unlimited-errors", no_argument, 0, 'f' },
-        { "no-spell-checking", no_argument, 0, 'l' },
         { "large-by-value-copy", required_argument, 0, 'r' },
         { "allow-multiple-builds", no_argument, 0, 'm' },
-        { "unload-timer", required_argument, 0, 'u' },
         { "no-current-project", no_argument, 0, 'o' },
-        { "clang-stack-size", required_argument, 0, 't' },
-        { "ignore-compiler", required_argument, 0, 'b' },
+        { "no-clang-thread", no_argument, 0, 'O' },
         { "disable-plugin", required_argument, 0, 'p' },
         { 0, 0, 0, 0 }
     };
@@ -191,12 +173,10 @@ int main(int argc, char** argv)
     }
 
     Server::Options serverOpts;
-    serverOpts.socketFile = String::format<128>("%s.rdm-rewrite", Path::home().constData());
-    serverOpts.options = Server::Wall|Server::SpellChecking;
+    serverOpts.socketFile = String::format<128>("%s.rdm", Path::home().constData());
+    serverOpts.options = Server::Wall;
     serverOpts.excludeFilters = String(EXCLUDEFILTER_DEFAULT).split(';');
-    serverOpts.dataDir = String::format<128>("%s.rtags-rewrite", Path::home().constData());
-    serverOpts.unloadTimer = 0;
-    serverOpts.stackSize = defaultStackSize;
+    serverOpts.dataDir = String::format<128>("%s.rtags", Path::home().constData());
 
     const char *logFile = 0;
     unsigned logFlags = 0;
@@ -220,16 +200,6 @@ int main(int argc, char** argv)
         case 'x':
             serverOpts.excludeFilters += String(optarg).split(';');
             break;
-        case 't':
-            serverOpts.stackSize = atoi(optarg);
-            if (serverOpts.stackSize <= 0) {
-                fprintf(stderr, "Invalid stack size: %s\n", optarg);
-                return 1;
-            }
-            break;
-        case 'b':
-            serverOpts.ignoredCompilers.insert(Path::resolved(optarg));
-            break;
         case 'n':
             serverOpts.socketFile = optarg;
             break;
@@ -251,12 +221,6 @@ int main(int argc, char** argv)
         case 'F':
             serverOpts.options |= Server::IgnorePrintfFixits;
             break;
-        case 'f':
-            serverOpts.options |= Server::UnlimitedErrors;
-            break;
-        case 'l':
-            serverOpts.options &= ~Server::SpellChecking;
-            break;
         case 'U':
             serverOpts.options |= Server::NoBuiltinIncludes;
             break;
@@ -266,20 +230,9 @@ int main(int argc, char** argv)
         case 'C':
             serverOpts.options |= Server::ClearProjects;
             break;
-        case 'e':
-            putenv(optarg);
-            break;
         case 's':
             noSigHandler = true;
             break;
-        case 'u': {
-            bool ok;
-            serverOpts.unloadTimer = static_cast<int>(String(optarg).toULongLong(&ok));
-            if (!ok) {
-                fprintf(stderr, "Invalid argument to --unload-timer %s\n", optarg);
-                return 1;
-            }
-            break; }
         case 'r': {
             int large = atoi(optarg);
             if (large <= 0) {

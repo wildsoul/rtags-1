@@ -31,6 +31,7 @@ enum OptionType {
     FindProjectRoot,
     FindSymbols,
     FindVirtuals,
+    FixIts,
     FollowLocation,
     HasFileManager,
     Help,
@@ -126,6 +127,7 @@ struct Option opts[] = {
     { ReloadFileManager, "reload-file-manager", 'B', no_argument, "Reload file manager." },
     { Man, "man", 0, no_argument, "Output XML for xmltoman to generate man page for rc :-)" },
     { LocalSymbols, "local-symbols", 'l', required_argument, "List symbols in file (filter namespaces, fully qualified function names, ignore certain cursors etc)." },
+    { FixIts, "fixits", 0, required_argument, "Get fixits for file." },
 
     { None, 0, 0, 0, "" },
     { None, 0, 0, 0, "Command flags:" },
@@ -410,7 +412,7 @@ bool RClient::exec()
 bool RClient::parse(int &argc, char **argv)
 {
     Rct::findExecutablePath(*argv);
-    mSocketFile = Path::home() + ".rdm-rewrite";
+    mSocketFile = Path::home() + ".rdm";
 
     List<option> options;
     options.reserve(sizeof(opts) / sizeof(Option));
@@ -750,6 +752,7 @@ bool RClient::parse(int &argc, char **argv)
         case IsIndexed:
         case DumpFile:
         case LocalSymbols:
+        case FixIts:
         case Dependencies: {
             Path p = optarg;
             if (!p.exists()) {
@@ -774,6 +777,7 @@ bool RClient::parse(int &argc, char **argv)
             case IsIndexed: type = QueryMessage::IsIndexed; break;
             case DumpFile: type = QueryMessage::DumpFile; break;
             case LocalSymbols: type = QueryMessage::LocalSymbols; break;
+            case FixIts: type = QueryMessage::FixIts; break;
             default: assert(0); break;
             }
 

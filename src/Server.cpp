@@ -1,5 +1,6 @@
 #include "Server.h"
 
+#include "ClangThread.h"
 #include "Client.h"
 #include "CompileMessage.h"
 #include "CompletionMessage.h"
@@ -29,7 +30,7 @@
 void *UnloadTimer = &UnloadTimer;
 Server *Server::sInstance = 0;
 Server::Server()
-    : mServer(0), mVerbose(false)
+    : mServer(0), mVerbose(false), mClangThread(0)
 {
     assert(!sInstance);
     sInstance = this;
@@ -40,6 +41,11 @@ Server::~Server()
     clear();
     assert(sInstance == this);
     sInstance = 0;
+    if (mClangThread) {
+        mClangThread->stop();
+        mClangThread->join();
+        delete mClangThread;
+    }
     Messages::cleanup();
 }
 
@@ -71,12 +77,9 @@ bool Server::init(const Options &options)
         mOptions.defaultArguments.append("-nostdinc++");
     }
 
-    if (options.options & UnlimitedErrors)
-        mOptions.defaultArguments.append("-ferror-limit=0");
     if (options.options & Wall)
         mOptions.defaultArguments.append("-Wall");
-    if (options.options & SpellChecking)
-        mOptions.defaultArguments << "-fspell-checking";
+    mOptions.defaultArguments << "-fspell-checking";
     error() << "using args:" << String::join(mOptions.defaultArguments, " ");
 
     if (mOptions.options & ClearProjects) {
@@ -117,6 +120,10 @@ bool Server::init(const Options &options)
                 unlink((mOptions.dataDir + ".currentProject").constData());
             }
         }
+    }
+    if (!(mOptions.options & NoClangThread)) {
+        mClangThread = new ClangThread;
+        mClangThread->start();
     }
 
     return true;
@@ -165,9 +172,6 @@ void Server::onNewConnection()
 
 void Server::onNewMessage(Message *message, Connection *connection)
 {
-    if (mOptions.unloadTimer)
-        mUnloadTimer.start(shared_from_this(), mOptions.unloadTimer * 1000 * 60, SingleShot, UnloadTimer);
-
     ClientMessage *m = static_cast<ClientMessage*>(message);
     const String raw = m->raw();
     if (!raw.isEmpty()) {
@@ -238,6 +242,9 @@ void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
     switch (message->type()) {
     case QueryMessage::Invalid:
         assert(0);
+        break;
+    case QueryMessage::FixIts:
+        fixIts(*message, conn);
         break;
     case QueryMessage::LogOutput:
         logOutput(*message, conn);
@@ -575,6 +582,18 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
     conn->finish();
 }
 
+
+void Server::fixIts(const QueryMessage &query, Connection *conn)
+{
+    if (mClangThread) {
+        const Path path = Path::resolved(query.query());
+        const String out = mClangThread->fixIts(path);
+        if (!out.isEmpty())
+            conn->write(out);
+    }
+    conn->finish();
+}
+
 struct Node
 {
     Node(const Location &loc = Location(), bool def = false)
@@ -871,9 +890,8 @@ void Server::reindex(const QueryMessage &query, Connection *conn)
 
 void Server::processSourceFile(const GccArguments &args, const List<String> &projects)
 {
-    if (args.language() == GccArguments::NoLang || mOptions.ignoredCompilers.contains(args.compiler())) {
+    if (args.language() == GccArguments::NoLang)
         return;
-    }
     Path srcRoot;
     if (updateProject(projects)) {
         srcRoot = currentProject()->path();
