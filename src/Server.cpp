@@ -1246,12 +1246,8 @@ void Server::onSourceIndexed(const shared_ptr<Project> &project, const SourceInf
         mClangThread->index(source);
     } else if (mCurrentSourceFile.isHeader() && mClangThread->isIdle()) {
         const Set<Path> deps = project->database()->dependencies(mCurrentSourceFile, Database::DependsOnArg);
-        error() << "Reindexing" << source.sourceFile << "current is" << mCurrentSourceFile
-                << "deps contains it" << deps.contains(source.sourceFile);
         if (deps.contains(source.sourceFile)) {
             mClangThread->index(source);
         }
-    } else {
-        error() << mCurrentSourceFile.isHeader() << mCurrentSourceFile << mClangThread->isIdle();
     }
 }
