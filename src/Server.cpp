@@ -1077,8 +1077,13 @@ bool Server::updateProject(const List<String> &projects)
     for (int i=0; i<projects.size(); ++i) {
         if (selectProject(projects.at(i), 0)) {
             const Path p = Path::resolved(projects.at(i));
-            if (p.isFile())
+            if (p.isFile() && p != mCurrentSourceFile) {
+                shared_ptr<Project> project = mCurrentProject.lock();
+                assert(project);
                 mCurrentSourceFile = p;
+                const SourceInformation info = project->sourceInfo(p);
+                onSourceIndexed(project, info);
+            }
             return true;
         }
     }
@@ -1235,10 +1240,18 @@ void Server::decodePath(Path &path)
     }
 }
 
-void Server::onSourceIndexed(const SourceInformation &source)
+void Server::onSourceIndexed(const shared_ptr<Project> &project, const SourceInformation &source)
 {
-    error() << "got onSourceIndexed" << source.sourceFile;
     if (source.sourceFile == mCurrentSourceFile) {
         mClangThread->index(source);
+    } else if (mCurrentSourceFile.isHeader() && mClangThread->isIdle()) {
+        const Set<Path> deps = project->database()->dependencies(mCurrentSourceFile, Database::DependsOnArg);
+        error() << "Reindexing" << source.sourceFile << "current is" << mCurrentSourceFile
+                << "deps contains it" << deps.contains(source.sourceFile);
+        if (deps.contains(source.sourceFile)) {
+            mClangThread->index(source);
+        }
+    } else {
+        error() << mCurrentSourceFile.isHeader() << mCurrentSourceFile << mClangThread->isIdle();
     }
 }

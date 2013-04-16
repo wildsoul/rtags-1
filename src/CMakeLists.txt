@@ -58,6 +58,8 @@ set(RTAGS_SHARED_SOURCES
 
 add_library(shared ${RTAGS_SHARED_SOURCES})
 
+add_definitions("-DCLANG_INCLUDEPATH=\"${CLANG_SYSTEM_INCLUDE}\"")
+
 set(RDM_SOURCES
   ClangThread.cpp
   Database.cpp

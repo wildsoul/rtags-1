@@ -20,11 +20,17 @@ public:
     void index(const SourceInformation &sourceInfo);
 
     String fixIts(const Path &path) const;
+    bool isIdle() const { MutexLocker lock(&mMutex); error() << "state is" << mState; return mState == Idle; }
 private:
     void diagnose(const SourceInformation &sourceInfo, CXTranslationUnit unit, const Set<Path> &files);
     mutable Mutex mMutex;
     WaitCondition mCondition;
-    bool mDone;
+    enum State {
+        Idle,
+        Parsing,
+        Done
+    } mState;
+    SourceInformation mPending;
 
     struct FixIt
     {
@@ -44,9 +50,7 @@ private:
         uint32_t start, end;
         String text;
     };
-    
     Map<Path, Set<FixIt> > mFixIts;
-    SourceInformation mPending;
 };
 
 #endif

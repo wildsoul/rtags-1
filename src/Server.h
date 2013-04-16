@@ -66,7 +66,7 @@ private:
     signalslot::Signal2<int, const List<String> &> &complete() { return mComplete; }
     shared_ptr<Project> setCurrentProject(const Path &path);
     shared_ptr<Project> setCurrentProject(const shared_ptr<Project> &project);
-    void onSourceIndexed(const SourceInformation &source);
+    void onSourceIndexed(const shared_ptr<Project> &project, const SourceInformation &source);
     void onNewMessage(Message *message, Connection *conn);
     void clearProjects();
     void handleCompileMessage(CompileMessage *message, Connection *conn);

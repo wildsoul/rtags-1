@@ -53,7 +53,7 @@ public:
     bool isIndexing() const;
     int dirty(const Set<Path> &files);
     virtual void timerEvent(TimerEvent *e);
-    signalslot::Signal1<const SourceInformation &> &sourceIndexed() { return mSourceIndexed; }
+    signalslot::Signal2<const shared_ptr<Project> &, const SourceInformation &> &sourceIndexed() { return mSourceIndexed; }
 private:
     void onFileModified(const Path &path);
     void onFileRemoved(const Path &path);
@@ -70,7 +70,7 @@ private:
     FileSystemWatcher mWatcher;
     Set<Path> mWatchedPaths, mModifiedFiles;
     Timer mModifiedFilesTimer, mSaveTimer;
-    signalslot::Signal1<const SourceInformation &> mSourceIndexed;
+    signalslot::Signal2<const shared_ptr<Project> &, const SourceInformation &> mSourceIndexed;
 };
 
 #endif

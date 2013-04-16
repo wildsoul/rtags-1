@@ -28,7 +28,7 @@ static void inclusionVisitor(CXFile includedFile,
 }
 
 ClangThread::ClangThread()
-    : mDone(false)
+    : mState(Idle)
 {
 
 }
@@ -42,18 +42,20 @@ void ClangThread::run()
         SourceInformation source;
         {
             MutexLocker lock(&mMutex);
-            while (mPending.isNull() && !mDone) {
+            mState = Idle;
+            while (mPending.isNull() && mState != Done) {
                 mCondition.wait(&mMutex);
             }
-            if (mDone)
+            if (mState == Done)
                 break;
+            mState = Parsing;
             std::swap(source, mPending);
         }
 
         for (int i=0; i<source.builds.size(); ++i) {
             const List<String> args = source.builds.at(i).args;
             int idx = 0;
-            List<const char*> clangArgs(args.size() + defaultArguments.size(), 0);
+            List<const char*> clangArgs(args.size() + defaultArguments.size() + 1, 0);
 
             const List<String> *lists[] = { &args, &defaultArguments };
             for (int i=0; i<2; ++i) {
@@ -62,7 +64,7 @@ void ClangThread::run()
                     clangArgs[idx++] = lists[i]->at(j).constData();
                 }
             }
-
+            clangArgs[idx++] = "-I" CLANG_INCLUDEPATH;
 
             CXTranslationUnit unit = clang_parseTranslationUnit(index, source.sourceFile.constData(),
                                                                 clangArgs.data(), idx, 0, 0, 0);
@@ -316,9 +318,10 @@ void ClangThread::index(const SourceInformation &sourceInfo)
     mPending = sourceInfo;
     mCondition.wakeOne();
 }
+
 void ClangThread::stop()
 {
     MutexLocker lock(&mMutex);
-    mDone = true;
+    mState = Done;
     mCondition.wakeOne();
 }
