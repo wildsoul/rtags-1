@@ -110,6 +110,12 @@ bool Server::init(const Options &options)
     }
 
     mServer->clientConnected().connect(this, &Server::onNewConnection);
+
+    if (!(mOptions.options & NoClangThread)) {
+        mClangThread = new ClangThread;
+        mClangThread->start();
+    }
+
     reloadProjects();
     if (!(mOptions.options & NoStartupCurrentProject)) {
         Path current = Path(mOptions.dataDir + ".currentProject").readAll(1024);
@@ -121,11 +127,6 @@ bool Server::init(const Options &options)
             }
         }
     }
-    if (!(mOptions.options & NoClangThread)) {
-        mClangThread = new ClangThread;
-        mClangThread->start();
-    }
-
     return true;
 }
 
@@ -265,21 +266,17 @@ void Server::handleCompileMessage(CompileMessage *message, Connection *conn)
 
 void Server::handleCompletionMessage(CompletionMessage *message, Connection *conn)
 {
-    printf("[%s] %s:%d: void Server::handleCompletionMessage(CompletionMessage *message, Connection *conn) [after]\n", __func__, __FILE__, __LINE__);
     updateProject(message->projects());
     const Location loc = message->location();
     if (loc.isNull()) {
-        printf("[%s] %s:%d: if (loc.isNull()) { [after]\n", __func__, __FILE__, __LINE__);
         conn->finish();
         return;
     }
     shared_ptr<Project> project = updateProjectForLocation(loc);
     if (!project) {
-        printf("[%s] %s:%d: if (!project) { [after]\n", __func__, __FILE__, __LINE__);
         conn->finish();
         return;
     }
-    printf("[%s] %s:%d: } [after]\n", __func__, __FILE__, __LINE__);
     shared_ptr<Database> database = project->database();
     database->codeCompleteAt(loc, message->contents(), conn);
     conn->finish();
@@ -1240,6 +1237,7 @@ void Server::decodePath(Path &path)
 
 void Server::onSourceIndexed(const SourceInformation &source)
 {
+    error() << "got onSourceIndexed" << source.sourceFile;
     if (source.sourceFile == mCurrentSourceFile) {
         mClangThread->index(source);
     }
