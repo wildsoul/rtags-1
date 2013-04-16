@@ -10,13 +10,15 @@ QueryMessage::QueryMessage(Type type)
 void QueryMessage::encode(Serializer &serializer) const
 {
     serializer << mRaw << mQuery << mContext << mType << mFlags << mMax
-               << mMinLine << mMaxLine << mBuildIndex << mPathFilters << mProjects;
+               << mMinLine << mMaxLine << mBuildIndex << mPathFilters << projects();
 }
 
 void QueryMessage::decode(Deserializer &deserializer)
 {
+    List<String> projects;
     deserializer >> mRaw >> mQuery >> mContext >> mType >> mFlags >> mMax
-                 >> mMinLine >> mMaxLine >> mBuildIndex >> mPathFilters >> mProjects;
+                 >> mMinLine >> mMaxLine >> mBuildIndex >> mPathFilters >> projects;
+    setProjects(projects);
 }
 
 unsigned QueryMessage::keyFlags(unsigned queryFlags)

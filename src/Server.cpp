@@ -180,6 +180,8 @@ void Server::onNewMessage(Message *message, Connection *connection)
         } else {
             warning() << raw;
         }
+    } else if (message->messageId() != CompileMessage::MessageId) {
+        updateProject(m->projects());
     }
 
     switch (message->messageId()) {
@@ -207,8 +209,55 @@ void Server::handleCompileMessage(CompileMessage *message, Connection *conn)
 {
     conn->finish(); // nothing to wait for
     GccArguments args;
-    if (args.parse(message->arguments(), message->path())) {
-        processSourceFile(args, message->projects());
+    if (!args.parse(message->arguments(), message->path()) || args.language() == GccArguments::NoLang)
+        return;
+
+    Path srcRoot;
+    if (updateProject(message->projects())) {
+        srcRoot = currentProject()->path();
+    } else if (!message->projects().isEmpty()) {
+        srcRoot = message->projects().first();
+    } else {
+        srcRoot = args.projectRoot();
+    }
+    List<Path> inputFiles = args.inputFiles();
+    if (srcRoot.isEmpty()) {
+        error("Can't find project root for %s", String::join(inputFiles, ", ").constData());
+        return;
+    }
+
+    debug() << inputFiles << "in" << srcRoot;
+    const int count = inputFiles.size();
+    int filtered = 0;
+    if (!mOptions.excludeFilters.isEmpty()) {
+        for (int i=0; i<count; ++i) {
+            Path &p = inputFiles[i];
+            if (Filter::filter(p, mOptions.excludeFilters) == Filter::Filtered) {
+                warning() << "Filtered out" << p;
+                p.clear();
+                ++filtered;
+            }
+        }
+    }
+    if (filtered == count) {
+        warning("no input file?");
+        return;
+    }
+
+    shared_ptr<Project> project = mProjects.value(srcRoot);
+    if (!project) {
+        project = addProject(srcRoot);
+        assert(project);
+    }
+
+    if (!mCurrentProject.lock()) {
+        setCurrentProject(project);
+    } else {
+        loadProject(project);
+    }
+
+    for (int i=0; i<count; ++i) {
+        project->index(inputFiles.at(i), args);
     }
 }
 
@@ -888,58 +937,6 @@ void Server::reindex(const QueryMessage &query, Connection *conn)
     conn->finish();
 }
 
-void Server::processSourceFile(const GccArguments &args, const List<String> &projects)
-{
-    if (args.language() == GccArguments::NoLang)
-        return;
-    Path srcRoot;
-    if (updateProject(projects)) {
-        srcRoot = currentProject()->path();
-    } else if (!projects.isEmpty()) {
-        srcRoot = projects.first();
-    } else {
-        srcRoot = args.projectRoot();
-    }
-    List<Path> inputFiles = args.inputFiles();
-    if (srcRoot.isEmpty()) {
-        error("Can't find project root for %s", String::join(inputFiles, ", ").constData());
-        return;
-    }
-
-    debug() << inputFiles << "in" << srcRoot;
-    const int count = inputFiles.size();
-    int filtered = 0;
-    if (!mOptions.excludeFilters.isEmpty()) {
-        for (int i=0; i<count; ++i) {
-            Path &p = inputFiles[i];
-            if (Filter::filter(p, mOptions.excludeFilters) == Filter::Filtered) {
-                warning() << "Filtered out" << p;
-                p.clear();
-                ++filtered;
-            }
-        }
-    }
-    if (filtered == count) {
-        warning("no input file?");
-        return;
-    }
-
-    shared_ptr<Project> project = mProjects.value(srcRoot);
-    if (!project) {
-        project = addProject(srcRoot);
-        assert(project);
-    }
-
-    if (!mCurrentProject.lock()) {
-        setCurrentProject(project);
-    } else {
-        loadProject(project);
-    }
-
-    for (int i=0; i<count; ++i) {
-        project->index(inputFiles.at(i), args);
-    }
-}
 void Server::loadProject(const shared_ptr<Project> &project)
 {
     assert(project);

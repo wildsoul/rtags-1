@@ -102,9 +102,6 @@ public:
     virtual void encode(Serializer &serializer) const;
     virtual void decode(Deserializer &deserializer);
 
-    void setProjects(const List<String> &projects) { mProjects = projects; }
-    List<String> projects() const { return mProjects; }
-
     uint8_t buildIndex() const { return mBuildIndex; }
     void setBuildIndex(uint8_t index) { mBuildIndex = index; }
 private:
@@ -114,7 +111,6 @@ private:
     int mMax, mMinLine, mMaxLine;
     uint8_t mBuildIndex;
     List<String> mPathFilters;
-    List<String> mProjects;
 };
 
 DECLARE_NATIVE_TYPE(QueryMessage::Type);

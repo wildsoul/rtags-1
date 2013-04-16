@@ -9,10 +9,12 @@ CompletionMessage::CompletionMessage(const Location &loc)
 
 void CompletionMessage::encode(Serializer &serializer) const
 {
-    serializer << mRaw << mLocation << mContents << mProjects;
+    serializer << mRaw << mLocation << mContents << projects();
 }
 
 void CompletionMessage::decode(Deserializer &deserializer)
 {
-    deserializer >> mRaw >> mLocation >> mContents >> mProjects;
+    List<String> projects;
+    deserializer >> mRaw >> mLocation >> mContents >> projects;
+    setProjects(projects);
 }

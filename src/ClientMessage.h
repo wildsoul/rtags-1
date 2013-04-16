@@ -39,8 +39,12 @@ public:
     {
         return mRaw;
     }
+
+    void setProjects(const List<String> &projects) { mProjects = projects; }
+    List<String> projects() const { return mProjects; }
 protected:
     String mRaw;
+    List<String> mProjects;
 };
 
 #endif
