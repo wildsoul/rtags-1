@@ -45,14 +45,13 @@ void usage(FILE *f)
             "  --log-file|-L [arg]               Log to this file.\n"
             "  --append|-A                       Append to log file.\n"
             "  --verbose|-v                      Change verbosity, multiple -v's are allowed.\n"
-            "  --clear-project-caches|-C         Clear out project caches.\n"
+            "  --clear-projects|-C               Clear all projects.\n"
             "  --disable-sighandler|-s           Disable signal handler to dump stack for crashes..\n"
             "                                    Note that this might not play well with clang's signal handler.\n"
             "  --clang-includepath|-P            Use clang include paths by default.\n"
             "  --no-Wall|-W                      Don't use -Wall.\n"
             "  --Wlarge-by-value-copy|-r [arg]   Use -Wlarge-by-value-copy=[arg] when invoking clang.\n"
             "  --silent|-S                       No logging to stdout.\n"
-            "  --validate|-V                     Enable validation of database on startup and after indexing.\n"
             "  --exclude-filter|-x [arg]         Files to exclude from rdm, default \"" EXCLUDEFILTER_DEFAULT "\".\n"
             "  --no-rc|-N                        Don't load any rc files.\n"
             "  --ignore-printf-fixits|-F         Disregard any clang fixit that looks like it's trying to fix format for printf and friends.\n"
@@ -80,17 +79,16 @@ int main(int argc, char** argv)
         { "no-Wall", no_argument, 0, 'W' },
         { "append", no_argument, 0, 'A' },
         { "verbose", no_argument, 0, 'v' },
-        { "clean-slate", no_argument, 0, 'C' },
+        { "clear-projects", no_argument, 0, 'C' },
         { "enable-sighandler", no_argument, 0, 's' },
         { "silent", no_argument, 0, 'S' },
-        { "validate", no_argument, 0, 'V' },
         { "exclude-filter", required_argument, 0, 'x' },
         { "socket-file", required_argument, 0, 'n' },
         { "rc-file", required_argument, 0, 'c' },
         { "no-rc", no_argument, 0, 'N' },
         { "data-dir", required_argument, 0, 'd' },
         { "ignore-printf-fixits", no_argument, 0, 'F' },
-        { "large-by-value-copy", required_argument, 0, 'r' },
+        { "Wlarge-by-value-copy", required_argument, 0, 'r' },
         { "allow-multiple-builds", no_argument, 0, 'm' },
         { "no-current-project", no_argument, 0, 'o' },
         { "no-clang-thread", no_argument, 0, 'O' },
@@ -211,9 +209,6 @@ int main(int argc, char** argv)
             return 0;
         case 'm':
             serverOpts.options |= Server::AllowMultipleBuildsForSameCompiler;
-            break;
-        case 'V':
-            serverOpts.options |= Server::Validate;
             break;
         case 'o':
             serverOpts.options |= Server::NoStartupCurrentProject;

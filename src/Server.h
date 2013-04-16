@@ -36,13 +36,12 @@ public:
     enum Option {
         NoOptions = 0x000,
         NoBuiltinIncludes = 0x001,
-        Validate = 0x002,
-        ClearProjects = 0x004,
-        Wall = 0x008,
-        IgnorePrintfFixits = 0x010,
-        AllowMultipleBuildsForSameCompiler = 0x080,
-        NoStartupCurrentProject = 0x100,
-        NoClangThread = 0x200
+        ClearProjects = 0x002,
+        Wall = 0x004,
+        IgnorePrintfFixits = 0x008,
+        AllowMultipleBuildsForSameCompiler = 0x010,
+        NoStartupCurrentProject = 0x020,
+        NoClangThread = 0x040
     };
     struct Options {
         Options() : options(0) {}
