@@ -679,7 +679,7 @@ void Server::referencesForName(const QueryMessage& query, Connection *conn)
     shared_ptr<Database> database = project->database();
     const Set<Database::Cursor> cursors = database->findCursors(query.query(), query.pathFilters());
     for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
-        project->database()->references(it->location, query.flags(), conn);
+        project->database()->references(it->location, query.flags(), query.pathFilters(), conn);
     }
     conn->finish();
 }
