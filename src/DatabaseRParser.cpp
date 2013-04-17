@@ -572,7 +572,7 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
             while (endIndex >= 0) {
                 unsigned el, ec;
                 unit->getTokenStartPosition(endIndex, &el, &ec, 0);
-                if (el < line || (el == line && ec < column))
+                if (el < line || (el == line && ec <= column))
                     break;
                 --endIndex;
             }
