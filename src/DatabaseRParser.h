@@ -76,9 +76,10 @@ private:
     int symbolCount(const Path& file);
 
     RParserUnit* findUnit(const Path& path);
+    enum FindSymbolMode { Swap, Declaration, Definition };
     CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& srcLoc,
-                                  const QByteArray& src, CPlusPlus::LookupContext& ctx,
-                                  Location& loc) const;
+                                  FindSymbolMode mode, const QByteArray& src,
+                                  CPlusPlus::LookupContext& ctx, Location& loc) const;
     void dirty(const Set<Path>& files);
 
     mutable QMutex mutex;

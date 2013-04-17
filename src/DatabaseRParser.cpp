@@ -502,6 +502,7 @@ static inline Database::Cursor makeCursor(const CPlusPlus::Symbol* sym,
 
 CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                                                const Location& srcLoc,
+                                               FindSymbolMode mode,
                                                const QByteArray& src,
                                                CPlusPlus::LookupContext& lookup,
                                                Location& loc) const
@@ -596,10 +597,10 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
         CppTools::SymbolFinder finder;
         CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot());
         if (definition) {
-            if (definition != sym) {
-                sym = definition;
-            } else {
-                // see if we can find our declaration
+            if (sym != definition) {
+                if (mode == Definition || mode == Swap)
+                    sym = definition;
+            } else if (mode != Definition) {
                 QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
                 if (!decls.isEmpty()) {
                     // ### take the first one I guess?
@@ -840,7 +841,7 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
     }
 
     CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
-    CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
+    CPlusPlus::Symbol* sym = findSymbol(doc, location, Swap, src, lookup, cursor.location);
     if (!sym) {
         error() << "no symbol whatsoever for" << location;
         return Cursor();
@@ -882,7 +883,7 @@ void DatabaseRParser::references(const Location& location, unsigned flags,
     }
 
     CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
-    CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
+    CPlusPlus::Symbol* sym = findSymbol(doc, location, Declaration, src, lookup, cursor.location);
     if (!sym) {
         return;
     }
