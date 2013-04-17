@@ -223,9 +223,10 @@
                         (async (apply #'start-process "rc" (current-buffer) rc arguments))
                         (unsaved (apply #'call-process-region (point-min) (point-max) rc nil output nil arguments))
                         (t (apply #'call-process rc nil output nil arguments)))))
-        (if (and async proc (not no-process-filter))
-            (set-process-filter proc (function rtags-async-rc-filter)))
-        (set-process-sentinel proc (function rtags-async-rc-sentinel)))))
+        (when proc
+          (if (and async (not no-process-filter))
+              (set-process-filter proc (function rtags-async-rc-filter)))
+          (set-process-sentinel proc (function rtags-async-rc-sentinel))))))
   (or async (> (point-max) (point-min))))
 
 (defun rtags-index-js-file ()
@@ -1879,8 +1880,25 @@ References to references will be treated as references to the referenced symbol"
         (loc (rtags-current-location))
         (modified (buffer-modified-p)))
     (with-temp-buffer
-      (rtags-call-rc :path path t t "-o" loc :unsaved modified))
+      (rtags-call-rc :path path "-o" loc :unsaved modified))
     )
+  )
+
+(defvar rtags-local-references-overlays nil)
+(defun rtags-clear-local-references-overlays()
+  (interactive)
+  (while rtags-local-references-overlays
+    (delete-overlay (car rtags-local-references-overlays))
+    (setq rtags-local-references-overlays (cdr (rtags-local-references-overlays))))
+  )
+
+(defun rtags-local-references ()
+  (rtags-clear-local-references-overlays)
+  (let ((path (buffer-file-name))
+        (loc (rtags-current-location)))
+    (with-temp-buffer
+      (rtags-call-rc :path path "-r" loc :path-filter path "-N")
+      (buffer-string)))
   )
 
 (provide 'rtags)
