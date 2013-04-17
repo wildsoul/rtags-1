@@ -24,3 +24,5 @@ gr
 /src/librtags.dylib
 /src/librtags.so
 /bin/librparser.so
+/.ninja_deps
+/bin/librtagsrparser.so
