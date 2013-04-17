@@ -908,9 +908,12 @@ void DatabaseRParser::references(const Location& location, unsigned flags, Conne
         if (kind == Cursor::Reference && flags & QueryMessage::FindVirtuals)
             continue;
         //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
-        conn->write<256>("%s:%d:%d %c%s%s", qPrintable(usage.path), usage.line, usage.col + 1,
-                         Database::Cursor::kindToChar(kind), wantContext ? "\t" : "",
-                         wantContext ? qPrintable(usage.lineText) : "");
+        if (wantContext) {
+            conn->write<256>("%s:%d:%d %c\t%s", qPrintable(usage.path), usage.line, usage.col + 1,
+                             Database::Cursor::kindToChar(kind), qPrintable(usage.lineText));
+        } else {
+            conn->write<256>("%s:%d:%d", qPrintable(usage.path), usage.line, usage.col + 1);
+        }
     }
 }
 
