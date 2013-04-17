@@ -17,6 +17,8 @@
 using namespace CppTools;
 using namespace CppTools::Internal;
 
+static CPlusPlus::Overview overview;
+
 static inline String fromQString(const QString& str)
 {
     const QByteArray& utf8 = str.toUtf8();
@@ -25,8 +27,6 @@ static inline String fromQString(const QString& str)
 
 static inline String symbolName(const CPlusPlus::Symbol* symbol)
 {
-    static CPlusPlus::Overview overview;
-
     String symbolName = fromQString(overview.prettyName(symbol->name()));
     // if (symbolName.isEmpty()) {
     //     String type;
@@ -200,8 +200,6 @@ static inline QList<const CPlusPlus::Name*> rtagsQualified(const CPlusPlus::Symb
 
 static String rtagsQualifiedName(const CPlusPlus::Symbol* symbol, QualifiedMode mode)
 {
-    static CPlusPlus::Overview overview;
-
     return fromQString(overview.prettyName(rtagsQualified(symbol, mode)));
 }
 
@@ -210,8 +208,6 @@ bool FindSymbols::preVisit(CPlusPlus::Symbol* symbol)
     if (mode == Cursors) {
         syms.insert(symbol);
     } else {
-        static CPlusPlus::Overview overview;
-
         DatabaseRParser::RParserName cur;
         cur.paths.insert(Path(symbol->fileName()));
 
@@ -247,7 +243,7 @@ void FindSymbols::operator()(CPlusPlus::Symbol* symbol)
     accept(symbol);
 }
 
-static inline bool nameMatch(CPlusPlus::Symbol* symbol, const String& name, const CPlusPlus::Overview& overview)
+static inline bool nameMatch(CPlusPlus::Symbol* symbol, const String& name)
 {
     String full;
     QList<const CPlusPlus::Name*> fullName = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
@@ -1093,8 +1089,6 @@ Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const L
 
     Set<Cursor> cursors;
     {
-        CPlusPlus::Overview overview;
-
         Set<Path>::const_iterator path = cand.begin();
         const Set<Path>::const_iterator end = cand.end();
         while (path != end) {
@@ -1112,7 +1106,7 @@ Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const L
                 find(globalNamespace);
                 Set<CPlusPlus::Symbol*> syms = find.symbols();
                 foreach(CPlusPlus::Symbol* sym, syms) {
-                    if (nameMatch(sym, string, overview))
+                    if (nameMatch(sym, string))
                         cursors.insert(makeCursor(sym, unit));
                 }
             }
