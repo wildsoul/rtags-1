@@ -664,7 +664,7 @@ void Server::referencesForLocation(const QueryMessage &query, Connection *conn)
         conn->finish();
         return;
     }
-    project->database()->references(loc, query.flags(), conn);
+    project->database()->references(loc, query.flags(), query.pathFilters(), conn);
     conn->finish();
 }
 

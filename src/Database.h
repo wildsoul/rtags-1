@@ -75,7 +75,8 @@ public:
 
     };
     virtual Cursor cursor(const Location &location) const = 0;
-    virtual void references(const Location& location, unsigned queryFlags, Connection *conn) const = 0;
+    virtual void references(const Location& location, unsigned queryFlags,
+                            const List<Path> &pathFilter, Connection *conn) const = 0;
     virtual void status(const String &query, Connection *conn) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
     virtual int index(const SourceInformation &sourceInformation) = 0;

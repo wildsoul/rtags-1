@@ -860,7 +860,8 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
     return cursor;
 }
 
-void DatabaseRParser::references(const Location& location, unsigned flags, Connection *conn) const
+void DatabaseRParser::references(const Location& location, unsigned flags,
+                                 const List<Path> &pathFilters, Connection *conn) const
 {
     QMutexLocker locker(&mutex);
     waitForState(GreaterOrEqual, CollectingNames);
