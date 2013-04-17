@@ -1880,7 +1880,7 @@ References to references will be treated as references to the referenced symbol"
       (setq rtags-cached-local-references loc)
       (rtags-clear-local-references-overlays)
       (with-temp-buffer
-        (rtags-call-rc :path path "-r" loc "-e" "-N")
+        (rtags-call-rc :path path "-r" loc "-e" "-N" :path-filter path)
         (setq lines (split-string (buffer-string) "\n" t)))
       (while lines
         (let ((cur (car lines)))
