@@ -843,6 +843,16 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
     CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
     CPlusPlus::Symbol* sym = findSymbol(doc, location, Swap, src, lookup, cursor.location);
     if (!sym) {
+        // look for includes
+        QList<CPlusPlus::Document::Include> includes = doc->includes();
+        foreach(const CPlusPlus::Document::Include& include, includes) {
+            if (include.line() == static_cast<unsigned int>(location.line())) {
+                // yes
+                cursor.target = cursor.location = Location(fromQString(include.fileName()), 1, 1);
+                cursor.kind = Cursor::File;
+                return cursor;
+            }
+        }
         error() << "no symbol whatsoever for" << location;
         return Cursor();
     }
