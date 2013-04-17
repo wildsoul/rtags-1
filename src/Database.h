@@ -31,10 +31,12 @@ public:
             MethodDefinition,
             MethodDeclaration,
             Class,
+            ClassForwardDeclaration,
             Namespace,
             Struct,
+            StructForwardDeclaration,
             Variable,
-            Parameter,
+            Argument,
             Field,
             Enum,
             EnumValue,
@@ -42,6 +44,7 @@ public:
             Reference
         };
 
+        static char kindToChar(Kind kind);
         static const char *kindToString(Kind kind);
         enum CursorInfoFlag { // these are combined with the keyflags from Location
             IncludeTarget = 0x10,
@@ -72,7 +75,7 @@ public:
 
     };
     virtual Cursor cursor(const Location &location) const = 0;
-    virtual References references(const Location& location) const = 0;
+    virtual void references(const Location& location, unsigned queryFlags, Connection *conn) const = 0;
     virtual void status(const String &query, Connection *conn) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
     virtual int index(const SourceInformation &sourceInformation) = 0;

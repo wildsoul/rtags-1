@@ -10,10 +10,12 @@ const char * Database::Cursor::kindToString(Kind kind)
         "MethodDefinition",
         "MethodDeclaration",
         "Class",
+        "ClassForwardDeclaration",
         "Namespace",
         "Struct",
+        "StructForwardDeclaration",
         "Variable",
-        "Parameter",
+        "Argument",
         "Field",
         "Enum",
         "EnumValue",
@@ -22,6 +24,31 @@ const char * Database::Cursor::kindToString(Kind kind)
         0
     };
     return names[kind];
+}
+
+char Database::Cursor::kindToChar(Kind kind)
+{
+    const char chars[] = {
+        '0', // Invalid
+        'p', // File
+        'F', // MemberFunctionDefinition
+        'f', // MemberFunctionDeclaration
+        'M', // MethodDefinition
+        'm', // MethodDeclaration
+        'C', // Class
+        'c', // ClassForwardDeclaration
+        'n', // Namespace
+        'S', // Struct
+        's', // StructForwardDeclaration,
+        'v', // Variable
+        'a', // Argument
+        'l', // Field
+        'E', // Enum
+        'e', // EnumValue
+        'D', // Macro
+        'r' // Reference
+    };
+    return chars[kind];
 }
 
 String Database::Cursor::toString(unsigned flags) const
@@ -61,6 +88,8 @@ bool Database::Cursor::isDefinition() const
     case MemberFunctionDeclaration:
     case MethodDeclaration:
     case Reference:
+    case ClassForwardDeclaration:
+    case StructForwardDeclaration:
         return false;
     case File:
     case Macro:
@@ -70,7 +99,7 @@ bool Database::Cursor::isDefinition() const
     case Namespace:
     case Struct:
     case Variable:
-    case Parameter:
+    case Argument:
     case Field:
     case Enum:
     case EnumValue:

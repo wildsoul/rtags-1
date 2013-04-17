@@ -56,10 +56,6 @@ bool Project::save()
     {
         Serializer o(out);
         o << mSources;
-        Deserializer i(out);
-        SourceInformationMap map;
-        i >> map;
-        error() << (map == mSources);
     }
     {
         Serializer o(f);

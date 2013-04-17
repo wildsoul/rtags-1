@@ -51,7 +51,7 @@ public:
     virtual void status(const String &query, Connection *conn) const;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const;
     virtual int index(const SourceInformation &sourceInformation);
-    virtual References references(const Location& location) const;
+    virtual void references(const Location& location, unsigned flags, Connection *conn) const;
     virtual Set<Path> dependencies(const Path &path, DependencyMode mode) const;
     virtual Set<Path> files(int mode) const;
     virtual Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const;

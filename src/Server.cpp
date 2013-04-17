@@ -642,6 +642,41 @@ void Server::fixIts(const QueryMessage &query, Connection *conn)
     conn->finish();
 }
 
+void Server::referencesForLocation(const QueryMessage &query, Connection *conn)
+{
+    const Location loc = query.location();
+    if (loc.isNull()) {
+        conn->write("Not indexed");
+        conn->finish();
+        return;
+    }
+    shared_ptr<Project> project = updateProjectForLocation(loc);
+    if (!project) {
+        error("No project");
+        conn->finish();
+        return;
+    }
+    project->database()->references(loc, query.flags(), conn);
+    conn->finish();
+}
+
+void Server::referencesForName(const QueryMessage& query, Connection *conn)
+{
+    shared_ptr<Project> project = currentProject();
+    if (!project) {
+        error("No project");
+        conn->finish();
+        return;
+    }
+    shared_ptr<Database> database = project->database();
+    const Set<Database::Cursor> cursors = database->findCursors(query.query(), query.pathFilters());
+    for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
+        project->database()->references(it->location, query.flags(), conn);
+    }
+    conn->finish();
+}
+
+
 struct Node
 {
     Node(const Location &loc = Location(), bool def = false)
@@ -658,93 +693,6 @@ struct Node
     }
 };
 
-static inline void writeNodes(const QueryMessage &query, List<Node> &locations, Connection *conn)
-{
-    std::sort(locations.begin(), locations.end());
-    const unsigned keyFlags = query.keyFlags();
-    for (int i=0; i<locations.size(); ++i) {
-        conn->write(locations.at(i).location.key(keyFlags));
-    }
-}
-
-static void references(const QueryMessage &query, const Set<Database::Cursor> &cursors, const shared_ptr<Database> &db, Connection *conn)
-{
-    assert(!cursors.isEmpty());
-    List<Node> locations;
-    //const bool references = !(query.flags() & QueryMessage::FindVirtuals);
-    for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
-        if (!it->location.isValid())
-            continue;
-        const Database::References& refs = db->references(it->location);
-        error("geh! %u", refs.size());
-        for (Set<Location>::const_iterator loc = refs.begin(); loc != refs.end(); ++loc) {
-            error() << "gah!" << *loc;
-            if (query.flags() & QueryMessage::AllReferences) {
-                locations.append(Node(*loc, false));
-            } else {
-                /*
-                const Database::Cursor c = db->cursor(*loc);
-                if (c.isValid() && (c.kind == Database::Cursor::Reference) == references) {
-                    locations.append(Node(c.location, c.isDefinition()));
-                }
-                */
-                // hack for now
-                locations.append(Node(*loc, false));
-            }
-        }
-    }
-    writeNodes(query, locations, conn);
-}
-
-void Server::referencesForLocation(const QueryMessage &query, Connection *conn)
-{
-    const Location loc = query.location();
-    if (loc.isNull()) {
-        conn->write("Not indexed");
-        conn->finish();
-        return;
-    }
-    shared_ptr<Project> project = updateProjectForLocation(loc);
-    if (!project) {
-        error("No project");
-        conn->finish();
-        return;
-    }
-    shared_ptr<Database> database = project->database();
-    const Database::Cursor cursor = database->cursor(loc);
-    if (!cursor.isValid()) {
-        conn->finish();
-        return;
-    }
-
-    Set<Database::Cursor> cursors;
-    cursors.insert(cursor);
-    references(query, cursors, database, conn);
-    conn->finish();
-}
-
-void Server::referencesForName(const QueryMessage& query, Connection *conn)
-{
-    shared_ptr<Project> project = currentProject();
-    if (!project) {
-        error("No project");
-        conn->finish();
-        return;
-    }
-    shared_ptr<Database> database = project->database();
-    Set<Database::Cursor> cursors = database->findCursors(query.query(), query.pathFilters());
-    if (!cursors.isEmpty())
-        references(query, cursors, database, conn);
-    conn->finish();
-}
-
-static inline bool compareCursorPreferDefinition(const Database::Cursor &l, const Database::Cursor &r)
-{
-    if (l.isDefinition() != r.isDefinition())
-        return l.isDefinition();
-    return l.location < r.location;
-}
-
 void Server::findSymbols(const QueryMessage &query, Connection *conn)
 {
     shared_ptr<Project> project = currentProject();
@@ -759,7 +707,11 @@ void Server::findSymbols(const QueryMessage &query, Connection *conn)
         List<Node> nodes(cursors.size());
         for (int i=0; i<cursors.size(); ++i)
             nodes[i] = Node(cursors.at(i).location, cursors.at(i).isDefinition());
-        writeNodes(query, nodes, conn);
+        std::sort(nodes.begin(), nodes.end());
+        const unsigned keyFlags = query.keyFlags();
+        for (int i=0; i<nodes.size(); ++i) {
+            conn->write(nodes.at(i).location.key(keyFlags));
+        }
     }
 
     conn->finish();

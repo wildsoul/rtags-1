@@ -1,8 +1,11 @@
 #include "DatabaseRParser.h"
-#include "SourceInformation.h"
+#include "QueryMessage.h"
 #include "RTagsPlugin.h"
+#include "SourceInformation.h"
+#include <rct/Connection.h>
 #include <rct/Log.h>
 #include <rct/StopWatch.h>
+
 #include <QMutexLocker>
 
 #include <searchsymbols.h>
@@ -847,14 +850,14 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
     return cursor;
 }
 
-Database::References DatabaseRParser::references(const Location& location) const
+void DatabaseRParser::references(const Location& location, unsigned flags, Connection *conn) const
 {
     QMutexLocker locker(&mutex);
     waitForState(GreaterOrEqual, CollectingNames);
 
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
     if (!doc)
-        return References();
+        return;
     const QByteArray& src = doc->utf8Source();
 
     Cursor cursor;
@@ -869,41 +872,42 @@ Database::References DatabaseRParser::references(const Location& location) const
 
     CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
     CPlusPlus::Symbol* sym = findSymbol(doc, location, src, lookup, cursor.location);
-    if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
-        CppTools::SymbolFinder finder;
-        QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
-        if (!decls.isEmpty()) {
-            // ### take the first one I guess?
-            sym = decls.first();
-        }
-    }
     if (!sym) {
-        error() << "no symbol whatsoever for" << location;
-        return References();
+        return;
     }
-    error() << "faen" << makeLocation(sym);
-
-    References refs;
 
     QList<CPlusPlus::Usage> usages = findUsages(manager, sym);
+    const bool wantSymbols = flags & (QueryMessage::AllReferences|QueryMessage::FindVirtuals);
+    const bool wantContext = !(flags & QueryMessage::NoContext);
+    bool foo;
+    // 1
+    // 2
+    // 3
+    if (foo) {
+
+    }
     foreach(const CPlusPlus::Usage& usage, usages) {
         CPlusPlus::Document::Ptr doc = manager->document(usage.path);
+        Cursor::Kind kind = Cursor::Reference;
         if (doc) {
             CPlusPlus::Symbol* refsym = doc->lastVisibleSymbolAt(usage.line, usage.col + 1);
-            if (refsym) {
-                if (refsym->line() == static_cast<unsigned>(usage.line) &&
-                    refsym->column() == static_cast<unsigned>(usage.col + 1)) {
-                    // this is a symbol, ignore it
+            if (refsym
+                && refsym->line() == static_cast<unsigned>(usage.line)
+                && refsym->column() == static_cast<unsigned>(usage.col + 1)) {
+                if (wantSymbols) {
+                    kind = symbolKind(refsym);
+                } else {
                     continue;
                 }
             }
         }
+        if (kind == Cursor::Reference && flags & QueryMessage::FindVirtuals)
+            continue;
         //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
-        refs.insert(Location(fromQString(usage.path),
-                             usage.line, usage.col + 1));
+        conn->write<256>("%s:%d:%d %c%s%s", qPrintable(usage.path), usage.line, usage.col + 1,
+                         Database::Cursor::kindToChar(kind), wantContext ? "\t" : "",
+                         wantContext ? qPrintable(usage.lineText) : "");
     }
-
-    return refs;
 }
 
 Set<Path> DatabaseRParser::files(int mode) const
