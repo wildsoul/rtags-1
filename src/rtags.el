@@ -220,9 +220,9 @@
                          (let ((proc (apply #'start-process "rc" (current-buffer) rc arguments)))
                            (process-send-region (point-min) (point-max))
                            proc))
-                        (async (apply #'start-process "rc" (current-buffer) rc arguments))
-                        (unsaved (apply #'call-process-region (point-min) (point-max) rc nil output nil arguments))
-                        (t (apply #'call-process rc nil output nil arguments)))))
+                        (async (apply #'start-process "rc" (current-rc arguments))
+                        (unsaved (apply #'call-process-region (point-min) (point-max) rc nil output nil arguments) nil)
+                        (t (apply #'call-process rc nil output nil arguments)))) nil))
         (when proc
           (if (and async (not no-process-filter))
               (set-process-filter proc (function rtags-async-rc-filter)))
