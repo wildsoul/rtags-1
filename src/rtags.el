@@ -229,10 +229,15 @@
                         (async (apply #'start-process "rc" (current-buffer) rc arguments))
                         (unsaved (apply #'call-process-region (point-min) (point-max) rc nil output nil arguments) nil)
                         (t (apply #'call-process rc nil output nil arguments) nil))))
-        (when proc
-          (if (and async (not no-process-filter))
-              (set-process-filter proc (function rtags-async-rc-filter)))
-          (set-process-sentinel proc (function rtags-async-rc-sentinel))))))
+        (if proc
+            (progn
+              (if (and async (not no-process-filter))
+                  (set-process-filter proc (function rtags-async-rc-filter)))
+              (set-process-sentinel proc (function rtags-async-rc-sentinel)))
+          (progn
+            (goto-char (point-min))
+            (if (looking-at "Can't seem to connect to server")
+                (error "Can't seem to connect to server. Is rdm running?")))))))
   (or async (> (point-max) (point-min))))
 
 (defun rtags-index-js-file ()
@@ -1887,13 +1892,13 @@ References to references will be treated as references to the referenced symbol"
   (interactive)
   (while rtags-local-references-overlays
     (delete-overlay (car rtags-local-references-overlays))
-    (setq rtags-local-references-overlays (cdr (rtags-local-references-overlays))))
+    (setq rtags-local-references-overlays (cdr rtags-local-references-overlays)))
   )
 
 (defun rtags-offset-for-line-column (line col)
   (save-excursion
     (goto-line line)
-    (+ (point-at-bol) col))
+    (+ (point-at-bol) col -1))
   )
 
 (defun rtags-update-local-references ()
@@ -1912,7 +1917,7 @@ References to references will be treated as references to the referenced symbol"
                                                          (string-to-int (match-string 3 cur))))
                    (overlay (make-overlay offset (1+ offset) nil t)))
               (overlay-put overlay 'face 'rtags-local-reference)
-              (setq rtags-local-references-overlays (append (rtags-local-references-overlays) '(overlay))))))
+              (setq rtags-local-references-overlays (append rtags-local-references-overlays (list overlay))))))
       (setq lines (cdr lines)))
     )
   )
