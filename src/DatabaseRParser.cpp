@@ -280,10 +280,9 @@ static inline CPlusPlus::Symbol *canonicalSymbol(CPlusPlus::Scope *scope, const 
 }
 
 DocumentParser::DocumentParser(QPointer<CppModelManager> mgr,
-                               Map<QString, QString>& hts,
-                               QMutex& mtx,
+                               DatabaseRParser* parser,
                                QObject* parent)
-    : QObject(parent), symbolCount(0), manager(mgr), headerToSource(hts), mutex(mtx)
+    : QObject(parent), symbolCount(0), manager(mgr), rparser(parser)
 {
 }
 
@@ -344,9 +343,9 @@ void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
         QList<CPlusPlus::Document::Include> includes = doc->includes();
         if (!includes.isEmpty()) {
             QString srcFile = doc->fileName();
-            QMutexLocker locker(&mutex);
+            QMutexLocker locker(&rparser->mutex);
             foreach(CPlusPlus::Document::Include include, includes) {
-                headerToSource[include.fileName()] = srcFile;
+                rparser->headerToSource[include.fileName()] = srcFile;
             }
         }
     }
@@ -643,7 +642,7 @@ DatabaseRParser::~DatabaseRParser()
 void DatabaseRParser::run()
 {
     manager = new CppModelManager;
-    parser = new DocumentParser(manager, headerToSource, mutex);
+    parser = new DocumentParser(manager, this);
     QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
                      parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
 
@@ -668,8 +667,19 @@ void DatabaseRParser::run()
             RParserJob* job = jobs.dequeue();
             locker.unlock();
             processJob(job);
-            indexed.insert(job->fileName());
             locker.relock();
+
+            CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(job->fileName()));
+            assert(doc);
+            assert(!job->fileName().isEmpty());
+            indexed.insert(job->fileName());
+            QList<CPlusPlus::Document::Include> includes = doc->includes();
+            foreach(const CPlusPlus::Document::Include& include, includes) {
+                // ### this really shouldn't happen but it does
+                if (include.fileName().isEmpty())
+                    continue;
+                indexed.insert(fromQString(include.fileName()));
+            }
         }
 
         changeState(CollectingNames);
@@ -879,13 +889,7 @@ void DatabaseRParser::references(const Location& location, unsigned flags, Conne
     QList<CPlusPlus::Usage> usages = findUsages(manager, sym);
     const bool wantSymbols = flags & (QueryMessage::AllReferences|QueryMessage::FindVirtuals);
     const bool wantContext = !(flags & QueryMessage::NoContext);
-    bool foo;
-    // 1
-    // 2
-    // 3
-    if (foo) {
 
-    }
     foreach(const CPlusPlus::Usage& usage, usages) {
         CPlusPlus::Document::Ptr doc = manager->document(usage.path);
         Cursor::Kind kind = Cursor::Reference;

@@ -13,19 +13,18 @@
 #include <QWaitCondition>
 #include <QQueue>
 
+class DatabaseRParser;
+
 class DocumentParser : public QObject
 {
     Q_OBJECT
 public:
     DocumentParser(QPointer<CppTools::Internal::CppModelManager> mgr,
-                   Map<QString, QString>& hts,
-                   QMutex& mtx,
+                   DatabaseRParser* parser,
                    QObject* parent = 0);
     ~DocumentParser();
 
-    QByteArray tokenForAst(CPlusPlus::AST* ast, CPlusPlus::TranslationUnit* unit, const QByteArray& src);
     QByteArray debugScope(CPlusPlus::Scope* scope, const QByteArray& src);
-    QList<CPlusPlus::Usage> findUsages(CPlusPlus::Symbol* symbol, const QByteArray& unpreprocessedSource);
 
 private slots:
     void onDocumentUpdated(CPlusPlus::Document::Ptr doc);
@@ -33,9 +32,7 @@ private slots:
 public:
     int symbolCount;
     QPointer<CppTools::Internal::CppModelManager> manager;
-    Map<QString, QString>& headerToSource;
-    QMutex& mutex;
-    QSet<QString> seen;
+    DatabaseRParser* rparser;
 };
 
 class DocumentParser;
@@ -78,8 +75,6 @@ private:
     void collectNames(const Set<Path>& files);
     int symbolCount(const Path& file);
 
-    friend class RParserUnit;
-
     RParserUnit* findUnit(const Path& path);
     CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& srcLoc,
                                   const QByteArray& src, CPlusPlus::LookupContext& ctx,
@@ -103,6 +98,8 @@ private:
     DocumentParser* parser;
     QPointer<CppTools::Internal::CppModelManager> manager;
 
+    friend class DocumentParser;
+    friend class RParserUnit;
     friend class FindSymbols;
 };
 
