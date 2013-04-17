@@ -887,8 +887,9 @@ void DatabaseRParser::references(const Location& location, unsigned flags, Conne
     }
 
     QList<CPlusPlus::Usage> usages = findUsages(manager, sym);
-    const bool wantSymbols = flags & (QueryMessage::AllReferences|QueryMessage::FindVirtuals);
     const bool wantContext = !(flags & QueryMessage::NoContext);
+    const bool wantVirtuals = flags & QueryMessage::FindVirtuals;
+    const bool wantAll = flags & QueryMessage::AllReferences;
 
     foreach(const CPlusPlus::Usage& usage, usages) {
         CPlusPlus::Document::Ptr doc = manager->document(usage.path);
@@ -898,14 +899,23 @@ void DatabaseRParser::references(const Location& location, unsigned flags, Conne
             if (refsym
                 && refsym->line() == static_cast<unsigned>(usage.line)
                 && refsym->column() == static_cast<unsigned>(usage.col + 1)) {
-                if (wantSymbols) {
+                if (wantVirtuals && !wantAll) {
+                    if (CPlusPlus::Function *funTy = refsym->type()->asFunctionType()) {
+                        if (funTy->isVirtual() || funTy->isPureVirtual())
+                            kind = Cursor::MemberFunctionDeclaration;
+                        else
+                            continue;
+                    } else {
+                        continue;
+                    }
+                } else if (wantAll) {
                     kind = symbolKind(refsym);
                 } else {
                     continue;
                 }
             }
         }
-        if (kind == Cursor::Reference && flags & QueryMessage::FindVirtuals)
+        if (kind == Cursor::Reference && (wantVirtuals && !wantAll))
             continue;
         //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
         if (wantContext) {
