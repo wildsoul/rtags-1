@@ -1915,7 +1915,6 @@ References to references will be treated as references to the referenced symbol"
               (setq rtags-local-references-overlays (append (rtags-local-references-overlays) '(overlay))))))
       (setq lines (cdr lines)))
     )
-    )
   )
 
 

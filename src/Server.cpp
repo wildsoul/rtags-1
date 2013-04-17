@@ -64,8 +64,10 @@ bool Server::init(const Options &options)
         for (int i=0; i<plugins.size(); ++i) {
             if (mPluginFactory.addPlugin(plugins.at(i))) {
                 error() << "Loaded plugin" << plugins.at(i);
-                //} else {
-                //error() << "Plugin error" << mPluginFactory.error();
+            } else {
+                const char *ext = plugins.at(i).extension();
+                if (ext && !strcmp(plugins.at(i).extension(), "so"))
+                    error() << "Plugin error" << mPluginFactory.error();
             }
         }
     }
@@ -132,18 +134,24 @@ bool Server::init(const Options &options)
 
 shared_ptr<Project> Server::addProject(const Path &path)
 {
-    shared_ptr<Project> &project = mProjects[path];
-    if (!project) {
-        project.reset(new Project(path));
-        if (!project->database()) {
-            error("Can't load plugin");
-            project.reset();
-        } else if (mClangThread) {
-            project->sourceIndexed().connect(this, &Server::onSourceIndexed);
+    bool remove = false;
+    {
+        shared_ptr<Project> &project = mProjects[path];
+        if (!project) {
+            project.reset(new Project(path));
+            if (!project->database()) {
+                error("Can't load plugin");
+                project.reset();
+                remove = true;
+            } else if (mClangThread) {
+                project->sourceIndexed().connect(this, &Server::onSourceIndexed);
+            }
+            if (project)
+                return project;
         }
-
-        return project;
     }
+    if (remove)
+        mProjects.remove(path);
     return shared_ptr<Project>();
 }
 
@@ -1000,6 +1008,7 @@ bool Server::selectProject(const Match &match, Connection *conn)
     shared_ptr<Project> selected;
     bool error = false;
     for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
+        assert(it->second);
         if (it->second->match(match)) {
             if (error) {
                 if (conn)
