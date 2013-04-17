@@ -88,12 +88,15 @@ private:
     State state;
     QQueue<RParserJob*> jobs;
     Map<Path, RParserUnit*> units;
+
     struct RParserName
     {
         Set<Path> paths;
         Set<String> names;
         void merge(const RParserName& other);
     };
+    void mergeNames(const Map<String, RParserName>& lnames);
+
     Map<String, RParserName> names;
     Map<QString, QString> headerToSource;
     DocumentParser* parser;

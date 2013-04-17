@@ -28,26 +28,26 @@ static inline String symbolName(const CPlusPlus::Symbol* symbol)
     static CPlusPlus::Overview overview;
 
     String symbolName = fromQString(overview.prettyName(symbol->name()));
-    if (symbolName.isEmpty()) {
-        String type;
-        if (symbol->isNamespace()) {
-            type = "namespace";
-        } else if (symbol->isEnum()) {
-            type = "enum";
-        } else if (const CPlusPlus::Class *c = symbol->asClass())  {
-            if (c->isUnion())
-                type = "union";
-            else if (c->isStruct())
-                type = "struct";
-            else
-                type = "class";
-        } else {
-            type = "symbol";
-        }
-        symbolName = "<anonymous ";
-        symbolName += type;
-        symbolName += '>';
-    }
+    // if (symbolName.isEmpty()) {
+    //     String type;
+    //     if (symbol->isNamespace()) {
+    //         type = "namespace";
+    //     } else if (symbol->isEnum()) {
+    //         type = "enum";
+    //     } else if (const CPlusPlus::Class *c = symbol->asClass())  {
+    //         if (c->isUnion())
+    //             type = "union";
+    //         else if (c->isStruct())
+    //             type = "struct";
+    //         else
+    //             type = "class";
+    //     } else {
+    //         type = "symbol";
+    //     }
+    //     symbolName = "<anonymous ";
+    //     symbolName += type;
+    //     symbolName += '>';
+    // }
     return symbolName;
 }
 
@@ -185,6 +185,26 @@ void DatabaseRParser::RParserName::merge(const RParserName& other)
     names += other.names;
 }
 
+enum QualifiedMode { All, Smart };
+static inline QList<const CPlusPlus::Name*> rtagsQualified(const CPlusPlus::Symbol* symbol, QualifiedMode mode)
+{
+    if (mode == Smart && symbol->isNamespace())
+        mode = All;
+    QList<const CPlusPlus::Name*> name;
+    do {
+        name.prepend(symbol->name());
+        symbol = symbol->enclosingScope();
+    } while (symbol && (symbol->isClass() || (mode == All && symbol->isNamespace())));
+    return name;
+}
+
+static String rtagsQualifiedName(const CPlusPlus::Symbol* symbol, QualifiedMode mode)
+{
+    static CPlusPlus::Overview overview;
+
+    return fromQString(overview.prettyName(rtagsQualified(symbol, mode)));
+}
+
 bool FindSymbols::preVisit(CPlusPlus::Symbol* symbol)
 {
     if (mode == Cursors) {
@@ -236,9 +256,9 @@ static inline bool nameMatch(CPlusPlus::Symbol* symbol, const String& name, cons
         if (!full.isEmpty())
             full.prepend("::");
         full.prepend(fromQString(overview.prettyName(n)));
+        if (full == name)
+            return true;
     }
-    if (full == name)
-        return true;
     return false;
 }
 
@@ -496,7 +516,7 @@ static inline Database::Cursor makeCursor(const CPlusPlus::Symbol* sym,
     cursor.start = token.begin();
     cursor.end = token.end();
     cursor.kind = symbolKind(sym);
-    cursor.symbolName = symbolName(sym);
+    cursor.symbolName = rtagsQualifiedName(sym, Smart);
     return cursor;
 }
 
@@ -571,7 +591,7 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
             const CPlusPlus::Token& last = unit->tokenAt(ast->lastToken() - 1);
             const QByteArray expression = src.mid(start.begin(), last.end() - start.begin());
 
-            error("trying expr '%.20s' in scope %p", qPrintable(expression), scope);
+            error("trying expr '%.40s' in scope %p", qPrintable(expression), scope);
 
             sym = canonicalSymbol(scope, expression, typeofExpression);
             if (sym) {
@@ -583,7 +603,7 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                 //unit->getTokenEndPosition(ast->lastToken() - 1, &endLine, &endColumn, 0);
                 loc = Location(file->chars(), startLine, startColumn);
 
-                error("got it!");
+                error() << "got it at" << loc;
                 break;
             }
         }
@@ -595,7 +615,10 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
     if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
         // if we find a definition that's different from the declaration then replace
         CppTools::SymbolFinder finder;
-        CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot());
+        CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot(), true);
+        if (!definition) {
+            definition = finder.findMatchingDefinition(sym, manager->snapshot(), false);
+        }
         if (definition) {
             if (sym != definition) {
                 if (mode == Definition || mode == Swap)
@@ -769,6 +792,16 @@ inline void DatabaseRParser::dirty(const Set<Path>& files)
     }
 }
 
+void DatabaseRParser::mergeNames(const Map<String, RParserName>& lnames)
+{
+    Map<String, RParserName>::const_iterator name = lnames.begin();
+    const Map<String, RParserName>::const_iterator end = lnames.end();
+    while (name != end) {
+        names[name->first].merge(name->second);
+        ++name;
+    }
+}
+
 void DatabaseRParser::collectNames(const Set<Path>& files)
 {
     dirty(files);
@@ -787,7 +820,7 @@ void DatabaseRParser::collectNames(const Set<Path>& files)
         if (globalNamespace) {
             FindSymbols find(FindSymbols::ListSymbols);
             find(globalNamespace);
-            names += find.symbolNames();
+            mergeNames(find.symbolNames());
         }
 
         const String fileName(file->fileName());
