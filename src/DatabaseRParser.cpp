@@ -543,7 +543,7 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                     // yes
                     sym = candidate;
                     loc = makeLocation(sym);
-                    error("found outright");
+                    debug("found outright");
                 }
             }
         }
@@ -568,6 +568,17 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
             CPlusPlus::AST* ast = asts.takeLast();
 
             const int startIndex = ast->firstToken();
+            int endIndex = ast->lastToken() - 1;
+            while (endIndex >= 0) {
+                unsigned el, ec;
+                unit->getTokenStartPosition(endIndex, &el, &ec, 0);
+                if (el < line || (el == line && ec < column))
+                    break;
+                --endIndex;
+            }
+
+            assert(startIndex <= endIndex && endIndex >= 0);
+
             if (startIndex > 0) {
                 // check if our previous token is an accessor token
                 bool ok = true;
@@ -588,22 +599,22 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                     continue;
             }
             const CPlusPlus::Token& start = unit->tokenAt(startIndex);
-            const CPlusPlus::Token& last = unit->tokenAt(ast->lastToken() - 1);
+            const CPlusPlus::Token& last = unit->tokenAt(endIndex);
             const QByteArray expression = src.mid(start.begin(), last.end() - start.begin());
 
-            error("trying expr '%.40s' in scope %p", qPrintable(expression), scope);
+            debug("trying expr '%.40s' in scope %p", qPrintable(expression), scope);
 
             sym = canonicalSymbol(scope, expression, typeofExpression);
             if (sym) {
                 unsigned startLine, startColumn;
-                //unsigned endLine, endColumn;
                 const CPlusPlus::StringLiteral* file;
+                unit->getTokenStartPosition(startIndex, &startLine, &startColumn, &file);
 
-                unit->getTokenStartPosition(ast->firstToken(), &startLine, &startColumn, &file);
+                //unsigned endLine, endColumn;
                 //unit->getTokenEndPosition(ast->lastToken() - 1, &endLine, &endColumn, 0);
                 loc = Location(file->chars(), startLine, startColumn);
 
-                error() << "got it at" << loc;
+                warning() << "got it at" << loc;
                 break;
             }
         }
@@ -743,7 +754,7 @@ void DatabaseRParser::changeState(State st)
 {
     if (state == st)
         return;
-    error() << "rparser thread state changed from " << stateName(state) << " to " << stateName(st);
+    warning() << "rparser thread state changed from " << stateName(state) << " to " << stateName(st);
     state = st;
     wait.wakeAll();
 }
@@ -900,7 +911,7 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
     }
     cursor.symbolName = symbolName(sym);
 
-    error() << "got a symbol, tried" << location << "ended up with target" << cursor.target;
+    warning() << "got a symbol, tried" << location << "ended up with target" << cursor.target;
     return cursor;
 }
 
