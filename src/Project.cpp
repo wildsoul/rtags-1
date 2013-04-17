@@ -202,7 +202,8 @@ static inline Path resolveCompiler(const Path &compiler)
                             buf[len + fnLen] = '\0';
                             if (realpath(buf, res)) {
                                 len = strlen(res);
-                                if (strcmp(res + len - 21, "/gcc-rtags-wrapper.sh") && strcmp(res + len - 6, "/icecc")) {
+                                if ((len < 21 || strcmp(res + len - 21, "/gcc-rtags-wrapper.sh"))
+                                    && (len < 6 || strcmp(res + len - 6, "/icecc"))) {
                                     return Path(res, len);
                                 }
                                 // ignore if it there's another wrapper thing in the path
