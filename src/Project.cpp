@@ -296,9 +296,9 @@ int Project::reindex(const Match &match)
 {
     int ret = 0;
 
-    Set<Path> files = mDatabase->files();
+    const Set<Path> files = mDatabase->files();
     Set<Path>::const_iterator file = files.begin();
-    Set<Path>::const_iterator end = files.end();
+    const Set<Path>::const_iterator end = files.end();
     while (file != end) {
         if (match.match(*file)) {
             SourceInformationMap::const_iterator info = mSources.find(*file);
@@ -310,19 +310,19 @@ int Project::reindex(const Match &match)
             index(info->second, Dirty);
             ++ret;
 
-            files = mDatabase->dependencies(*file, Database::DependsOnArg);
-            file = files.begin(); end = files.end();
-            while (file != end) {
-                info = mSources.find(*file);
+            const Set<Path> subfiles = mDatabase->dependencies(*file, Database::DependsOnArg);
+            Set<Path>::const_iterator subfile = subfiles.begin();
+            const Set<Path>::const_iterator subend = subfiles.end();
+            while (subfile != subend) {
+                info = mSources.find(*subfile);
                 if (info == mSources.end()) {
-                    ++file;
+                    ++subfile;
                     continue;
                 }
                 index(info->second, Dirty);
                 ++ret;
-                ++file;
+                ++subfile;
             }
-            break;
         }
         ++file;
     }
