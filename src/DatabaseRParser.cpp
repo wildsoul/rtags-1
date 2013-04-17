@@ -892,7 +892,13 @@ void DatabaseRParser::references(const Location& location, unsigned flags,
     const bool wantVirtuals = flags & QueryMessage::FindVirtuals;
     const bool wantAll = flags & QueryMessage::AllReferences;
 
+    const Set<Path> paths = pathFilters.toSet();
+    const bool pass = paths.isEmpty();
+
     foreach(const CPlusPlus::Usage& usage, usages) {
+        if (!pass && !paths.contains(fromQString(usage.path)))
+            continue;
+
         CPlusPlus::Document::Ptr doc = manager->document(usage.path);
         Cursor::Kind kind = Cursor::Reference;
         if (doc) {
