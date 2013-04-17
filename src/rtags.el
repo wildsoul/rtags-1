@@ -628,13 +628,13 @@
   :group 'rtags
   :type 'number)
 
-(defcustom rtags-cursorinfo-timer-enabled nil
-  "Whether rtags cursorinfo is enabled"
+(defcustom rtags-local-references-enabled t
+  "Whether rtags local-references are enabled"
   :group 'rtags
   :type 'boolean)
 
-(defcustom rtags-cursorinfo-timer-interval 1
-  "Interval for cursorinfo timer"
+(defcustom rtags-local-references-timer-interval .5
+  "Interval for local-references timer"
   :group 'rtags
   :type 'number)
 
@@ -1314,40 +1314,6 @@ References to references will be treated as references to the referenced symbol"
 (add-hook 'post-command-hook (function rtags-update-current-project))
 ;;(remove-hook 'post-command-hook (function rtags-update-current-project))
 
-(defvar rtags-cursorinfo-timer nil)
-(defun rtags-restart-cursorinfo-timer ()
-  (interactive)
-  (when (or (eq major-mode 'c++-mode)
-            (eq major-mode 'c-mode))
-    (if rtags-cursorinfo-timer
-        (cancel-timer rtags-cursorinfo-timer))
-    (setq rtags-cursorinfo-cache-timer (run-with-idle-timer rtags-cursorinfo-timer-interval nil (function rtags-update-cursorinfo))))
-  )
-
-(if rtags-cursorinfo-timer-enabled
-    (add-hook 'post-command-hook (function rtags-restart-cursorinfo-timer))
-  (remove-hook 'post-command-hook (function rtags-restart-cursorinfo-timer)))
-
-(defvar rtags-cursorinfo-last-location "")
-(defvar rtags-cursorinfo-symbol-name nil)
-(defvar rtags-cursorinfo-container-name nil)
-(defvar rtags-cursorinfo-container-begin nil)
-(defvar rtags-cursorinfo-container-end nil)
-
-(defun rtags-update-cursorinfo ()
-  (let ((cur (rtags-current-location)))
-    (when (not (equal cur rtags-cursorinfo-last-location))
-      (setq rtags-cursorinfo-last-location cur)
-      (setq rtags-cursorinfo-symbol-name nil)
-      (setq rtags-cursorinfo-container-name nil)
-      (let ((cursorinfo (rtags-cursorinfo cur t)))
-        (setq rtags-cursorinfo-symbol-name (rtags-current-symbol-name cursorinfo))
-        (setq rtags-cursorinfo-container-name (rtags-current-container-name cursorinfo))
-        (force-mode-line-update))
-      )
-    )
-  )
-
 (defun rtags-fixup-flymake-err-info ()
   (setq flymake-err-info
         (mapcar (lambda (elem)
@@ -1901,26 +1867,48 @@ References to references will be treated as references to the referenced symbol"
     (+ (point-at-bol) col -1))
   )
 
+(defvar rtags-cached-local-references nil)
 (defun rtags-update-local-references ()
   (interactive)
-  (rtags-clear-local-references-overlays)
   (let ((path (buffer-file-name))
         (loc (rtags-current-location))
+        (symlen (length (rtags-current-token)))
         (lines nil))
-    (with-temp-buffer
-      (rtags-call-rc :path path "-r" loc "-e" "-N")
-      (setq lines (split-string (buffer-string) "\n" t)))
-    (while lines
-      (let ((cur (car lines)))
-        (if (string-match "\\(.*\\):\\([0-9]+\\):\\([0-9]+\\)" cur)
-            (let* ((offset (rtags-offset-for-line-column (string-to-int (match-string 2 cur))
-                                                         (string-to-int (match-string 3 cur))))
-                   (overlay (make-overlay offset (1+ offset) nil t)))
-              (overlay-put overlay 'face 'rtags-local-reference)
-              (setq rtags-local-references-overlays (append rtags-local-references-overlays (list overlay))))))
-      (setq lines (cdr lines)))
+    (if (= symlen 0)
+        (setq symlen 1))
+    (when (not (string= loc rtags-cached-local-references))
+      (setq rtags-cached-local-references loc)
+      (rtags-clear-local-references-overlays)
+      (with-temp-buffer
+        (rtags-call-rc :path path "-r" loc "-e" "-N")
+        (setq lines (split-string (buffer-string) "\n" t)))
+      (while lines
+        (let ((cur (car lines)))
+          (if (string-match "\\(.*\\):\\([0-9]+\\):\\([0-9]+\\)" cur)
+              (let* ((offset (rtags-offset-for-line-column (string-to-int (match-string 2 cur))
+                                                           (string-to-int (match-string 3 cur))))
+                     (overlay (make-overlay offset (+ offset symlen) nil t)))
+                (overlay-put overlay 'face 'rtags-local-reference)
+                (setq rtags-local-references-overlays (append rtags-local-references-overlays (list overlay))))))
+        (setq lines (cdr lines)))
+      )
     )
   )
 
+(defvar rtags-local-references-timer nil)
+(defun rtags-restart-update-local-references-timer ()
+  (interactive)
+  (when (or (eq major-mode 'c++-mode)
+            (eq major-mode 'c-mode))
+    (if rtags-cursorinfo-timer
+        (cancel-timer rtags-cursorinfo-timer))
+    (unless (string= rtags-cached-local-references (rtags-current-location))
+      (progn
+        (rtags-clear-local-references-overlays)
+        (setq rtags-local-references-timer (run-with-idle-timer rtags-local-references-timer-interval
+                                                                nil (function rtags-update-local-references))))))
+  )
+
+(add-hook 'post-command-hook 'rtags-restart-update-local-references-timer)
 
 (provide 'rtags)
