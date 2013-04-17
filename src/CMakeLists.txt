@@ -13,7 +13,7 @@ find_package(Qt4 REQUIRED)
 find_package(V8 REQUIRED)
 find_package(LibClang REQUIRED)
 
-add_subdirectory(rparser)
+add_subdirectory(CPlusPlus)
 add_subdirectory(rct)
 include(${CMAKE_CURRENT_LIST_DIR}/rct/compiler.cmake)
 # set(RCT_INCLUDE_DIR rct)
@@ -118,10 +118,10 @@ include(${QT_USE_FILE})
 add_definitions(${QT_DEFINITIONS})
 
 set(RPARSER_INCLUDES
-    rparser/src/plugins/cpptools
-    rparser/src/libs
-    rparser/src/libs/3rdparty
-    rparser/src/libs/cplusplus)
+    CPlusPlus/src/plugins/cpptools
+    CPlusPlus/src/libs
+    CPlusPlus/src/libs/3rdparty
+    CPlusPlus/src/libs/cplusplus)
 include_directories(${RPARSER_INCLUDES})
 
 set(RPARSER_SRCS DatabaseRParser.cpp)
@@ -129,5 +129,5 @@ set(RPARSER_MOC_HDRS DatabaseRParser.h)
 qt4_wrap_cpp(RPARSER_MOC_SRCS ${RPARSER_MOC_HDRS})
 
 add_library(rtagsrparser MODULE ${RPARSER_SRCS} ${RPARSER_MOC_SRCS})
-add_dependencies(rtagsrparser rtags rct)
-target_link_libraries(rtagsrparser rtags ${QT_LIBRARIES} rct -lCPlusPlus -L${CMAKE_CURRENT_BINARY_DIR}/rparser)
+add_dependencies(rtagsrparser rtags rct CPlusPlus)
+target_link_libraries(rtagsrparser rtags ${QT_LIBRARIES} rct CPlusPlus)
