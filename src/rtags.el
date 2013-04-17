@@ -1914,8 +1914,8 @@ References to references will be treated as references to the referenced symbol"
   (interactive)
   (when (or (eq major-mode 'c++-mode)
             (eq major-mode 'c-mode))
-    (if rtags-cursorinfo-timer
-        (cancel-timer rtags-cursorinfo-timer))
+    (if rtags-local-references-timer
+        (cancel-timer rtags-local-references-timer))
     (unless (string= rtags-cached-local-references (rtags-current-location))
       (progn
         (rtags-clear-local-references-overlays)
