@@ -983,6 +983,7 @@ void DatabaseRParser::references(const Location& location, unsigned flags,
             conn->write<256>("%s:%d:%d", qPrintable(usage.path), usage.line, usage.col + 1);
         }
     }
+    conn->write("`");
 }
 
 Set<Path> DatabaseRParser::files(int mode) const
@@ -1142,6 +1143,8 @@ Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
         find(globalNamespace);
         Set<CPlusPlus::Symbol*> syms = find.symbols();
         foreach(const CPlusPlus::Symbol* sym, syms) {
+            if (!sym->line())
+                continue;
             cursors.insert(makeCursor(sym, unit));
         }
     }

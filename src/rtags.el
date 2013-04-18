@@ -87,16 +87,14 @@
 (define-key rtags-mode-map (kbd "k") 'previous-line)
 
 (define-derived-mode rtags-mode fundamental-mode
-  (setq buffer-read-only nil)
   (set (make-local-variable 'font-lock-defaults) '(rtags-font-lock-keywords))
   (setq mode-name "rtags")
   (use-local-map rtags-mode-map)
   (run-hooks 'rtags-mode-hook)
-  (setq buffer-read-only t)
   (goto-char (point-min))
   )
 
-(defun rtags-start-mode (bookmarks)
+(defun rtags-start-mode (bookmarks readonly)
   (rtags-reset-bookmarks)
   (if bookmarks
       (let ((buf (current-buffer)))
@@ -119,6 +117,7 @@
         ))
   (if (= (point-at-bol) (point-max))
       (delete-char -1))
+  (setq buffer-read-only readonly)
   (rtags-mode))
 
 (defun rtags-reset-bookmarks ()
@@ -412,7 +411,7 @@
     (rtags-location-stack-push)
     (switch-to-buffer dep-buffer)
     (rtags-call-rc :path fn "--dependencies" fn)
-    (rtags-start-mode nil)))
+    (rtags-start-mode nil t)))
 
 (defun rtags-print-enum-value-at-point (&optional location)
   (interactive)
@@ -1445,6 +1444,8 @@ References to references will be treated as references to the referenced symbol"
 
 (defun rtags-handle-completion-buffer (&optional noautojump)
   (setq rtags-last-request-not-indexed nil)
+  (setq wasreadonly buffer-read-only)
+  (setq buffer-read-only nil)
   (rtags-reset-bookmarks)
   (cond ((= (point-min) (point-max))
          (message "RTags: No results") nil)
@@ -1456,11 +1457,13 @@ References to references will be treated as references to the referenced symbol"
              (switch-to-buffer-other-window rtags-buffer-name)
              (shrink-window-if-larger-than-buffer)
              (goto-char (point-min))
-             (rtags-start-mode t)
+             (rtags-start-mode t nil)
              (setq rtags-no-otherbuffer nil)
              (if (and rtags-jump-to-first-match (not noautojump))
-                 (rtags-select-other-buffer))))
+                 (rtags-select-other-buffer))
+             ))
         )
+  (setq buffer-read-only wasreadonly)
   )
 
 (defun rtags-is-definition (kind)
@@ -1521,14 +1524,25 @@ References to references will be treated as references to the referenced symbol"
         (line)
         (atbeginning)
         (atend)
+        (done)
         (deactivate-mark))
     (with-current-buffer buf
+      (when (not (process-get process :rtags-completion-buffer-handled))
+        (process-put process :rtags-completion-buffer-handled t)
+        (setq buffer-read-only nil))
       (if (> (point-max) (point-min))
           (setq line (buffer-substring-no-properties (point-at-bol) (point-at-eol))))
       (setq atbeginning (= (point) (point-min)))
       (setq atend (= (point) (point-max)))
       (goto-char (point-max))
-      (insert (buffer-string) "\n" output)
+      (insert output)
+      (save-excursion
+        (goto-char (point-min))
+        (when (re-search-forward "^`$" nil t)
+          (flush-lines "^`$" (point-min) (point-max) nil)
+          (setq done t)
+          (rtags-handle-completion-buffer)
+          (message "done.")))
       (rtags-async-rc-sort-lines)
       (cond (atbeginning (goto-char (point-min)))
             (line
@@ -1537,17 +1551,19 @@ References to references will be treated as references to the referenced symbol"
                  (beginning-of-line)))
             (atend (goto-char (point-max)))
             (t nil))
-      (when (not (process-get process 'rtags-completion-buffer-handled))
-        (process-put process 'rtags-completion-buffer-handled t)
-        (rtags-handle-completion-buffer)
-        (setq buffer-read-only nil)))
+      (when done
+        (setq buffer-read-only t)))
     )
   )
 
 (defun rtags-async-rc-sentinel (process state)
-  (when (string= state "finished")
-    (flush-lines "^$" (point-min) (point-max) nil)
-    (flush-lines "Process finished rc" (point-min) (point-max) nil)))
+  (when (string= state "finished\n")
+    (with-current-buffer (process-buffer process)
+      (setq wasreadonly buffer-read-only)
+      (setq buffer-read-only nil)
+      (flush-lines "^[ \t]*$" (point-min) (point-max) nil)
+      (flush-lines "Process finished rc" (point-min) (point-max) nil)
+      (setq buffer-read-only wasreadonly))))
 
 (defun rtags-standard-save-hook ()
   (interactive)
@@ -1671,7 +1687,7 @@ References to references will be treated as references to the referenced symbol"
             (t (progn
                  (switch-to-buffer-other-window rtags-buffer-name)
                  (shrink-window-if-larger-than-buffer)
-                 (rtags-start-mode nil)
+                 (rtags-start-mode nil t)
                  ;; (setq rtags-no-otherbuffer t)
                  )))
       ;; Should add support for putting offset in there as well, ignore it on completion and apply it at the end
