@@ -129,6 +129,19 @@
 (defun rtags-next-match () (interactive) (rtags-next-prev-match t))
 (defun rtags-previous-match () (interactive) (rtags-next-prev-match nil))
 
+(defun rtags-next-prev-suitable-match (next)
+  (save-excursion
+    (if next
+        (goto-char (point-at-bol 2))
+      (goto-char (point-at-bol 0)))
+    (beginning-of-line)
+    (when (looking-at "$")
+      (when next
+        (goto-char (point-min))
+        (beginning-of-line)))
+    (point))
+  )
+
 (defun rtags-next-prev-match (next)
   (if (get-buffer rtags-buffer-name)
       (let (target
@@ -137,16 +150,17 @@
         (set-buffer rtags-buffer-name)
         (when (> (count-lines (point-max) (point-min)) 1)
           (cond ((and (= (point-at-bol) (point-min)) (not next))
-                 (setq target (point-max))
+                 (goto-char (point-max))
+                 (beginning-of-line)
+                 (while (looking-at "$")
+                   (goto-char (1- (point))))
                  (message "*RTags* Wrapped"))
                 ((and (= (point-at-eol) (point-max)) next)
+                 (goto-char (point-min))
                  (setq target (point-min))
                  (message "*RTags* Wrapped"))
-                (next
-                 (setq target (point-at-bol 2)))
                 (t
-                 (setq target (point-at-bol 0))))
-          (goto-char target)
+                 (goto-char (rtags-next-prev-suitable-match next))))
           (beginning-of-line)
           (if win (rtags-select-other-buffer) (rtags-select))))))
 
