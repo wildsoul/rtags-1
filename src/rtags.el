@@ -1575,12 +1575,14 @@ References to references will be treated as references to the referenced symbol"
 
 (defun rtags-async-rc-sentinel (process state)
   (when (string= state "finished\n")
-    (with-current-buffer (process-buffer process)
-      (setq wasreadonly buffer-read-only)
-      (setq buffer-read-only nil)
-      (flush-lines "^[ \t]*$" (point-min) (point-max) nil)
-      (flush-lines "Process finished rc" (point-min) (point-max) nil)
-      (setq buffer-read-only wasreadonly))))
+    (let ((buf (process-buffer process)))
+      (when buf
+        (with-current-buffer buf
+          (setq wasreadonly buffer-read-only)
+          (setq buffer-read-only nil)
+          (flush-lines "^[ \t]*$" (point-min) (point-max) nil)
+          (flush-lines "Process finished rc" (point-min) (point-max) nil)
+          (setq buffer-read-only wasreadonly))))))
 
 (defun rtags-standard-save-hook ()
   (interactive)
