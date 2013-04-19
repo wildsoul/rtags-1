@@ -144,8 +144,10 @@ bool Project::match(const Match &p, bool *indexed) const
 void Project::index(const SourceInformation &sourceInformation, Type type)
 {
     static const char *fileFilter = getenv("RTAGS_FILE_FILTER");
-    if (fileFilter && !strstr(sourceInformation.sourceFile.constData(), fileFilter))
+    if ((fileFilter && !strstr(sourceInformation.sourceFile.constData(), fileFilter))
+        || sourceInformation.sourceFile.isFile()) {
         return;
+    }
 
     shared_ptr<Project> project = static_pointer_cast<Project>(shared_from_this());
     if (type != Restore) {
