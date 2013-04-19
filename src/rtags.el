@@ -519,7 +519,7 @@
                (find-file (match-string 1 location)))
              (run-hooks rtags-after-find-file-hook)
              (goto-char (point-min))
-             (forward-line (1- N))
+             (forward-line (1- line))
              (beginning-of-line)
              (forward-char (- column 1))
              t))
@@ -530,7 +530,7 @@
                (find-file (match-string 1 location)))
              (run-hooks rtags-after-find-file-hook)
              (goto-char (point-min))
-             (forward-line (1- N))
+             (forward-line (1- line))
              t))
           (t
            (if (string-match "^ +\\(.*\\)$" location)
