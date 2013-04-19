@@ -107,7 +107,8 @@
                 (let (deactivate-mark)
                   (save-excursion
                     (set-buffer (find-file-noselect file))
-                    (goto-line line)
+                    (goto-char (point-min))
+                    (forward-line (1- line))
                     (beginning-of-line)
                     (forward-char (- column 1))
                     (setq rtags-buffer-bookmarks (+ rtags-buffer-bookmarks 1))
@@ -517,7 +518,8 @@
                  (find-file-other-window (match-string 1 location))
                (find-file (match-string 1 location)))
              (run-hooks rtags-after-find-file-hook)
-             (goto-line line)
+             (goto-char (point-min))
+             (forward-line (1- N))
              (beginning-of-line)
              (forward-char (- column 1))
              t))
@@ -527,7 +529,8 @@
                  (find-file-other-window (match-string 1 location))
                (find-file (match-string 1 location)))
              (run-hooks rtags-after-find-file-hook)
-             (goto-line line)
+             (goto-char (point-min))
+             (forward-line (1- N))
              t))
           (t
            (if (string-match "^ +\\(.*\\)$" location)
@@ -1892,9 +1895,11 @@ References to references will be treated as references to the referenced symbol"
   )
 
 (defun rtags-offset-for-line-column (line col)
-  (save-excursion
-    (goto-line line)
-    (+ (point-at-bol) col -1))
+  (let (deactivate-mark)
+    (save-excursion
+      (goto-char (point-min))
+      (forward-line (1- line))
+      (+ (point-at-bol) col -1)))
   )
 
 (defun rtags-range-visible (start end)
