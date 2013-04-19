@@ -1951,8 +1951,9 @@ References to references will be treated as references to the referenced symbol"
   (interactive)
   (when (or (eq major-mode 'c++-mode)
             (eq major-mode 'c-mode))
-    (if rtags-local-references-timer
-        (cancel-timer rtags-local-references-timer))
+    (when rtags-local-references-timer
+      (cancel-timer rtags-local-references-timer)
+      (setq rtags-local-references-timer nil))
     (unless (string= rtags-cached-local-references (rtags-current-location))
       (progn
         (rtags-clear-local-references-overlays)
@@ -1960,6 +1961,12 @@ References to references will be treated as references to the referenced symbol"
                                                                 nil (function rtags-update-local-references))))))
   )
 
-(add-hook 'post-command-hook 'rtags-restart-update-local-references-timer)
+(if rtags-local-references-enabled
+    (add-hook 'post-command-hook 'rtags-restart-update-local-references-timer)
+  (progn
+    (when rtags-local-references-timer
+      (cancel-timer rtags-local-references-timer)
+      (setq rtags-local-references-timer nil))
+    (remove-hook 'post-command-hook 'rtags-restart-update-local-references-timer)))
 
 (provide 'rtags)
