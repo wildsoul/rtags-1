@@ -145,7 +145,7 @@ void Project::index(const SourceInformation &sourceInformation, Type type)
 {
     static const char *fileFilter = getenv("RTAGS_FILE_FILTER");
     if ((fileFilter && !strstr(sourceInformation.sourceFile.constData(), fileFilter))
-        || sourceInformation.sourceFile.isFile()) {
+        || !sourceInformation.sourceFile.isFile()) {
         return;
     }
 
