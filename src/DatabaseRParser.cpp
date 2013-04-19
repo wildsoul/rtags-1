@@ -358,6 +358,12 @@ void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
     // seems I need to keep this around
     doc->keepSourceAndAST();
 
+    // message out any diagnostics
+    const QList<CPlusPlus::Document::DiagnosticMessage> diags = doc->diagnosticMessages();
+    foreach(const CPlusPlus::Document::DiagnosticMessage& msg, diags) {
+        warning("%s:%d:%d: %s", msg.fileName().toUtf8().constData(), msg.line(), msg.column(), msg.text().toUtf8().constData());
+    }
+
     {
         QList<CPlusPlus::Document::Include> includes = doc->includes();
         if (!includes.isEmpty()) {
@@ -425,7 +431,17 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
     }
     const bool hasIncludes = !includes.isEmpty();
 
-    static QStringList incs = QStringList() << QLatin1String("/usr/include") << QLatin1String("/usr/include/c++/4.6") << srcPath;
+    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+#warning create a document with all defines, merge it below
+    CPlusPlus::Document::Ptr defDoc = snapshot.preprocessedDocument(QLatin1String("#define __GNUC__ 4\n"), QLatin1String("<rtagsdefines>"));
+    assert(defDoc);
+
+    static QStringList incs = QStringList()
+        << QLatin1String("/usr/include")
+        << QLatin1String("/usr/include/c++/4.6")
+        << QLatin1String("/usr/lib/gcc/i686-linux-gnu/4.6/include")
+        << QLatin1String("/usr/include/i386-linux-gnu")
+        << srcPath;
     List<SourceInformation::Build>::const_iterator build = info.builds.begin();
     const List<SourceInformation::Build>::const_iterator end = info.builds.end();
     while (build != end) {
@@ -436,8 +452,10 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
                 preprocessor.removeFromCache(include.fileName());
             }
         }
+
+        preprocessor.mergeEnvironment(defDoc);
         preprocessor.setIncludePaths(toQStringList(build->includePaths) + incs);
-        preprocessor.addDefinitions(toQStringList(build->defines));
+        //preprocessor.addDefinitions(toQStringList(build->defines));
         preprocessor.run(srcFile);
         preprocessor.resetEnvironment();
         ++build;
