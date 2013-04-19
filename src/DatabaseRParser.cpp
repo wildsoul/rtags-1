@@ -13,6 +13,9 @@
 #include <ASTPath.h>
 #include <DependencyTable.h>
 #include <cplusplus/SymbolVisitor.h>
+#include <typeinfo>
+#include <cxxabi.h>
+
 
 using namespace CppTools;
 using namespace CppTools::Internal;
@@ -771,8 +774,61 @@ void DatabaseRParser::status(const String &query, Connection *conn) const
 {
 }
 
+class DumpAST : public CPlusPlus::ASTVisitor
+{
+public:
+    DumpAST(CPlusPlus::TranslationUnit *unit, Connection *conn)
+        : CPlusPlus::ASTVisitor(unit), mDepth(0), mConn(conn)
+    {}
+
+protected:
+    virtual bool preVisit(CPlusPlus::AST *ast)
+    {
+        const char *id = typeid(*ast).name();
+        char *cppId = abi::__cxa_demangle(id, 0, 0, 0);
+        id = cppId;
+        String fill(mDepth * 2, ' ');
+        String context;
+        for (unsigned idx = ast->firstToken(); idx<ast->lastToken(); ++idx) {
+            const char *str = spell(idx);
+            if (!context.isEmpty()) {
+                char last = context.last();
+                if (last == ',') {
+                    context += ' ';
+                } else if (isalnum(last) && isalnum(*str)) {
+                    context += ' ';
+                } else if (*str == '{' || *str == '}') {
+                    context += ' ';
+                }
+            }
+            context.append(str);
+        }
+
+        mConn->write<128>("%s%s: %s", fill.constData(), id, context.constData());
+        free(cppId);
+        ++mDepth;
+        return true;
+    }
+
+    void postVisit(CPlusPlus::AST *)
+    {
+        --mDepth;
+    }
+private:
+    int mDepth;
+    Connection *mConn;
+};
+
+
 void DatabaseRParser::dump(const SourceInformation &sourceInformation, Connection *conn) const
 {
+    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(sourceInformation.sourceFile));
+    if (!doc) {
+        conn->write<64>("Don't seem to have %s indexed", sourceInformation.sourceFile.constData());
+        return;
+    }
+    DumpAST dump(doc->translationUnit(), conn);
+    dump.accept(doc->translationUnit()->ast());
 }
 
 void DatabaseRParser::processJob(RParserJob* job)
