@@ -401,8 +401,34 @@ class RParserUnit
 public:
     SourceInformation info;
 
+    static QHash<QString, CPlusPlus::Document::Ptr> defineDocs;
+    static CPlusPlus::Document::Ptr defineDocument(QPointer<CppModelManager> manager, const QString& name, const QStringList& defines);
+
     void reindex(QPointer<CppModelManager> manager);
 };
+
+QHash<QString, CPlusPlus::Document::Ptr> RParserUnit::defineDocs;
+
+CPlusPlus::Document::Ptr RParserUnit::defineDocument(QPointer<CppModelManager> manager, const QString& name, const QStringList& defines)
+{
+    QHash<QString, CPlusPlus::Document::Ptr>::const_iterator defs = defineDocs.find(defines.join(QLatin1String(":")));
+    if (defs != defineDocs.end())
+        return defs.value();
+    QString defsrc;
+    foreach(const QString& def, defines) {
+        const int eq = def.indexOf(QLatin1Char('='));
+        if (eq == -1)
+            defsrc += QLatin1String("#define ") + def;
+        else
+            defsrc += QLatin1String("#define ") + def.left(eq) + QLatin1Char(' ') + def.mid(eq + 1);
+        defsrc += QLatin1Char('\n');
+    }
+    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+    CPlusPlus::Document::Ptr doc = snapshot.preprocessedDocument(defsrc, QString("<rparserdefines_%1>").arg(name));
+    assert(doc);
+    defineDocs[defines.join(QLatin1String(":"))] = doc;
+    return doc;
+}
 
 template<typename T>
 static inline QStringList toQStringList(const T& t)
@@ -431,10 +457,10 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
     }
     const bool hasIncludes = !includes.isEmpty();
 
-    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
-#warning create a document with all defines, merge it below
-    CPlusPlus::Document::Ptr defDoc = snapshot.preprocessedDocument(QLatin1String("#define __GNUC__ 4\n"), QLatin1String("<rtagsdefines>"));
-    assert(defDoc);
+#warning grab the include paths and defines from the system compiler here
+    static QStringList globalDefines;
+    if (globalDefines.isEmpty())
+        globalDefines << QLatin1String("__GNUC__=4");
 
     static QStringList incs = QStringList()
         << QLatin1String("/usr/include")
@@ -453,9 +479,8 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
             }
         }
 
-        preprocessor.mergeEnvironment(defDoc);
+        preprocessor.mergeEnvironment(defineDocument(manager, srcFile, toQStringList(build->defines) + globalDefines));
         preprocessor.setIncludePaths(toQStringList(build->includePaths) + incs);
-        //preprocessor.addDefinitions(toQStringList(build->defines));
         preprocessor.run(srcFile);
         preprocessor.resetEnvironment();
         ++build;
