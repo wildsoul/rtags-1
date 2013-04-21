@@ -35,6 +35,7 @@ private:
     Map<Path, ClangUnit*> units;
     ThreadPool pool;
     CXIndex cidx;
+    CXIndexAction caction;
 
     friend class ClangUnit;
 };
