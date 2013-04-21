@@ -7,6 +7,21 @@
 
 class ClangParseJob;
 
+class TUWrapper
+{
+public:
+    TUWrapper(CXTranslationUnit u)
+        : unit(u)
+    {
+    }
+    ~TUWrapper()
+    {
+        clang_disposeTranslationUnit(unit);
+    }
+
+    CXTranslationUnit unit;
+};
+
 class ClangUnit
 {
 public:
@@ -22,7 +37,7 @@ public:
     DatabaseClang* database;
     mutable Mutex mutex;
     SourceInformation sourceInformation;
-    CXTranslationUnit unit;
+    weak_ptr<TUWrapper> unit;
     bool indexed;
     shared_ptr<ClangParseJob> job;
 
@@ -53,15 +68,16 @@ private:
     WaitCondition mWait;
 
 private:
-    static void addCached(const Path& path, CXTranslationUnit unit);
+    static void addCached(const Path& path, shared_ptr<TUWrapper> unit);
+    static void disposeUnit(TUWrapper* unit);
 
     static Mutex cachedMutex;
     static int maxCached;
-    static LinkedList<std::pair<Path, CXTranslationUnit> > cached;
+    static LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > cached;
 };
 
 int ClangParseJob::maxCached = std::max(ThreadPool::idealThreadCount(), 5);
-LinkedList<std::pair<Path, CXTranslationUnit> > ClangParseJob::cached;
+LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > ClangParseJob::cached;
 Mutex ClangParseJob::cachedMutex;
 
 ClangUnit::ClangUnit(DatabaseClang* db)
@@ -100,21 +116,34 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
 {
 }
 
-void ClangParseJob::addCached(const Path& path, CXTranslationUnit unit)
+void ClangParseJob::disposeUnit(TUWrapper* unit)
 {
     MutexLocker locker(&cachedMutex);
-    LinkedList<std::pair<Path, CXTranslationUnit> >::const_iterator c = cached.begin();
-    const LinkedList<std::pair<Path, CXTranslationUnit> >::const_iterator end = cached.end();
+    LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::iterator c = cached.begin();
+    const LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::const_iterator end = cached.end();
+    while (c != end) {
+        if (c->second.get() == unit) {
+            cached.erase(c);
+            return;
+        }
+        ++c;
+    }
+}
+
+void ClangParseJob::addCached(const Path& path, shared_ptr<TUWrapper> unit)
+{
+    MutexLocker locker(&cachedMutex);
+    LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::const_iterator c = cached.begin();
+    const LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::const_iterator end = cached.end();
     while (c != end) {
         if (c->first == path) {
-            assert(c->second == unit);
+            assert(c->second.get() == unit.get());
             return;
         }
         ++c;
     }
     cached.push_back(std::make_pair(path, unit));
     if (cached.size() > maxCached) {
-        clang_disposeTranslationUnit(cached.front().second);
         cached.pop_front();
         assert(cached.size() == maxCached);
     }
@@ -129,15 +158,20 @@ void ClangParseJob::run()
 {
     // clang parse
     CXTranslationUnit unit;
+    bool done = false;
     if (mReparse) {
-        unit = mUnit->unit;
-        assert(unit != 0);
-        if (clang_reparseTranslationUnit(unit, 0, 0, clang_defaultReparseOptions(unit)) != 0) {
-            // bad
-            clang_disposeTranslationUnit(unit);
-            unit = 0;
+        shared_ptr<TUWrapper> unitwrapper = mUnit->unit.lock();
+        if (unitwrapper) {
+            unit = unitwrapper->unit;
+            if (clang_reparseTranslationUnit(unit, 0, 0, clang_defaultReparseOptions(unit)) != 0) {
+                // bad
+                disposeUnit(unitwrapper.get());
+            } else {
+                done = true;
+            }
         }
-    } else {
+    }
+    if (!done) {
         const List<SourceInformation::Build>& builds = mUnit->sourceInformation.builds;
         List<SourceInformation::Build>::const_iterator build = builds.begin();
         const List<SourceInformation::Build>::const_iterator end = builds.end();
@@ -187,7 +221,7 @@ void ClangParseJob::run()
             callbacks.ppIncludedFile = includedFile;
             callbacks.indexDeclaration = indexDeclaration;
             callbacks.indexEntityReference = indexEntityReference;
-            const unsigned opts = CXIndexOpt_SuppressRedundantRefs | CXIndexOpt_IndexFunctionLocalSymbols;
+            const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols;
             const unsigned tuOpts =
                 CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
             clang_indexSourceFile(mUnit->action(), this, &callbacks, sizeof(IndexerCallbacks), opts,
@@ -199,11 +233,14 @@ void ClangParseJob::run()
 
     error() << "done parsing" << mUnit->sourceInformation.sourceFile << unit << "reparse" << mReparse;
 
-    if (unit)
-        addCached(mUnit->sourceInformation.sourceFile, unit);
+    shared_ptr<TUWrapper> wrapper;
+    if (unit) {
+        wrapper.reset(new TUWrapper(unit));
+        addCached(mUnit->sourceInformation.sourceFile, wrapper);
+    }
 
     MutexLocker locker(&mUnit->mutex);
-    mUnit->unit = unit;
+    mUnit->unit = wrapper;
     mUnit->indexed = (unit != 0);
     mWait.wakeOne();
 }
@@ -295,7 +332,10 @@ Database::Cursor DatabaseClang::cursor(const Location &location) const
     ClangUnit* unit = it->second;
     if (!unit->ensureIndexed())
         return Database::Cursor();
-    const CXCursor cx = clang_getCursor(unit->unit, makeCXLocation(unit->unit, location));
+    shared_ptr<TUWrapper> wrapper = unit->unit.lock();
+    if (!wrapper)
+        return Database::Cursor();
+    const CXCursor cx = clang_getCursor(wrapper->unit, makeCXLocation(wrapper->unit, location));
     const CXCursor cxnull = clang_getNullCursor();
     if (clang_equalCursors(cx, cxnull)) {
         error() << "no cursor for location" << location;
