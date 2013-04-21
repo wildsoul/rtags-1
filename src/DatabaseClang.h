@@ -3,10 +3,13 @@
 
 #include "Database.h"
 #include <rct/Map.h>
+#include <rct/Mutex.h>
 #include <rct/ThreadPool.h>
 #include <clang-c/Index.h>
 
 class ClangUnit;
+
+typedef Map<String, Set<Location> > UsrSet;
 
 class DatabaseClang : public Database
 {
@@ -37,6 +40,12 @@ private:
     CXIndex cidx;
     CXIndexAction caction;
 
+    Mutex mutex;
+    Map<Location, Path> incs;
+    Map<String, String> names;  // name->usr
+    Map<Location, String> usrs; // location->usr
+    UsrSet decls, defs, refs;   // usr->locations
+    
     friend class ClangUnit;
 };
 #endif

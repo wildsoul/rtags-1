@@ -22,6 +22,16 @@ public:
     CXTranslationUnit unit;
 };
 
+struct ClangIndexInfo
+{
+    List<Path> files;
+
+    Map<Location, Path> incs;
+    Map<String, String> names;  // name->usr
+    Map<Location, String> usrs; // location->usr
+    UsrSet decls, defs, refs;   // usr->locations
+};
+
 class ClangUnit
 {
 public:
@@ -34,14 +44,14 @@ public:
     CXIndex index() { return database->cidx; }
     CXIndexAction action() { return database->caction; }
 
+    void merge(const ClangIndexInfo& info);
+
     DatabaseClang* database;
     mutable Mutex mutex;
     SourceInformation sourceInformation;
     weak_ptr<TUWrapper> unit;
     bool indexed;
     shared_ptr<ClangParseJob> job;
-
-    friend class ClangParseJob;
 };
 
 class ClangParseJob : public ThreadPool::Job
@@ -58,6 +68,7 @@ protected:
 private:
     static int abortQuery(CXClientData client_data, void* /*reserved*/);
     static void diagnostic(CXClientData client_data, CXDiagnosticSet diags, void* /*reserved*/);
+    static CXIdxClientFile enteredMainFile(CXClientData client_data, CXFile mainFile, void* /*reserved*/);
     static CXIdxClientFile includedFile(CXClientData client_data, const CXIdxIncludedFileInfo* incl);
     static void indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl);
     static void indexEntityReference(CXClientData client_data, const CXIdxEntityRefInfo* ref);
@@ -85,6 +96,26 @@ ClangUnit::ClangUnit(DatabaseClang* db)
 {
 }
 
+void ClangUnit::merge(const ClangIndexInfo& info)
+{
+    MutexLocker locker(&database->mutex);
+
+    database->incs.unite(info.incs);
+    database->names.unite(info.names);
+    database->usrs.unite(info.usrs);
+
+    const UsrSet* src[] = { &info.decls, &info.defs, &info.refs };
+    UsrSet* dst[] = { &database->decls, &database->defs, &database->refs };
+    for (unsigned i = 0; i < sizeof(src); ++i) {
+        UsrSet::const_iterator usr = src[i]->begin();
+        const UsrSet::const_iterator end = src[i]->end();
+        while (usr != end) {
+            (*dst[i])[usr->first].unite(usr->second);
+            ++usr;
+        }
+    }
+}
+
 ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
     : mUnit(unit), mReparse(reparse)
 {
@@ -92,6 +123,15 @@ ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
 
 ClangParseJob::~ClangParseJob()
 {
+}
+
+static Location makeLocation(const CXIdxLoc& cxloc)
+{
+    CXIdxClientFile file;
+    unsigned line, column;
+    clang_indexLoc_getFileLocation(cxloc, &file, 0, &line, &column, 0);
+    const Path* path = static_cast<Path*>(file);
+    return Location(*path, line, column);
 }
 
 int ClangParseJob::abortQuery(CXClientData client_data, void* /*reserved*/)
@@ -103,17 +143,47 @@ void ClangParseJob::diagnostic(CXClientData client_data, CXDiagnosticSet diags, 
 {
 }
 
+CXIdxClientFile ClangParseJob::enteredMainFile(CXClientData client_data, CXFile mainFile, void* /*reserved*/)
+{
+    ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
+    CXString str = clang_getFileName(mainFile);
+    info->files.append(clang_getCString(str));
+    clang_disposeString(str);
+    return &info->files.last();
+}
+
 CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXIdxIncludedFileInfo* incl)
 {
-    return 0;
+    ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
+    CXString str = clang_getFileName(incl->file);
+    const Path path(clang_getCString(str));
+    clang_disposeString(str);
+    info->files.append(path);
+    info->incs[makeLocation(incl->hashLoc)] = path;
+    return &info->files.last();
 }
 
 void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl)
 {
+    if (decl->isImplicit) // not sure about this
+        return;
+    ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
+    const bool def = decl->isDefinition;
+    const Location declLoc = makeLocation(decl->loc);
+    const String usr(decl->entityInfo->USR);
+    info->usrs[declLoc] = usr;
+    if (def)
+        info->defs[usr].insert(declLoc);
+    else
+        info->decls[usr].insert(declLoc);
 }
 
 void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEntityRefInfo* ref)
 {
+    ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
+    const Location refLoc = makeLocation(ref->loc);
+    const String usr(ref->referencedEntity->USR);
+    info->refs[usr].insert(refLoc);
 }
 
 void ClangParseJob::disposeUnit(TUWrapper* unit)
@@ -158,7 +228,6 @@ void ClangParseJob::run()
 {
     // clang parse
     CXTranslationUnit unit;
-    bool done = false;
     if (mReparse) {
         shared_ptr<TUWrapper> unitwrapper = mUnit->unit.lock();
         if (unitwrapper) {
@@ -166,12 +235,27 @@ void ClangParseJob::run()
             if (clang_reparseTranslationUnit(unit, 0, 0, clang_defaultReparseOptions(unit)) != 0) {
                 // bad
                 disposeUnit(unitwrapper.get());
+                mReparse = false;
             } else {
-                done = true;
+                ClangIndexInfo info;
+
+                IndexerCallbacks callbacks;
+                memset(&callbacks, 0, sizeof(IndexerCallbacks));
+                callbacks.abortQuery = abortQuery;
+                callbacks.diagnostic = diagnostic;
+                callbacks.enteredMainFile = enteredMainFile;
+                callbacks.ppIncludedFile = includedFile;
+                callbacks.indexDeclaration = indexDeclaration;
+                callbacks.indexEntityReference = indexEntityReference;
+                const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols;
+
+                clang_indexTranslationUnit(mUnit->action(), &info, &callbacks, sizeof(IndexerCallbacks), opts, unit);
+
+                mUnit->merge(info);
             }
         }
     }
-    if (!done) {
+    if (!mReparse) {
         const List<SourceInformation::Build>& builds = mUnit->sourceInformation.builds;
         List<SourceInformation::Build>::const_iterator build = builds.begin();
         const List<SourceInformation::Build>::const_iterator end = builds.end();
@@ -214,19 +298,26 @@ void ClangParseJob::run()
             //unit = clang_parseTranslationUnit(mUnit->index(), mUnit->sourceInformation.sourceFile.nullTerminated(),
             //                                  clangArgs, args.size(), 0, 0, CXTranslationUnit_DetailedPreprocessingRecord |
             //                                  CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults);
+            ClangIndexInfo info;
+
             IndexerCallbacks callbacks;
             memset(&callbacks, 0, sizeof(IndexerCallbacks));
             callbacks.abortQuery = abortQuery;
             callbacks.diagnostic = diagnostic;
+            callbacks.enteredMainFile = enteredMainFile;
             callbacks.ppIncludedFile = includedFile;
             callbacks.indexDeclaration = indexDeclaration;
             callbacks.indexEntityReference = indexEntityReference;
             const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols;
             const unsigned tuOpts =
                 CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
-            clang_indexSourceFile(mUnit->action(), this, &callbacks, sizeof(IndexerCallbacks), opts,
+
+            clang_indexSourceFile(mUnit->action(), &info, &callbacks, sizeof(IndexerCallbacks), opts,
                                   mUnit->sourceInformation.sourceFile.nullTerminated(),
                                   clangArgs, args.size(), 0, 0, &unit, tuOpts);
+
+            mUnit->merge(info);
+
             ++build;
         }
     }
