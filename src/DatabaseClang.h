@@ -2,12 +2,17 @@
 #define DatabaseClang_h
 
 #include "Database.h"
+#include <rct/Map.h>
+#include <rct/ThreadPool.h>
+#include <clang-c/Index.h>
+
+class ClangUnit;
 
 class DatabaseClang : public Database
 {
 public:
-    DatabaseClang() {}
-    virtual ~DatabaseClang() {}
+    DatabaseClang();
+    virtual ~DatabaseClang();
 
     virtual Cursor cursor(const Location &location) const;
     virtual void references(const Location& location, unsigned queryFlags,
@@ -25,5 +30,12 @@ public:
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
     virtual Set<Cursor> cursors(const Path &path) const;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
+
+private:
+    Map<Path, ClangUnit*> units;
+    ThreadPool pool;
+    CXIndex cidx;
+
+    friend class ClangUnit;
 };
 #endif
