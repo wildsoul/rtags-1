@@ -11,6 +11,13 @@ class ClangUnit;
 
 typedef Map<String, Set<Location> > UsrSet;
 
+struct CursorInfo
+{
+    String usr;
+    int start, end;
+    Database::Cursor::Kind kind;
+};
+
 class DatabaseClang : public Database
 {
 public:
@@ -40,10 +47,10 @@ private:
     CXIndex cidx;
     CXIndexAction caction;
 
-    Mutex mutex;
+    mutable Mutex mutex;
     Map<Location, Path> incs;
     Map<String, String> names;  // name->usr
-    Map<Location, String> usrs; // location->usr
+    Map<Location, CursorInfo> usrs; // location->usr
     UsrSet decls, defs, refs;   // usr->locations
     
     friend class ClangUnit;

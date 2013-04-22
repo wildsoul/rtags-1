@@ -19,6 +19,7 @@ const char * Database::Cursor::kindToString(Kind kind)
         "Field",
         "Enum",
         "EnumValue",
+        "Union",
         "Macro",
         "Reference",
         0
@@ -45,6 +46,7 @@ char Database::Cursor::kindToChar(Kind kind)
         'l', // Field
         'E', // Enum
         'e', // EnumValue
+        'u', // Union
         'D', // Macro
         'r' // Reference
     };
@@ -103,6 +105,7 @@ bool Database::Cursor::isDefinition() const
     case Field:
     case Enum:
     case EnumValue:
+    case Union:
         return true;
     }
     return false;

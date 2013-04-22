@@ -28,7 +28,7 @@ struct ClangIndexInfo
 
     Map<Location, Path> incs;
     Map<String, String> names;  // name->usr
-    Map<Location, String> usrs; // location->usr
+    Map<Location, CursorInfo> usrs; // location->usr
     UsrSet decls, defs, refs;   // usr->locations
 };
 
@@ -125,13 +125,66 @@ ClangParseJob::~ClangParseJob()
 {
 }
 
-static Location makeLocation(const CXIdxLoc& cxloc)
+static inline Location makeLocation(const CXIdxLoc& cxloc)
 {
     CXIdxClientFile file;
     unsigned line, column;
     clang_indexLoc_getFileLocation(cxloc, &file, 0, &line, &column, 0);
     const Path* path = static_cast<Path*>(file);
     return Location(*path, line, column);
+}
+
+static inline Database::Cursor::Kind makeKind(CXIdxEntityKind cxkind, bool def)
+{
+    switch (cxkind) {
+    case CXIdxEntity_CXXClass:
+        if (def)
+            return Database::Cursor::Class;
+        return Database::Cursor::ClassForwardDeclaration;
+    case CXIdxEntity_CXXNamespace:
+        return Database::Cursor::Namespace;
+    case CXIdxEntity_CXXInstanceMethod:
+    case CXIdxEntity_CXXConstructor:
+    case CXIdxEntity_CXXDestructor:
+    case CXIdxEntity_CXXStaticMethod:
+        if (def)
+            return Database::Cursor::MemberFunctionDefinition;
+        return Database::Cursor::MemberFunctionDeclaration;
+    case CXIdxEntity_Function:
+        if (def)
+            return Database::Cursor::MethodDefinition;
+        return Database::Cursor::MethodDeclaration;
+    case CXIdxEntity_Struct:
+        if (def)
+            return Database::Cursor::Struct;
+        return Database::Cursor::StructForwardDeclaration;
+    case CXIdxEntity_Enum:
+        return Database::Cursor::Enum;
+    case CXIdxEntity_EnumConstant:
+        return Database::Cursor::EnumValue;
+    case CXIdxEntity_Variable:
+    case CXIdxEntity_CXXStaticVariable:
+        return Database::Cursor::Variable;
+    case CXIdxEntity_Field:
+        return Database::Cursor::Field;
+    case CXIdxEntity_Union:
+        return Database::Cursor::Union;
+    case CXIdxEntity_Unexposed:
+    case CXIdxEntity_Typedef:
+    case CXIdxEntity_ObjCClass:
+    case CXIdxEntity_ObjCProtocol:
+    case CXIdxEntity_ObjCCategory:
+    case CXIdxEntity_ObjCInstanceMethod:
+    case CXIdxEntity_ObjCClassMethod:
+    case CXIdxEntity_ObjCProperty:
+    case CXIdxEntity_ObjCIvar:
+    case CXIdxEntity_CXXConversionFunction:
+    case CXIdxEntity_CXXNamespaceAlias:
+    case CXIdxEntity_CXXTypeAlias:
+    case CXIdxEntity_CXXInterface:
+        break;
+    }
+    return Database::Cursor::Invalid;
 }
 
 int ClangParseJob::abortQuery(CXClientData client_data, void* /*reserved*/)
@@ -171,7 +224,12 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
     const bool def = decl->isDefinition;
     const Location declLoc = makeLocation(decl->loc);
     const String usr(decl->entityInfo->USR);
-    info->usrs[declLoc] = usr;
+
+    CursorInfo cursorInfo;
+    cursorInfo.usr = usr;
+    cursorInfo.kind = makeKind(decl->entityInfo->kind, def);
+    info->usrs[declLoc] = cursorInfo;
+
     if (def)
         info->defs[usr].insert(declLoc);
     else
@@ -183,6 +241,12 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
     const Location refLoc = makeLocation(ref->loc);
     const String usr(ref->referencedEntity->USR);
+
+    CursorInfo cursorInfo;
+    cursorInfo.usr = usr;
+    cursorInfo.kind = Database::Cursor::Reference;
+    info->usrs[refLoc] = cursorInfo;
+
     info->refs[usr].insert(refLoc);
 }
 
@@ -386,103 +450,59 @@ DatabaseClang::~DatabaseClang()
     clang_disposeIndex(cidx);
 }
 
-static inline CXSourceLocation makeCXLocation(CXTranslationUnit unit, const Location& location)
-{
-    const CXFile file = clang_getFile(unit, location.path().nullTerminated());
-    if (!file)
-        return clang_getNullLocation();
-    return clang_getLocation(unit, file, location.line(), location.column());
-}
-
-static inline Location makeLocation(CXCursor cursor)
-{
-    const CXSourceLocation cxloc = clang_getCursorLocation(cursor);
-    if (clang_equalLocations(cxloc, clang_getNullLocation()))
-        return Location();
-    CXFile file;
-    unsigned line, column;
-    clang_getSpellingLocation(cxloc, &file, &line, &column, 0);
-    CXString fileName = clang_getFileName(file);
-    const Location loc(clang_getCString(fileName), line, column);
-    clang_disposeString(fileName);
-    return loc;
-}
-
-static CXVisitorResult referenceCursors(void* ctx, CXCursor cursor, CXSourceRange /*range*/)
-{
-    List<CXCursor>* cursors = reinterpret_cast<List<CXCursor>*>(ctx);
-    cursors->append(cursor);
-    return CXVisit_Continue;
-}
-
 Database::Cursor DatabaseClang::cursor(const Location &location) const
 {
-    const Map<Path, ClangUnit*>::const_iterator it = units.find(location.path());
-    if (it == units.end())
+    MutexLocker locker(&mutex);
+    Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(location);
+    if (usr == usrs.end())
         return Database::Cursor();
-    ClangUnit* unit = it->second;
-    if (!unit->ensureIndexed())
-        return Database::Cursor();
-    shared_ptr<TUWrapper> wrapper = unit->unit.lock();
-    if (!wrapper)
-        return Database::Cursor();
-    const CXCursor cx = clang_getCursor(wrapper->unit, makeCXLocation(wrapper->unit, location));
-    const CXCursor cxnull = clang_getNullCursor();
-    if (clang_equalCursors(cx, cxnull)) {
-        error() << "no cursor for location" << location;
-        return Database::Cursor();
-    }
-
-    Database::Cursor c;
-    c.location = makeLocation(cx);
-
-    if (clang_isCursorDefinition(cx)) {
-        error() << "cursor is def, trying to find decl" << location;
-        // determine if we can find the declaration
-        CXCursor parent = clang_getCursorSemanticParent(cx);
-        if (!clang_equalCursors(parent, cxnull)) {
-            // see if we can find a declaration cursor that's not also a definition
-            CXFile parentFile;
-            const CXSourceLocation cxloc = clang_getCursorLocation(parent);
-            assert(!clang_equalLocations(cxloc, clang_getNullLocation()));
-            clang_getSpellingLocation(cxloc, &parentFile, 0, 0, 0);
-            CXCursorAndRangeVisitor referenceVisitor;
-            List<CXCursor> refs;
-            referenceVisitor.context = &refs;
-            referenceVisitor.visit = referenceCursors;
-            clang_findReferencesInFile(cx, parentFile, referenceVisitor);
-            List<CXCursor>::const_iterator ref = refs.begin();
-            const List<CXCursor>::const_iterator end = refs.end();
-            while (ref != end) {
-                if (clang_isDeclaration(clang_getCursorKind(*ref))
-                    && !clang_isCursorDefinition(*ref)) {
-                    // yay
-                    error() << "cursor is def, found decl" << makeLocation(*ref);
-                    c.target = makeLocation(*ref);
-                    break;
-                }
-                ++ref;
-            }
+    if (usr->first > location) { // we're looking for the previous one
+        if (usr == usrs.begin())
+            return Database::Cursor();
+        --usr;
+        if (usr->first.path() != location.path()) {
+            // we've iterated past the beginning of the file
+            return Database::Cursor();
         }
-    } else {
-        error() << "cursor is not def, trying to find def" << location;
-        CXCursor def = clang_getCursorDefinition(cx);
-        if (clang_equalCursors(def, cxnull)) {
-            // need to find it somewhere else
+    }
+    assert(!(usr->first > location));
 
-            // if that fails, find the reference
-            error() << "def not found, trying to find canonical";
-            def = clang_getCanonicalCursor(cx);
-            if (!clang_equalCursors(def, cxnull)) {
-                error() << "found canonical" << makeLocation(def);
-                c.target = makeLocation(def);
+    const String usrstr = usr->second.usr;
+
+    Database::Cursor cursor;
+    cursor.location = usr->first;
+    cursor.kind = usr->second.kind;
+
+    if (cursor.kind == Database::Cursor::Reference) {
+        // reference, target should be definition (if possible)
+        UsrSet::const_iterator target = defs.find(usrstr);
+        if (target == defs.end()) {
+            // try declaration
+            target = decls.find(usrstr);
+            if (target != decls.end()) {
+                if (!target->second.isEmpty())
+                    cursor.target = *target->second.begin();
             }
         } else {
-            c.target = makeLocation(def);
+            if (!target->second.isEmpty())
+                cursor.target = *target->second.begin();
+        }
+    } else if (cursor.isDefinition()) {
+        // definition, target should be declaration
+        const UsrSet::const_iterator target = decls.find(usrstr);
+        if (target != decls.end()) {
+            if (!target->second.isEmpty())
+                cursor.target = *target->second.begin();
+        }
+    } else {
+        // declaration, taget should be definition
+        const UsrSet::const_iterator target = defs.find(usrstr);
+        if (target != defs.end()) {
+            if (!target->second.isEmpty())
+                cursor.target = *target->second.begin();
         }
     }
-
-    return c;
+    return cursor;
 }
 
 void DatabaseClang::references(const Location& location, unsigned queryFlags,

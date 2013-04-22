@@ -40,6 +40,7 @@ public:
             Field,
             Enum,
             EnumValue,
+            Union,
             Macro,
             Reference
         };
