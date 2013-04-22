@@ -46,7 +46,7 @@ void usage(FILE *f)
             "  --append|-A                       Append to log file.\n"
             "  --verbose|-v                      Change verbosity, multiple -v's are allowed.\n"
             "  --clear-projects|-C               Clear all projects.\n"
-            "  --disable-sighandler|-s           Disable signal handler to dump stack for crashes..\n"
+            "  --enable-sighandler|-s            Enable signal handler to dump stack for crashes..\n"
             "                                    Note that this might not play well with clang's signal handler.\n"
             "  --clang-includepath|-P            Use clang include paths by default.\n"
             "  --no-Wall|-W                      Don't use -Wall.\n"
@@ -182,7 +182,7 @@ int main(int argc, char** argv)
     assert(Path::home().endsWith('/'));
     int argCount = argList.size();
     char **args = argList.data();
-    bool noSigHandler = false;
+    bool enableSigHandler = false;
     while (true) {
         const int c = getopt_long(argCount, args, shortOptions.constData(), opts, 0);
         if (c == -1)
@@ -226,7 +226,7 @@ int main(int argc, char** argv)
             serverOpts.options |= Server::ClearProjects;
             break;
         case 's':
-            noSigHandler = true;
+            enableSigHandler = true;
             break;
         case 'r': {
             int large = atoi(optarg);
@@ -261,7 +261,7 @@ int main(int argc, char** argv)
             return 1;
         }
     }
-    if (!noSigHandler)
+    if (enableSigHandler)
         signal(SIGSEGV, sigSegvHandler);
 
     if (optind < argCount) {
