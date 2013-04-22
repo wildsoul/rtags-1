@@ -251,7 +251,8 @@ static inline Location makeLocation(const CXIdxLoc& cxloc)
         path = *static_cast<Path*>(file);
     } else {
         // fall back to CXFile
-        assert(cxfile);
+        if (!cxfile)
+            return Location();
         CXString fn = clang_getFileName(cxfile);
         path = clang_getCString(fn);
         clang_disposeString(fn);
@@ -267,6 +268,8 @@ static inline Location makeLocation(const CXCursor& cursor)
     CXFile file;
     unsigned line, column;
     clang_getSpellingLocation(cxloc, &file, &line, &column, 0);
+    if (!file)
+        return Location();
     CXString fileName = clang_getFileName(file);
     const Location loc(clang_getCString(fileName), line, column);
     clang_disposeString(fileName);
@@ -354,6 +357,8 @@ CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXId
     clang_disposeString(str);
     info->files.push_back(path);
     const Location loc = makeLocation(incl->hashLoc);
+    if (loc.isEmpty())
+        return 0;
     info->depends[loc.path()].insert(path);
     info->reverseDepends[path].insert(loc.path());
     info->incs[loc] = path;
@@ -384,6 +389,8 @@ static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor parent, CXC
         // do stuff
         ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
         const Location refLoc = makeLocation(cursor);
+        if (refLoc.isEmpty())
+            return CXChildVisit_Continue;
         const String usr = makeUsr(clang_getCursorReferenced(cursor));
 
         CursorInfo cursorInfo;
@@ -451,6 +458,8 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
     const bool def = decl->isDefinition;
     const Location declLoc = makeLocation(decl->loc);
+    if (declLoc.isEmpty())
+        return;
     const String usr(decl->entityInfo->USR);
 
     CursorInfo cursorInfo;
@@ -498,6 +507,8 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
     const Location refLoc = makeLocation(ref->loc);
+    if (refLoc.isEmpty())
+        return;
     const String usr(ref->referencedEntity->USR);
 
     CursorInfo cursorInfo;
