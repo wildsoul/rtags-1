@@ -10,6 +10,7 @@
 class ClangUnit;
 
 typedef Map<String, Set<Location> > UsrSet;
+typedef Map<String, Set<String> > VirtualSet;
 
 struct CursorInfo
 {
@@ -42,6 +43,10 @@ public:
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
 
 private:
+    void writeReferences(const String& usr, Connection* conn) const;
+    void writeDeclarations(const String& usr, Connection* conn) const;
+
+private:
     Map<Path, ClangUnit*> units;
     ThreadPool pool;
     CXIndex cidx;
@@ -52,6 +57,7 @@ private:
     Map<String, String> names;  // name->usr
     Map<Location, CursorInfo> usrs; // location->usr
     UsrSet decls, defs, refs;   // usr->locations
+    VirtualSet virtuals; // usr->usrs
     
     friend class ClangUnit;
 };

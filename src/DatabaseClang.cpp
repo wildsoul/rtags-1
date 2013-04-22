@@ -1,6 +1,8 @@
 #include "DatabaseClang.h"
 #include "RTagsPlugin.h"
 #include "SourceInformation.h"
+#include "QueryMessage.h"
+#include <rct/Connection.h>
 #include <rct/LinkedList.h>
 #include <rct/MutexLocker.h>
 #include <rct/WaitCondition.h>
@@ -24,12 +26,13 @@ public:
 
 struct ClangIndexInfo
 {
-    List<Path> files;
+    LinkedList<Path> files;
 
     Map<Location, Path> incs;
     Map<String, String> names;  // name->usr
     Map<Location, CursorInfo> usrs; // location->usr
     UsrSet decls, defs, refs;   // usr->locations
+    VirtualSet virtuals; // usr->usrs
 };
 
 class ClangUnit
@@ -72,6 +75,7 @@ private:
     static CXIdxClientFile includedFile(CXClientData client_data, const CXIdxIncludedFileInfo* incl);
     static void indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl);
     static void indexEntityReference(CXClientData client_data, const CXIdxEntityRefInfo* ref);
+    static void indexArguments(ClangIndexInfo* info, const CXCursor& cursor);
 
 private:
     ClangUnit* mUnit;
@@ -104,15 +108,22 @@ void ClangUnit::merge(const ClangIndexInfo& info)
     database->names.unite(info.names);
     database->usrs.unite(info.usrs);
 
-    const UsrSet* src[] = { &info.decls, &info.defs, &info.refs };
-    UsrSet* dst[] = { &database->decls, &database->defs, &database->refs };
-    for (unsigned i = 0; i < sizeof(src); ++i) {
+    const UsrSet* src[] = { &info.decls, &info.defs, &info.refs, 0 };
+    UsrSet* dst[] = { &database->decls, &database->defs, &database->refs, 0 };
+    for (unsigned i = 0; src[i]; ++i) {
         UsrSet::const_iterator usr = src[i]->begin();
         const UsrSet::const_iterator end = src[i]->end();
         while (usr != end) {
             (*dst[i])[usr->first].unite(usr->second);
             ++usr;
         }
+    }
+
+    VirtualSet::const_iterator virt = info.virtuals.begin();
+    const VirtualSet::const_iterator end = info.virtuals.end();
+    while (virt != end) {
+        database->virtuals[virt->first].unite(virt->second);
+        ++virt;
     }
 }
 
@@ -127,11 +138,26 @@ ClangParseJob::~ClangParseJob()
 
 static inline Location makeLocation(const CXIdxLoc& cxloc)
 {
-    CXIdxClientFile file;
+    CXIdxClientFile file = 0;
     unsigned line, column;
     clang_indexLoc_getFileLocation(cxloc, &file, 0, &line, &column, 0);
+    assert(file != 0);
     const Path* path = static_cast<Path*>(file);
     return Location(*path, line, column);
+}
+
+static inline Location makeLocation(const CXCursor& cursor)
+{
+    const CXSourceLocation cxloc = clang_getCursorLocation(cursor);
+    if (clang_equalLocations(cxloc, clang_getNullLocation()))
+        return Location();
+    CXFile file;
+    unsigned line, column;
+    clang_getSpellingLocation(cxloc, &file, &line, &column, 0);
+    CXString fileName = clang_getFileName(file);
+    const Location loc(clang_getCString(fileName), line, column);
+    clang_disposeString(fileName);
+    return loc;
 }
 
 static inline Database::Cursor::Kind makeKind(CXIdxEntityKind cxkind, bool def)
@@ -200,9 +226,9 @@ CXIdxClientFile ClangParseJob::enteredMainFile(CXClientData client_data, CXFile 
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
     CXString str = clang_getFileName(mainFile);
-    info->files.append(clang_getCString(str));
+    info->files.push_back(clang_getCString(str));
     clang_disposeString(str);
-    return &info->files.last();
+    return &info->files.back();
 }
 
 CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXIdxIncludedFileInfo* incl)
@@ -211,15 +237,64 @@ CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXId
     CXString str = clang_getFileName(incl->file);
     const Path path(clang_getCString(str));
     clang_disposeString(str);
-    info->files.append(path);
+    info->files.push_back(path);
     info->incs[makeLocation(incl->hashLoc)] = path;
-    return &info->files.last();
+    return &info->files.back();
+}
+
+static inline String makeUsr(const CXCursor& cursor)
+{
+    CXString str = clang_getCursorUSR(cursor);
+    const String usr(clang_getCString(str));
+    clang_disposeString(str);
+    return usr;
+}
+
+static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    switch (clang_getCursorKind(parent)) {
+    case CXCursor_ParmDecl:
+    case CXCursor_FunctionDecl:
+    case CXCursor_CXXMethod:
+    case CXCursor_Constructor:
+        break;
+    default:
+        return CXChildVisit_Break;
+    }
+    switch (clang_getCursorKind(cursor)) {
+    case CXCursor_TypeRef: {
+        // do stuff
+        ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
+        const Location refLoc = makeLocation(cursor);
+        const String usr = makeUsr(clang_getCursorReferenced(cursor));
+
+        CursorInfo cursorInfo;
+        cursorInfo.usr = usr;
+        cursorInfo.kind = Database::Cursor::Reference;
+        info->usrs[refLoc] = cursorInfo;
+
+        //error() << "indexing ref" << usr << refLoc;
+
+        info->refs[usr].insert(refLoc);
+        break; }
+    case CXCursor_ParmDecl:
+    case CXCursor_FunctionDecl:
+    case CXCursor_CXXMethod:
+    case CXCursor_Constructor:
+        return CXChildVisit_Recurse;
+    default:
+        break;
+    }
+    return CXChildVisit_Continue;
+}
+
+void ClangParseJob::indexArguments(ClangIndexInfo* info, const CXCursor& cursor)
+{
+    clang_visitChildren(cursor, argumentVisistor, info);
 }
 
 void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl)
 {
-    if (decl->isImplicit) // not sure about this
-        return;
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
     const bool def = decl->isDefinition;
     const Location declLoc = makeLocation(decl->loc);
@@ -229,6 +304,34 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
     cursorInfo.usr = usr;
     cursorInfo.kind = makeKind(decl->entityInfo->kind, def);
     info->usrs[declLoc] = cursorInfo;
+
+    //error() << "indexing" << (def ? "def" : "decl") << decl->entityInfo->kind << usr << declLoc;
+    switch (decl->entityInfo->kind) {
+    case CXIdxEntity_CXXInstanceMethod:
+        if (clang_CXXMethod_isVirtual(decl->cursor)) {
+            //error() << "virtual at" << makeLocation(decl->cursor);
+            CXCursor* overridden;
+            unsigned num;
+            clang_getOverriddenCursors(decl->cursor, &overridden, &num);
+            if (num) {
+                String virtusr;
+                for (unsigned i = 0; i < num; ++i) {
+                    virtusr = makeUsr(overridden[i]);
+                    //error() << "overridden at" << makeLocation(overridden[i]) << virtusr;
+                    info->virtuals[usr].insert(virtusr);
+                    info->virtuals[virtusr].insert(usr);
+                }
+                clang_disposeOverriddenCursors(overridden);
+            }
+        }
+        // fall through
+    case CXIdxEntity_CXXStaticMethod:
+    case CXIdxEntity_CXXConstructor:
+    case CXIdxEntity_Function:
+        indexArguments(info, decl->cursor);
+    default:
+        break;
+    }
 
     if (def)
         info->defs[usr].insert(declLoc);
@@ -246,6 +349,8 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
     cursorInfo.usr = usr;
     cursorInfo.kind = Database::Cursor::Reference;
     info->usrs[refLoc] = cursorInfo;
+
+    //error() << "indexing ref" << usr << refLoc;
 
     info->refs[usr].insert(refLoc);
 }
@@ -505,9 +610,84 @@ Database::Cursor DatabaseClang::cursor(const Location &location) const
     return cursor;
 }
 
+void DatabaseClang::writeReferences(const String& usr, Connection* conn) const
+{
+    const UsrSet::const_iterator ref = refs.find(usr);
+    if (ref != refs.end()) {
+        Set<Location>::const_iterator loc = ref->second.begin();
+        const Set<Location>::const_iterator end = ref->second.end();
+        while (loc != end) {
+            conn->write<256>("%s:%d:%d %c\t", loc->path().nullTerminated(), loc->line(), loc->column(), 'r');
+            ++loc;
+        }
+    }
+}
+
+void DatabaseClang::writeDeclarations(const String& usr, Connection* conn) const
+{
+    const UsrSet* usrs[] = { &decls, &defs, 0 };
+    for (int i = 0; usrs[i]; ++i) {
+        const UsrSet::const_iterator decl = usrs[i]->find(usr);
+        if (decl != usrs[i]->end()) {
+            Set<Location>::const_iterator loc = decl->second.begin();
+            const Set<Location>::const_iterator end = decl->second.end();
+            while (loc != end) {
+                conn->write<256>("%s:%d:%d %c\t", loc->path().nullTerminated(), loc->line(), loc->column(), 'r');
+                ++loc;
+            }
+        }
+    }
+}
+
 void DatabaseClang::references(const Location& location, unsigned queryFlags,
                                const List<Path> &pathFilter, Connection *conn) const
 {
+    const bool wantVirtuals = queryFlags & QueryMessage::FindVirtuals;
+    const bool wantAll = queryFlags & QueryMessage::AllReferences;
+
+    MutexLocker locker(&mutex);
+    Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(location);
+    if (usr == usrs.end()) {
+        conn->write("`");
+        return;
+    }
+    if (usr->first > location) { // we're looking for the previous one
+        if (usr == usrs.begin()) {
+            conn->write("`");
+            return;
+        }
+        --usr;
+        if (usr->first.path() != location.path()) {
+            // we've iterated past the beginning of the file
+            conn->write("`");
+            return;
+        }
+    }
+    assert(!(usr->first > location));
+
+    const String usrstr = usr->second.usr;
+
+    if (wantAll || !wantVirtuals) {
+        writeReferences(usrstr, conn);
+        if (wantAll)
+            writeDeclarations(usrstr, conn);
+    }
+    if (wantVirtuals) {
+        if (wantAll)
+            writeReferences(usrstr, conn);
+        writeDeclarations(usrstr, conn);
+
+        const VirtualSet::const_iterator virt = virtuals.find(usrstr);
+        Set<String>::const_iterator vusr = virt->second.begin();
+        const Set<String>::const_iterator vend = virt->second.end();
+        while (vusr != vend) {
+            if (wantAll)
+                writeReferences(*vusr, conn);
+            writeDeclarations(*vusr, conn);
+            ++vusr;
+        }
+    }
+    conn->write("`");
 }
 
 void DatabaseClang::status(const String &query, Connection *conn) const
