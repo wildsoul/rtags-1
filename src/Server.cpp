@@ -28,19 +28,16 @@
 #include <stdio.h>
 
 void *UnloadTimer = &UnloadTimer;
-Server *Server::sInstance = 0;
+Server::Options Server::sOptions;
+RTagsPluginFactory Server::sPluginFactory;
 Server::Server()
     : mServer(0), mVerbose(false), mClangThread(0)
 {
-    assert(!sInstance);
-    sInstance = this;
 }
 
 Server::~Server()
 {
     clear();
-    assert(sInstance == this);
-    sInstance = 0;
     if (mClangThread) {
         mClangThread->stop();
         mClangThread->join();
@@ -51,7 +48,7 @@ Server::~Server()
 
 void Server::clear()
 {
-    Path::rm(mOptions.socketFile);
+    Path::rm(sOptions.socketFile);
     delete mServer;
     mServer = 0;
     mProjects.clear();
@@ -62,35 +59,35 @@ bool Server::init(const Options &options)
     {
         List<Path> plugins = Rct::executablePath().parentDir().files(Path::File);
         for (int i=0; i<plugins.size(); ++i) {
-            if (mPluginFactory.addPlugin(plugins.at(i))) {
+            if (sPluginFactory.addPlugin(plugins.at(i))) {
                 error() << "Loaded plugin" << plugins.at(i);
             } else {
                 const char *ext = plugins.at(i).extension();
                 if (ext && !strcmp(plugins.at(i).extension(), "so"))
-                    error() << "Plugin error" << mPluginFactory.error();
+                    error() << "Plugin error" << sPluginFactory.error();
             }
         }
     }
     RTags::initMessages();
 
-    mOptions = options;
+    sOptions = options;
     if (options.options & NoBuiltinIncludes) {
-        mOptions.defaultArguments.append("-nobuiltininc");
-        mOptions.defaultArguments.append("-nostdinc++");
+        sOptions.defaultArguments.append("-nobuiltininc");
+        sOptions.defaultArguments.append("-nostdinc++");
     }
 
     if (options.options & Wall)
-        mOptions.defaultArguments.append("-Wall");
-    mOptions.defaultArguments << "-fspell-checking";
-    error() << "using args:" << String::join(mOptions.defaultArguments, " ");
+        sOptions.defaultArguments.append("-Wall");
+    sOptions.defaultArguments << "-fspell-checking";
+    error() << "using args:" << String::join(sOptions.defaultArguments, " ");
 
-    if (mOptions.options & ClearProjects) {
+    if (sOptions.options & ClearProjects) {
         clearProjects();
     }
 
     for (int i=0; i<10; ++i) {
         mServer = new SocketServer;
-        if (mServer->listenUnix(mOptions.socketFile)) {
+        if (mServer->listenUnix(sOptions.socketFile)) {
             break;
         }
         delete mServer;
@@ -98,34 +95,34 @@ bool Server::init(const Options &options)
         if (!i) {
             enum { Timeout = 1000 };
             Client client;
-            if (client.connectToServer(mOptions.socketFile, Timeout)) {
+            if (client.connectToServer(sOptions.socketFile, Timeout)) {
                 QueryMessage msg(QueryMessage::Shutdown);
                 client.send(&msg, Timeout);
             }
         }
         sleep(1);
-        Path::rm(mOptions.socketFile);
+        Path::rm(sOptions.socketFile);
     }
     if (!mServer) {
-        error("Unable to listen on %s", mOptions.socketFile.constData());
+        error("Unable to listen on %s", sOptions.socketFile.constData());
         return false;
     }
 
     mServer->clientConnected().connect(this, &Server::onNewConnection);
 
-    if (!(mOptions.options & NoClangThread)) {
+    if (!(sOptions.options & NoClangThread)) {
         mClangThread = new ClangThread;
         mClangThread->start();
     }
 
     reloadProjects();
-    if (!(mOptions.options & NoStartupCurrentProject)) {
-        Path current = Path(mOptions.dataDir + ".currentProject").readAll(1024);
+    if (!(sOptions.options & NoStartupCurrentProject)) {
+        Path current = Path(sOptions.dataDir + ".currentProject").readAll(1024);
         if (current.size() > 1) {
             current.chop(1);
             if (!setCurrentProject(current)) {
                 error() << "Can't restore project" << current;
-                unlink((mOptions.dataDir + ".currentProject").constData());
+                unlink((sOptions.dataDir + ".currentProject").constData());
             }
         }
     }
@@ -158,7 +155,7 @@ shared_ptr<Project> Server::addProject(const Path &path)
 int Server::reloadProjects()
 {
     mProjects.clear();
-    List<Path> projects = mOptions.dataDir.files(Path::File);
+    List<Path> projects = sOptions.dataDir.files(Path::File);
     const Path home = Path::home();
     for (int i=0; i<projects.size(); ++i) {
         Path path = projects.at(i).fileName();
@@ -240,10 +237,10 @@ void Server::handleCompileMessage(CompileMessage *message, Connection *conn)
     debug() << inputFiles << "in" << srcRoot;
     const int count = inputFiles.size();
     int filtered = 0;
-    if (!mOptions.excludeFilters.isEmpty()) {
+    if (!sOptions.excludeFilters.isEmpty()) {
         for (int i=0; i<count; ++i) {
             Path &p = inputFiles[i];
-            if (Filter::filter(p, mOptions.excludeFilters) == Filter::Filtered) {
+            if (Filter::filter(p, sOptions.excludeFilters) == Filter::Filtered) {
                 warning() << "Filtered out" << p;
                 p.clear();
                 ++filtered;
@@ -870,9 +867,9 @@ void Server::clearProjects()
 {
     for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it)
         it->second->unload();
-    Rct::removeDirectory(mOptions.dataDir);
+    Rct::removeDirectory(sOptions.dataDir);
     mCurrentProject.reset();
-    unlink((mOptions.dataDir + ".currentProject").constData());
+    unlink((sOptions.dataDir + ".currentProject").constData());
     mProjects.clear();
 }
 
@@ -923,18 +920,18 @@ shared_ptr<Project> Server::setCurrentProject(const shared_ptr<Project> &project
 {
     if (project && project != mCurrentProject.lock()) {
         mCurrentProject = project;
-        Path::mkdir(mOptions.dataDir);
-        FILE *f = fopen((mOptions.dataDir + ".currentProject").constData(), "w");
+        Path::mkdir(sOptions.dataDir);
+        FILE *f = fopen((sOptions.dataDir + ".currentProject").constData(), "w");
         if (f) {
             if (!fwrite(project->path().constData(), project->path().size(), 1, f) || !fwrite("\n", 1, 1, f)) {
-                error() << "error writing to" << (mOptions.dataDir + ".currentProject");
+                error() << "error writing to" << (sOptions.dataDir + ".currentProject");
                 fclose(f);
-                unlink((mOptions.dataDir + ".currentProject").constData());
+                unlink((sOptions.dataDir + ".currentProject").constData());
             } else {
                 fclose(f);
             }
         } else {
-            error() << "error opening" << (mOptions.dataDir + ".currentProject") << "for write";
+            error() << "error opening" << (sOptions.dataDir + ".currentProject") << "for write";
         }
 
         if (!project->isValid())
@@ -980,14 +977,14 @@ void Server::removeProject(const QueryMessage &query, Connection *conn)
         if (cur->second->match(match)) {
             if (mCurrentProject.lock() == it->second) {
                 mCurrentProject.reset();
-                unlink((mOptions.dataDir + ".currentProject").constData());
+                unlink((sOptions.dataDir + ".currentProject").constData());
             }
             cur->second->unload();
             Path path = cur->first;
             conn->write<128>("%s project: %s", unload ? "Unloaded" : "Deleted", path.constData());
             if (!unload) {
                 Server::encodePath(path);
-                Path::rm(mOptions.dataDir + path);
+                Path::rm(sOptions.dataDir + path);
                 mProjects.erase(cur);
             }
         }

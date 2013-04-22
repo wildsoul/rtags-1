@@ -32,7 +32,6 @@ public:
 
     Server();
     ~Server();
-    static Server *instance() { return sInstance; }
     enum Option {
         NoOptions = 0x000,
         NoBuiltinIncludes = 0x001,
@@ -44,14 +43,15 @@ public:
         NoClangThread = 0x040
     };
     struct Options {
-        Options() : options(0) {}
+        Options() : options(0), threadPoolSize(0), threadPoolStackSize(0) {}
         Path socketFile, dataDir;
         unsigned options;
+        int threadPoolSize, threadPoolStackSize;
         List<String> defaultArguments, excludeFilters;
     };
     bool init(const Options &options);
-    const Options &options() const { return mOptions; }
-    RTagsPluginFactory &factory() { return mPluginFactory; }
+    static const Options &options() { return sOptions; }
+    static RTagsPluginFactory &factory() { return sPluginFactory; }
     static bool encodePath(Path &path);
     static void decodePath(Path &path);
     Path currentSourceFile() const { return mCurrentSourceFile; }
@@ -113,15 +113,14 @@ private:
     ProjectsMap mProjects;
     weak_ptr<Project> mCurrentProject;
 
-    static Server *sInstance;
-    Options mOptions;
+    static Options sOptions;
     SocketServer *mServer;
     Path mCurrentSourceFile;
     bool mVerbose;
 
     signalslot::Signal2<int, const List<String> &> mComplete;
 
-    RTagsPluginFactory mPluginFactory;
+    static RTagsPluginFactory sPluginFactory;
     ClangThread *mClangThread;
 
     friend class CommandProcess;

@@ -36,7 +36,7 @@ ClangThread::ClangThread()
 void ClangThread::run()
 {
     CXIndex index = clang_createIndex(0, 1);
-    const List<String> &defaultArguments = Server::instance()->options().defaultArguments;
+    const List<String> &defaultArguments = Server::options().defaultArguments;
 
     while (true) {
         SourceInformation source;
@@ -134,7 +134,7 @@ static inline String xmlEscape(const String& xml)
 void ClangThread::diagnose(const SourceInformation &source, CXTranslationUnit unit, const Set<Path> &files)
 {
     const unsigned diagnosticCount = clang_getNumDiagnostics(unit);
-    const unsigned options = Server::instance()->options().options;
+    const unsigned options = Server::options().options;
 
     Map<Path, Map<unsigned, XmlEntry> > xmlEntries;
     const bool xmlEnabled = testLog(RTags::CompilationErrorXml);

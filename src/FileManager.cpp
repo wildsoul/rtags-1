@@ -19,7 +19,7 @@ class ScanThread : public Thread
 {
 public:
     ScanThread(const Path &path)
-        : mPath(path), mFilters(Server::instance()->options().excludeFilters)
+        : mPath(path), mFilters(Server::options().excludeFilters)
     {
         if (!mPath.endsWith('/'))
             mPath.append('/');

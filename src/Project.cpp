@@ -21,7 +21,7 @@ Project::Project(const Path &path)
 {
     mWatcher.modified().connect(this, &Project::onFileModified);
     mWatcher.removed().connect(this, &Project::onFileRemoved);
-    mDatabase = Server::instance()->factory().createDatabase();
+    mDatabase = Server::factory().createDatabase();
 }
 
 void Project::init()
@@ -35,7 +35,7 @@ bool Project::save()
 {
     Path srcPath = mPath;
     Server::encodePath(srcPath);
-    const Server::Options &options = Server::instance()->options();
+    const Server::Options &options = Server::options();
     Path p = options.dataDir;
     if (!p.exists()) {
         if (!Path::mkdir(p)) {
@@ -70,7 +70,7 @@ bool Project::restore()
     StopWatch timer;
     Path path = mPath;
     Server::encodePath(path);
-    const Path p = Server::instance()->options().dataDir + path;
+    const Path p = Server::options().dataDir + path;
     bool restoreError = false;
     FILE *f = fopen(p.constData(), "r");
     if (!f)
@@ -242,7 +242,7 @@ bool Project::index(const Path &sourceFile, const GccArguments &args)
         sourceInformation.sourceFile = sourceFile;
     } else {
         List<SourceInformation::Build> &builds = sourceInformation.builds;
-        const bool allowMultiple = Server::instance()->options().options & Server::AllowMultipleBuildsForSameCompiler;
+        const bool allowMultiple = Server::options().options & Server::AllowMultipleBuildsForSameCompiler;
         for (int j=0; j<builds.size(); ++j) {
             if (builds.at(j).compiler == compiler) {
                 if (builds.at(j) == build) {

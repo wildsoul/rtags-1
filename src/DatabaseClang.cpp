@@ -2,6 +2,7 @@
 #include "RTagsPlugin.h"
 #include "SourceInformation.h"
 #include "QueryMessage.h"
+#include "Server.h"
 #include <rct/Connection.h>
 #include <rct/LinkedList.h>
 #include <rct/MutexLocker.h>
@@ -110,11 +111,9 @@ private:
     static void disposeUnit(TUWrapper* unit);
 
     static Mutex cachedMutex;
-    static int maxCached;
     static LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > cached;
 };
 
-int ClangParseJob::maxCached = std::max(ThreadPool::idealThreadCount(), 5);
 LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > ClangParseJob::cached;
 Mutex ClangParseJob::cachedMutex;
 
@@ -548,6 +547,7 @@ shared_ptr<TUWrapper> ClangParseJob::addCached(const Path& path, CXTranslationUn
     }
     shared_ptr<TUWrapper> result(new TUWrapper(unit));
     cached.push_back(std::make_pair(path, result));
+    static int maxCached = std::max(Server::options().threadPoolSize, 5);
     if (cached.size() > maxCached) {
         cached.pop_front();
         assert(cached.size() == maxCached);
@@ -728,7 +728,7 @@ void ClangUnit::reindex(const SourceInformation& info)
 }
 
 DatabaseClang::DatabaseClang()
-    : pool(std::max(ThreadPool::idealThreadCount(), 3)), pendingJobs(0)
+    : pool(Server::options().threadPoolSize, Server::options().threadPoolStackSize), pendingJobs(0)
 {
     cidx = clang_createIndex(1, 1);
     caction = clang_IndexAction_create(cidx);

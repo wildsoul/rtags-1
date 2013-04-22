@@ -34,7 +34,7 @@ void sigIntHandler(int)
 }
 
 #define EXCLUDEFILTER_DEFAULT "*/CMakeFiles/*;*/cmake*/Modules/*;*/conftest.c*;/tmp/*"
-void usage(FILE *f)
+void usage(FILE *f, const Server::Options &options)
 {
     fprintf(f,
             "rdm [...options...]\n"
@@ -48,6 +48,8 @@ void usage(FILE *f)
             "  --clear-projects|-C               Clear all projects.\n"
             "  --enable-sighandler|-s            Enable signal handler to dump stack for crashes..\n"
             "                                    Note that this might not play well with clang's signal handler.\n"
+            "  --thread-pool-size|-j [arg]       Number of threads for thread pool (default %d).\n"
+            "  --thread-pool-stack-size|-T [arg] Stack size for thread pool (default %d).\n"
             "  --clang-includepath|-P            Use clang include paths by default.\n"
             "  --no-Wall|-W                      Don't use -Wall.\n"
             "  --Wlarge-by-value-copy|-r [arg]   Use -Wlarge-by-value-copy=[arg] when invoking clang.\n"
@@ -62,7 +64,7 @@ void usage(FILE *f)
             "  --allow-multiple-builds|-m        Without this setting different flags for the same compiler will be merged for each source file.\n"
             "  --unload-timer|-u [arg]           Number of minutes to wait before unloading non-current projects (disabled by default).\n"
             "  --no-clang-thread|-O              Don't run clang thread (for fixits)\n"
-            "  --disable-plugin|-p [arg]         Don't load this plugin\n");
+            "  --disable-plugin|-p [arg]         Don't load this plugin\n", options.threadPoolSize, options.threadPoolStackSize);
 }
 
 int main(int argc, char** argv)
@@ -93,6 +95,8 @@ int main(int argc, char** argv)
         { "no-current-project", no_argument, 0, 'o' },
         { "no-clang-thread", no_argument, 0, 'O' },
         { "disable-plugin", required_argument, 0, 'p' },
+        { "thread-pool-stack-size", required_argument, 0, 'T' },
+        { "thread-pool-size", required_argument, 0, 'j' },
         { 0, 0, 0, 0 }
     };
     const String shortOptions = Rct::shortOptions(opts);
@@ -170,11 +174,19 @@ int main(int argc, char** argv)
         optind = 1;
     }
 
-    Server::Options serverOpts;
-    serverOpts.socketFile = String::format<128>("%s.rdm", Path::home().constData());
-    serverOpts.options = Server::Wall;
-    serverOpts.excludeFilters = String(EXCLUDEFILTER_DEFAULT).split(';');
-    serverOpts.dataDir = String::format<128>("%s.rtags", Path::home().constData());
+    Server::Options options;
+    options.threadPoolSize = std::max(3, ThreadPool::idealThreadCount());
+    {
+        size_t stacksize;
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_getstacksize(&attr, &stacksize);
+        options.threadPoolStackSize = stacksize * 2;
+    }
+    options.socketFile = String::format<128>("%s.rdm", Path::home().constData());
+    options.options = Server::Wall;
+    options.excludeFilters = String(EXCLUDEFILTER_DEFAULT).split(';');
+    options.dataDir = String::format<128>("%s.rtags", Path::home().constData());
 
     const char *logFile = 0;
     unsigned logFlags = 0;
@@ -196,55 +208,69 @@ int main(int argc, char** argv)
             logLevel = -1;
             break;
         case 'x':
-            serverOpts.excludeFilters += String(optarg).split(';');
+            options.excludeFilters += String(optarg).split(';');
             break;
         case 'n':
-            serverOpts.socketFile = optarg;
+            options.socketFile = optarg;
             break;
         case 'd':
-            serverOpts.dataDir = String::format<128>("%s", Path::resolved(optarg).constData());
+            options.dataDir = String::format<128>("%s", Path::resolved(optarg).constData());
             break;
         case 'h':
-            usage(stdout);
+            usage(stdout, options);
             return 0;
         case 'm':
-            serverOpts.options |= Server::AllowMultipleBuildsForSameCompiler;
+            options.options |= Server::AllowMultipleBuildsForSameCompiler;
             break;
         case 'o':
-            serverOpts.options |= Server::NoStartupCurrentProject;
+            options.options |= Server::NoStartupCurrentProject;
             break;
         case 'F':
-            serverOpts.options |= Server::IgnorePrintfFixits;
+            options.options |= Server::IgnorePrintfFixits;
             break;
         case 'U':
-            serverOpts.options |= Server::NoBuiltinIncludes;
+            options.options |= Server::NoBuiltinIncludes;
             break;
         case 'W':
-            serverOpts.options &= ~Server::Wall;
+            options.options &= ~Server::Wall;
             break;
         case 'C':
-            serverOpts.options |= Server::ClearProjects;
+            options.options |= Server::ClearProjects;
             break;
         case 's':
             enableSigHandler = true;
             break;
         case 'r': {
-            int large = atoi(optarg);
+            const int large = atoi(optarg);
             if (large <= 0) {
                 fprintf(stderr, "Can't parse argument to -r %s\n", optarg);
                 return 1;
             }
-            serverOpts.defaultArguments.append("-Wlarge-by-value-copy=" + String(optarg)); // ### not quite working
+            options.defaultArguments.append("-Wlarge-by-value-copy=" + String(optarg)); // ### not quite working
             break; }
+        case 'T':
+            options.threadPoolStackSize = atoi(optarg);
+            if (options.threadPoolStackSize <= 0) {
+                fprintf(stderr, "Can't parse argument to -T %s\n", optarg);
+                return 1;
+            }
+            break;
+        case 'j':
+            options.threadPoolSize = atoi(optarg);
+            if (options.threadPoolSize <= 0) {
+                fprintf(stderr, "Can't parse argument to -j %s\n", optarg);
+                return 1;
+            }
+            break;
         case 'D':
-            serverOpts.defaultArguments.append("-D" + String(optarg));
+            options.defaultArguments.append("-D" + String(optarg));
             break;
         case 'I':
-            serverOpts.defaultArguments.append("-I" + String(optarg));
+            options.defaultArguments.append("-I" + String(optarg));
             break;
         case 'i':
-            serverOpts.defaultArguments.append("-include");
-            serverOpts.defaultArguments.append(optarg);
+            options.defaultArguments.append("-include");
+            options.defaultArguments.append(optarg);
             break;
         case 'A':
             logFlags |= Log::Append;
@@ -257,7 +283,7 @@ int main(int argc, char** argv)
                 ++logLevel;
             break;
         case '?':
-            usage(stderr);
+            usage(stderr, options);
             return 1;
         }
     }
@@ -279,10 +305,10 @@ int main(int argc, char** argv)
     EventLoop loop;
 
     shared_ptr<Server> server(new Server);
-    ::socketFile = serverOpts.socketFile;
-    if (!serverOpts.dataDir.endsWith('/'))
-        serverOpts.dataDir.append('/');
-    if (!server->init(serverOpts)) {
+    ::socketFile = options.socketFile;
+    if (!options.dataDir.endsWith('/'))
+        options.dataDir.append('/');
+    if (!server->init(options)) {
         cleanupLogging();
         return 1;
     }
