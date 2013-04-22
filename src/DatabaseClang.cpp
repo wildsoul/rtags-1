@@ -30,7 +30,7 @@ struct ClangIndexInfo
 
     Map<Location, Path> incs;
     DependSet depends, reverseDepends;
-    Map<String, String> names;  // name->usr
+    Map<String, Set<String> > names;  // name->usr
     Map<Location, CursorInfo> usrs; // location->usr
     UsrSet decls, defs, refs;   // usr->locations
     VirtualSet virtuals; // usr->usrs
@@ -103,7 +103,7 @@ private:
     ClangIndexInfo mInfo;
 
 private:
-    static void addCached(const Path& path, shared_ptr<TUWrapper> unit);
+    static shared_ptr<TUWrapper> addCached(const Path& path, CXTranslationUnit unit, bool reparsed);
     static void disposeUnit(TUWrapper* unit);
 
     static Mutex cachedMutex;
@@ -184,9 +184,16 @@ void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
         dirty(sourceInformation.sourceFile);
 
     database->incs.unite(info.incs);
-    database->names.unite(info.names);
     database->usrs.unite(info.usrs);
 
+    {
+        Map<String, Set<String> >::const_iterator name = info.names.begin();
+        const Map<String, Set<String> >::const_iterator end = info.names.end();
+        while (name != end) {
+            database->names[name->first].unite(name->second);
+            ++name;
+        }
+    }
     {
         const UsrSet* src[] = { &info.decls, &info.defs, &info.refs, 0 };
         UsrSet* dst[] = { &database->decls, &database->defs, &database->refs, 0 };
@@ -392,6 +399,41 @@ void ClangParseJob::indexArguments(ClangIndexInfo* info, const CXCursor& cursor)
     clang_visitChildren(cursor, argumentVisistor, info);
 }
 
+static inline void addNamePermutations(CXCursor cursor, const String& usr, Map<String, Set<String> >& names)
+{
+    List<String> subnames;
+    unsigned res = 0;
+    for (;;) {
+        if (clang_isDeclaration(clang_getCursorKind(cursor))) {
+            CXString cxname = clang_getCursorSpelling(cursor);
+            String name(clang_getCString(cxname));
+            clang_disposeString(cxname);
+            if (!name.isEmpty()) {
+                subnames.append(name);
+                res += name.size();
+            }
+        }
+        cursor = clang_getCursorSemanticParent(cursor);
+        if (clang_equalCursors(cursor, clang_getNullCursor()))
+            break;
+    }
+
+    if (subnames.isEmpty())
+        return;
+
+    String current;
+    current.reserve(res + ((subnames.size() - 1) * 2));
+    List<String>::const_iterator n = subnames.begin();
+    const List<String>::const_iterator end = subnames.end();
+    while (n != end) {
+        if (!current.isEmpty())
+            current.prepend("::");
+        current.prepend(*n);
+        names[current].insert(usr);
+        ++n;
+    }
+}
+
 void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl)
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
@@ -432,6 +474,8 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
         break;
     }
 
+    addNamePermutations(decl->cursor, usr, info->names);
+
     if (def)
         info->defs[usr].insert(declLoc);
     else
@@ -468,23 +512,34 @@ void ClangParseJob::disposeUnit(TUWrapper* unit)
     }
 }
 
-void ClangParseJob::addCached(const Path& path, shared_ptr<TUWrapper> unit)
+shared_ptr<TUWrapper> ClangParseJob::addCached(const Path& path, CXTranslationUnit unit, bool reparsed)
 {
     MutexLocker locker(&cachedMutex);
-    LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::const_iterator c = cached.begin();
+    LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::iterator c = cached.begin();
     const LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::const_iterator end = cached.end();
     while (c != end) {
         if (c->first == path) {
-            assert(c->second->unit == unit->unit);
-            return;
+            shared_ptr<TUWrapper> result = c->second;
+            if (!reparsed) {
+                if (c->second->unit != unit) {
+                    cached.erase(c);
+                    result.reset(new TUWrapper(unit));
+                    cached.push_back(std::make_pair(path, result));
+                }
+                return result;
+            }
+            assert(c->second->unit == unit);
+            return result;
         }
         ++c;
     }
-    cached.push_back(std::make_pair(path, unit));
+    shared_ptr<TUWrapper> result(new TUWrapper(unit));
+    cached.push_back(std::make_pair(path, result));
     if (cached.size() > maxCached) {
         cached.pop_front();
         assert(cached.size() == maxCached);
     }
+    return result;
 }
 
 void ClangParseJob::stop()
@@ -502,8 +557,11 @@ void ClangParseJob::run()
 {
     {
         MutexLocker locker(&mInfo.mutex);
-        if (mInfo.stopped)
+        if (mInfo.stopped) {
+            MutexLocker locker(&mUnit->mutex);
+            mWait.wakeOne();
             return;
+        }
     }
 
     // clang parse
@@ -605,8 +663,7 @@ void ClangParseJob::run()
 
     shared_ptr<TUWrapper> wrapper;
     if (unit) {
-        wrapper.reset(new TUWrapper(unit));
-        addCached(mUnit->sourceInformation.sourceFile, wrapper);
+        wrapper = addCached(mUnit->sourceInformation.sourceFile, unit, mReparse);
     }
 
     MutexLocker locker(&mUnit->mutex);
@@ -745,6 +802,7 @@ void DatabaseClang::writeDeclarations(const String& usr, Connection* conn) const
 void DatabaseClang::references(const Location& location, unsigned queryFlags,
                                const List<Path> &pathFilter, Connection *conn) const
 {
+#warning need to respect pathFilter
     const bool wantVirtuals = queryFlags & QueryMessage::FindVirtuals;
     const bool wantAll = queryFlags & QueryMessage::AllReferences;
 
@@ -868,12 +926,68 @@ Set<Path> DatabaseClang::files(int mode) const
 
 Set<String> DatabaseClang::listSymbols(const String &string, const List<Path> &pathFilter) const
 {
-    return Set<String>();
+#warning need to respect pathFilter
+    Set<String> result;
+
+    MutexLocker locker(&mutex);
+    Map<String, Set<String> >::const_iterator name = names.lower_bound(string);
+    const Map<String, Set<String> >::const_iterator end = names.end();
+    while (name != end && name->first.startsWith(string)) {
+        result.insert(name->first);
+        ++name;
+    }
+
+    return result;
+}
+
+static inline Location firstLocation(const String& usr, const UsrSet& set)
+{
+    const UsrSet::const_iterator it = set.find(usr);
+    if (it == set.end())
+        return Location();
+    const Set<Location>& locs = it->second;
+    if (locs.isEmpty())
+        return Location();
+    return *locs.begin();
 }
 
 Set<Database::Cursor> DatabaseClang::findCursors(const String &string, const List<Path> &pathFilter) const
 {
-    return Set<Cursor>();
+#warning need to respect pathFilter
+    MutexLocker locker(&mutex);
+    Map<String, Set<String> >::const_iterator name = names.find(string);
+    if (name == names.end())
+        return Set<Cursor>();
+
+    Set<Cursor> cursors;
+
+    Set<String>::const_iterator usr = name->second.begin();
+    const Set<String>::const_iterator end = name->second.end();
+    while (usr != end) {
+        const UsrSet* usrs[] = { &decls, &defs, 0 };
+        for (int i = 0; usrs[i]; ++i) {
+            const UsrSet::const_iterator decl = usrs[i]->find(*usr);
+            if (decl != usrs[i]->end()) {
+                Set<Location>::const_iterator loc = decl->second.begin();
+                const Set<Location>::const_iterator end = decl->second.end();
+                while (loc != end) {
+                    Map<Location, CursorInfo>::const_iterator info = DatabaseClang::usrs.find(*loc);
+                    if (info != DatabaseClang::usrs.end()) {
+                        Cursor cursor;
+                        cursor.symbolName = name->first;
+                        cursor.location = *loc;
+                        cursor.target = firstLocation(*usr, usrs[i] == &decls ? defs : decls);
+                        cursor.kind = info->second.kind;
+                        cursors.insert(cursor);
+                    }
+                    ++loc;
+                }
+            }
+        }
+        ++usr;
+    }
+
+    return cursors;
 }
 
 Set<Database::Cursor> DatabaseClang::cursors(const Path &path) const

@@ -57,10 +57,10 @@ private:
     int pendingJobs;
     Map<Location, Path> incs;
     DependSet depends, reverseDepends;
-    Map<String, String> names;  // name->usr
-    Map<Location, CursorInfo> usrs; // location->usr
-    UsrSet decls, defs, refs;   // usr->locations
-    VirtualSet virtuals; // usr->usrs
+    Map<String, Set<String> > names; // name->usr
+    Map<Location, CursorInfo> usrs;  // location->usr
+    UsrSet decls, defs, refs;        // usr->locations
+    VirtualSet virtuals;             // usr->usrs
     
     friend class ClangUnit;
 };
