@@ -620,8 +620,10 @@ void ClangUnit::reindex(const SourceInformation& info)
     MutexLocker locker(&mutex);
     if (job) {
         while (job->state() != ClangParseJob::Finished) {
-            job->stop();
-            job->wait();
+            if (!database->pool.remove(job)) {
+                job->stop();
+                job->wait();
+            }
         }
     }
     const bool reparse = (sourceInformation == info);
