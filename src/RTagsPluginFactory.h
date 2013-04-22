@@ -1,10 +1,10 @@
 #ifndef RTagsPluginFactory_h
 #define RTagsPluginFactory_h
 
-#include <rct/Memory.h>
-#include <rct/Path.h>
 #include <rct/List.h>
+#include <rct/Path.h>
 #include <rct/Plugin.h>
+#include <rct/Tr1.h>
 #include "RTagsPlugin.h"
 
 class RTagsPluginFactory

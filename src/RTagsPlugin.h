@@ -1,9 +1,9 @@
 #ifndef RTagsPlugin_h
 #define RTagsPlugin_h
 
-#include <rct/Memory.h>
-#include <rct/Path.h>
 #include <rct/List.h>
+#include <rct/Path.h>
+#include <rct/Tr1.h>
 
 class Database;
 class RTagsPlugin
