@@ -58,7 +58,6 @@ public:
     ClangUnit(DatabaseClang* db);
 
     void reindex(const SourceInformation& info);
-    bool ensureIndexed();
 
     CXIndex index() { return database->cidx; }
     CXIndexAction action() { return database->caction; }
@@ -84,6 +83,9 @@ public:
     void wait();
     void stop();
 
+    // needs to be called with mUnit->mutex locked
+    bool done() { return mDone; }
+
 protected:
     virtual void run();
 
@@ -99,6 +101,7 @@ private:
 private:
     ClangUnit* mUnit;
     bool mReparse;
+    bool mDone;
     WaitCondition mWait;
     ClangIndexInfo mInfo;
 
@@ -228,7 +231,7 @@ void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
 }
 
 ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
-    : mUnit(unit), mReparse(reparse)
+    : mUnit(unit), mReparse(reparse), mDone(false)
 {
     mInfo.stopped = false;
 }
@@ -240,11 +243,21 @@ ClangParseJob::~ClangParseJob()
 static inline Location makeLocation(const CXIdxLoc& cxloc)
 {
     CXIdxClientFile file = 0;
+    CXFile cxfile = 0;
     unsigned line, column;
-    clang_indexLoc_getFileLocation(cxloc, &file, 0, &line, &column, 0);
-    assert(file != 0);
-    const Path* path = static_cast<Path*>(file);
-    return Location(*path, line, column);
+    clang_indexLoc_getFileLocation(cxloc, &file, &cxfile, &line, &column, 0);
+
+    Path path;
+    if (file) {
+        path = *static_cast<Path*>(file);
+    } else {
+        // fall back to CXFile
+        assert(cxfile);
+        CXString fn = clang_getFileName(cxfile);
+        path = clang_getCString(fn);
+        clang_disposeString(fn);
+    }
+    return Location(path, line, column);
 }
 
 static inline Location makeLocation(const CXCursor& cursor)
@@ -559,6 +572,7 @@ void ClangParseJob::run()
         MutexLocker locker(&mInfo.mutex);
         if (mInfo.stopped) {
             MutexLocker locker(&mUnit->mutex);
+            mDone = true;
             mWait.wakeOne();
             return;
         }
@@ -588,6 +602,16 @@ void ClangParseJob::run()
 
                 if (clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit)) {
                     mInfo.clear();
+                }
+
+                {
+                    MutexLocker locker(&mInfo.mutex);
+                    if (mInfo.stopped) {
+                        MutexLocker locker(&mUnit->mutex);
+                        mDone = true;
+                        mWait.wakeOne();
+                        return;
+                    }
                 }
                 mUnit->merge(mInfo, ClangUnit::Dirty);
             }
@@ -653,6 +677,15 @@ void ClangParseJob::run()
                 mInfo.clear();
             }
 
+            {
+                MutexLocker locker(&mInfo.mutex);
+                if (mInfo.stopped) {
+                    MutexLocker locker(&mUnit->mutex);
+                    mDone = true;
+                    mWait.wakeOne();
+                    return;
+                }
+            }
             mUnit->merge(mInfo, build == builds.begin() ? ClangUnit::Dirty : ClangUnit::Add);
 
             ++build;
@@ -669,6 +702,7 @@ void ClangParseJob::run()
     MutexLocker locker(&mUnit->mutex);
     mUnit->unit = wrapper;
     mUnit->indexed = (unit != 0);
+    mDone = true;
     mWait.wakeOne();
 }
 
@@ -676,30 +710,21 @@ void ClangUnit::reindex(const SourceInformation& info)
 {
     MutexLocker locker(&mutex);
     if (job) {
-        while (job->state() != ClangParseJob::Finished) {
+        while (!job->done()) {
             if (!database->pool.remove(job)) {
                 job->stop();
                 job->wait();
+            } else {
+                break;
             }
         }
     }
+
     const bool reparse = (sourceInformation == info);
     if (!reparse)
         sourceInformation = info;
     job.reset(new ClangParseJob(this, reparse));
     database->pool.start(job);
-}
-
-bool ClangUnit::ensureIndexed()
-{
-    MutexLocker locker(&mutex);
-    if (job) {
-        while (job->state() != ClangParseJob::Finished) {
-            job->wait();
-        }
-        job.reset();
-    }
-    return indexed;
 }
 
 DatabaseClang::DatabaseClang()
@@ -880,6 +905,27 @@ int DatabaseClang::index(const SourceInformation &sourceInformation)
 
 void DatabaseClang::remove(const Path &sourceFile)
 {
+    MutexLocker locker(&mutex);
+    {
+        // remove headers?
+        DependSet::iterator dep = depends.find(sourceFile);
+        if (dep != depends.end())
+            depends.erase(dep);
+    }
+    {
+        DependSet::iterator dep = reverseDepends.begin();
+        while (dep != reverseDepends.end()) {
+            Set<Path>& set = dep->second;
+            if (set.remove(sourceFile)) {
+                if (set.isEmpty())
+                    reverseDepends.erase(dep++);
+                else
+                    ++dep;
+            } else {
+                ++dep;
+            }
+        }
+    }
 }
 
 bool DatabaseClang::isIndexing() const
