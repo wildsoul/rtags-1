@@ -29,10 +29,27 @@ struct ClangIndexInfo
     LinkedList<Path> files;
 
     Map<Location, Path> incs;
+    DependSet depends, reverseDepends;
     Map<String, String> names;  // name->usr
     Map<Location, CursorInfo> usrs; // location->usr
     UsrSet decls, defs, refs;   // usr->locations
     VirtualSet virtuals; // usr->usrs
+
+    void clear()
+    {
+        incs.clear();
+        depends.clear();
+        reverseDepends.clear();
+        names.clear();
+        usrs.clear();
+        decls.clear();
+        defs.clear();
+        refs.clear();
+        virtuals.clear();
+    }
+
+    Mutex mutex;
+    bool stopped;
 };
 
 class ClangUnit
@@ -41,13 +58,14 @@ public:
     ClangUnit(DatabaseClang* db);
 
     void reindex(const SourceInformation& info);
-    bool isIndexing() const;
     bool ensureIndexed();
 
     CXIndex index() { return database->cidx; }
     CXIndexAction action() { return database->caction; }
 
-    void merge(const ClangIndexInfo& info);
+    enum MergeMode { Dirty, Add };
+    void merge(const ClangIndexInfo& info, MergeMode mode);
+    void dirty(const Path& path);
 
     DatabaseClang* database;
     mutable Mutex mutex;
@@ -64,6 +82,7 @@ public:
     ~ClangParseJob();
 
     void wait();
+    void stop();
 
 protected:
     virtual void run();
@@ -81,6 +100,7 @@ private:
     ClangUnit* mUnit;
     bool mReparse;
     WaitCondition mWait;
+    ClangIndexInfo mInfo;
 
 private:
     static void addCached(const Path& path, shared_ptr<TUWrapper> unit);
@@ -100,22 +120,95 @@ ClangUnit::ClangUnit(DatabaseClang* db)
 {
 }
 
-void ClangUnit::merge(const ClangIndexInfo& info)
+static inline void dirtyUsr(const Location& start, const String& usr, UsrSet& usrs)
+{
+    UsrSet::iterator entry = usrs.find(usr);
+    if (entry == usrs.end())
+        return;
+    const Path& startPath = start.path();
+    Set<Location>::iterator loc = entry->second.lower_bound(start);
+    while (loc != entry->second.end() && loc->path() == startPath) {
+        entry->second.erase(loc++);
+    }
+}
+
+// should only be called with database->mutex locked
+void ClangUnit::dirty(const Path& path)
+{
+    const Location start(path, 1, 1);
+    {
+        Map<Location, Path>::iterator inc = database->incs.lower_bound(start);
+        const Map<Location, Path>::const_iterator end = database->incs.end();
+        while (inc != end && inc->first.path() == path) {
+            database->incs.erase(inc++);
+        }
+    }
+    {
+        Map<Location, CursorInfo>::iterator usr = database->usrs.lower_bound(start);
+        while (usr != database->usrs.end() && usr->first.path() == path) {
+            dirtyUsr(start, usr->second.usr, database->decls);
+            dirtyUsr(start, usr->second.usr, database->defs);
+            dirtyUsr(start, usr->second.usr, database->refs);
+            database->usrs.erase(usr++);
+        }
+    }
+    {
+        // remove headers?
+        DependSet::iterator dep = database->depends.find(path);
+        if (dep != database->depends.end())
+            database->depends.erase(dep);
+    }
+    {
+        DependSet::iterator dep = database->reverseDepends.begin();
+        while (dep != database->reverseDepends.end()) {
+            Set<Path>& set = dep->second;
+            if (set.remove(path)) {
+                if (set.isEmpty())
+                    database->reverseDepends.erase(dep++);
+                else
+                    ++dep;
+            } else {
+                ++dep;
+            }
+        }
+    }
+}
+
+void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
 {
     MutexLocker locker(&database->mutex);
+
+    --database->pendingJobs;
+
+    if (mode == Dirty)
+        dirty(sourceInformation.sourceFile);
 
     database->incs.unite(info.incs);
     database->names.unite(info.names);
     database->usrs.unite(info.usrs);
 
-    const UsrSet* src[] = { &info.decls, &info.defs, &info.refs, 0 };
-    UsrSet* dst[] = { &database->decls, &database->defs, &database->refs, 0 };
-    for (unsigned i = 0; src[i]; ++i) {
-        UsrSet::const_iterator usr = src[i]->begin();
-        const UsrSet::const_iterator end = src[i]->end();
-        while (usr != end) {
-            (*dst[i])[usr->first].unite(usr->second);
-            ++usr;
+    {
+        const UsrSet* src[] = { &info.decls, &info.defs, &info.refs, 0 };
+        UsrSet* dst[] = { &database->decls, &database->defs, &database->refs, 0 };
+        for (unsigned i = 0; src[i]; ++i) {
+            UsrSet::const_iterator usr = src[i]->begin();
+            const UsrSet::const_iterator end = src[i]->end();
+            while (usr != end) {
+                (*dst[i])[usr->first].unite(usr->second);
+                ++usr;
+            }
+        }
+    }
+    {
+        const DependSet* src[] = { &info.depends, &info.reverseDepends, 0 };
+        DependSet* dst[] = { &database->depends, &database->reverseDepends, 0 };
+        for (unsigned i = 0; src[i]; ++i) {
+            DependSet::const_iterator usr = src[i]->begin();
+            const DependSet::const_iterator end = src[i]->end();
+            while (usr != end) {
+                (*dst[i])[usr->first].unite(usr->second);
+                ++usr;
+            }
         }
     }
 
@@ -130,6 +223,7 @@ void ClangUnit::merge(const ClangIndexInfo& info)
 ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
     : mUnit(unit), mReparse(reparse)
 {
+    mInfo.stopped = false;
 }
 
 ClangParseJob::~ClangParseJob()
@@ -215,7 +309,9 @@ static inline Database::Cursor::Kind makeKind(CXIdxEntityKind cxkind, bool def)
 
 int ClangParseJob::abortQuery(CXClientData client_data, void* /*reserved*/)
 {
-    return 0;
+    ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
+    MutexLocker locker(&info->mutex);
+    return info->stopped ? 1 : 0;
 }
 
 void ClangParseJob::diagnostic(CXClientData client_data, CXDiagnosticSet diags, void* /*reserved*/)
@@ -238,7 +334,10 @@ CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXId
     const Path path(clang_getCString(str));
     clang_disposeString(str);
     info->files.push_back(path);
-    info->incs[makeLocation(incl->hashLoc)] = path;
+    const Location loc = makeLocation(incl->hashLoc);
+    info->depends[loc.path()].insert(path);
+    info->reverseDepends[path].insert(loc.path());
+    info->incs[loc] = path;
     return &info->files.back();
 }
 
@@ -376,7 +475,7 @@ void ClangParseJob::addCached(const Path& path, shared_ptr<TUWrapper> unit)
     const LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::const_iterator end = cached.end();
     while (c != end) {
         if (c->first == path) {
-            assert(c->second.get() == unit.get());
+            assert(c->second->unit == unit->unit);
             return;
         }
         ++c;
@@ -388,6 +487,12 @@ void ClangParseJob::addCached(const Path& path, shared_ptr<TUWrapper> unit)
     }
 }
 
+void ClangParseJob::stop()
+{
+    MutexLocker locker(&mInfo.mutex);
+    mInfo.stopped = true;
+}
+
 void ClangParseJob::wait()
 {
     mWait.wait(&mUnit->mutex);
@@ -395,9 +500,16 @@ void ClangParseJob::wait()
 
 void ClangParseJob::run()
 {
+    {
+        MutexLocker locker(&mInfo.mutex);
+        if (mInfo.stopped)
+            return;
+    }
+
     // clang parse
     CXTranslationUnit unit;
     if (mReparse) {
+        // ### should handle multiple builds here
         shared_ptr<TUWrapper> unitwrapper = mUnit->unit.lock();
         if (unitwrapper) {
             unit = unitwrapper->unit;
@@ -406,8 +518,6 @@ void ClangParseJob::run()
                 disposeUnit(unitwrapper.get());
                 mReparse = false;
             } else {
-                ClangIndexInfo info;
-
                 IndexerCallbacks callbacks;
                 memset(&callbacks, 0, sizeof(IndexerCallbacks));
                 callbacks.abortQuery = abortQuery;
@@ -418,10 +528,13 @@ void ClangParseJob::run()
                 callbacks.indexEntityReference = indexEntityReference;
                 const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols;
 
-                clang_indexTranslationUnit(mUnit->action(), &info, &callbacks, sizeof(IndexerCallbacks), opts, unit);
-
-                mUnit->merge(info);
+                if (clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit)) {
+                    mInfo.clear();
+                }
+                mUnit->merge(mInfo, ClangUnit::Dirty);
             }
+        } else {
+            mReparse = false;
         }
     }
     if (!mReparse) {
@@ -464,11 +577,6 @@ void ClangParseJob::run()
                 ++arg;
             }
 
-            //unit = clang_parseTranslationUnit(mUnit->index(), mUnit->sourceInformation.sourceFile.nullTerminated(),
-            //                                  clangArgs, args.size(), 0, 0, CXTranslationUnit_DetailedPreprocessingRecord |
-            //                                  CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults);
-            ClangIndexInfo info;
-
             IndexerCallbacks callbacks;
             memset(&callbacks, 0, sizeof(IndexerCallbacks));
             callbacks.abortQuery = abortQuery;
@@ -481,11 +589,13 @@ void ClangParseJob::run()
             const unsigned tuOpts =
                 CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
 
-            clang_indexSourceFile(mUnit->action(), &info, &callbacks, sizeof(IndexerCallbacks), opts,
-                                  mUnit->sourceInformation.sourceFile.nullTerminated(),
-                                  clangArgs, args.size(), 0, 0, &unit, tuOpts);
+            if (clang_indexSourceFile(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts,
+                                      mUnit->sourceInformation.sourceFile.nullTerminated(),
+                                      clangArgs, args.size(), 0, 0, &unit, tuOpts)) {
+                mInfo.clear();
+            }
 
-            mUnit->merge(info);
+            mUnit->merge(mInfo, build == builds.begin() ? ClangUnit::Dirty : ClangUnit::Add);
 
             ++build;
         }
@@ -510,6 +620,7 @@ void ClangUnit::reindex(const SourceInformation& info)
     MutexLocker locker(&mutex);
     if (job) {
         while (job->state() != ClangParseJob::Finished) {
+            job->stop();
             job->wait();
         }
     }
@@ -518,16 +629,6 @@ void ClangUnit::reindex(const SourceInformation& info)
         sourceInformation = info;
     job.reset(new ClangParseJob(this, reparse));
     database->pool.start(job);
-}
-
-bool ClangUnit::isIndexing() const
-{
-    MutexLocker locker(&mutex);
-    if (job) {
-        if (job->state() != ClangParseJob::Finished)
-            return true;
-    }
-    return false;
 }
 
 bool ClangUnit::ensureIndexed()
@@ -543,7 +644,7 @@ bool ClangUnit::ensureIndexed()
 }
 
 DatabaseClang::DatabaseClang()
-    : pool(ThreadPool::idealThreadCount())
+    : pool(std::max(ThreadPool::idealThreadCount(), 3)), pendingJobs(0)
 {
     cidx = clang_createIndex(1, 1);
     caction = clang_IndexAction_create(cidx);
@@ -709,6 +810,10 @@ int DatabaseClang::index(const SourceInformation &sourceInformation)
         unit = it->second;
     }
     assert(unit);
+    {
+        MutexLocker locker(&mutex);
+        ++pendingJobs;
+    }
     unit->reindex(sourceInformation);
     return -1;
 }
@@ -719,20 +824,39 @@ void DatabaseClang::remove(const Path &sourceFile)
 
 bool DatabaseClang::isIndexing() const
 {
-    /*
-    const Map<Path, ClangUnit*>::const_iterator it = units.find(location.path());
-    if (it == units.end())
-        return false;
-    return it->second->isIndexing();
-    */
+    MutexLocker locker(&mutex);
+    return (pendingJobs > 0);
+}
 
-    // ### weird API
-    return false;
+static inline void addDeps(const Path& path, const DependSet& deps, Set<Path>& result)
+{
+    DependSet::const_iterator dep = deps.find(path);
+    if (dep != deps.end()) {
+        Set<Path>::const_iterator path = dep->second.begin();
+        const Set<Path>::const_iterator end = dep->second.end();
+        while (path != end) {
+            if (!result.contains(*path)) {
+                result.insert(*path);
+                addDeps(*path, deps, result);
+            }
+            ++path;
+        }
+    }
 }
 
 Set<Path> DatabaseClang::dependencies(const Path &path, DependencyMode mode) const
 {
-    return Set<Path>();
+    Set<Path> result;
+    result.insert(path); // all files depend on themselves
+
+    MutexLocker locker(&mutex);
+
+    if (mode == ArgDependsOn) {
+        addDeps(path, depends, result);
+    } else {
+        addDeps(path, reverseDepends, result);
+    }
+    return result;
 }
 
 Set<Path> DatabaseClang::files(int mode) const

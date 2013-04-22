@@ -11,6 +11,7 @@ class ClangUnit;
 
 typedef Map<String, Set<Location> > UsrSet;
 typedef Map<String, Set<String> > VirtualSet;
+typedef Map<Path, Set<Path> > DependSet;
 
 struct CursorInfo
 {
@@ -53,7 +54,9 @@ private:
     CXIndexAction caction;
 
     mutable Mutex mutex;
+    int pendingJobs;
     Map<Location, Path> incs;
+    DependSet depends, reverseDepends;
     Map<String, String> names;  // name->usr
     Map<Location, CursorInfo> usrs; // location->usr
     UsrSet decls, defs, refs;   // usr->locations
