@@ -598,7 +598,7 @@ void ClangParseJob::run()
                 callbacks.ppIncludedFile = includedFile;
                 callbacks.indexDeclaration = indexDeclaration;
                 callbacks.indexEntityReference = indexEntityReference;
-                const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols;
+                const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
 
                 if (clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit)) {
                     mInfo.clear();
@@ -667,7 +667,7 @@ void ClangParseJob::run()
             callbacks.ppIncludedFile = includedFile;
             callbacks.indexDeclaration = indexDeclaration;
             callbacks.indexEntityReference = indexEntityReference;
-            const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols;
+            const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
             const unsigned tuOpts =
                 CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
 
