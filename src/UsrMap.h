@@ -9,40 +9,6 @@
 
 class UsrMap
 {
-public:
-    UsrMap()
-        : nextId(0)
-    {
-    }
-
-    ~UsrMap()
-    {
-        unordered_map<const char*, uint32_t>::const_iterator it = usrs.begin();
-        unordered_map<const char*, uint32_t>::const_iterator end = usrs.end();
-        while (it != end) {
-            free(const_cast<char*>(it->first));
-            ++it;
-        }
-    }
-
-    uint32_t insert(const char* str)
-    {
-        unordered_map<const char*, uint32_t>::const_iterator it = usrs.find(str);
-        if (it != usrs.end())
-            return it->second;
-        usrs.insert(std::make_pair(strdup(str), ++nextId));
-        return nextId;
-    }
-
-    uint32_t value(const char* str) const
-    {
-        unordered_map<const char*, uint32_t>::const_iterator it = usrs.find(str);
-        if (it != usrs.end())
-            return it->second;
-        return 0;
-    }
-
-private:
     struct Hasher
     {
         size_t operator()(const char* str) const
@@ -68,10 +34,44 @@ private:
             return !strcmp(str1, str2);
         }
     };
+    typedef unordered_map<const char*, uint32_t, Hasher, Comparator> MapType;
+
+public:
+    UsrMap()
+        : nextId(0)
+    {
+    }
+
+    ~UsrMap()
+    {
+        MapType::const_iterator it = usrs.begin();
+        MapType::const_iterator end = usrs.end();
+        while (it != end) {
+            free(const_cast<char*>(it->first));
+            ++it;
+        }
+    }
+
+    uint32_t insert(const char* str)
+    {
+        MapType::const_iterator it = usrs.find(str);
+        if (it != usrs.end())
+            return it->second;
+        usrs.insert(std::make_pair(strdup(str), ++nextId));
+        return nextId;
+    }
+
+    uint32_t value(const char* str) const
+    {
+        MapType::const_iterator it = usrs.find(str);
+        if (it != usrs.end())
+            return it->second;
+        return 0;
+    }
 
 private:
     uint32_t nextId;
-    unordered_map<const char*, uint32_t, Hasher, Comparator> usrs;
+    MapType usrs;
 
 private:
     // non-copyable
