@@ -15,7 +15,8 @@ class UsrMap
         {
             if (!str)
                 return 0;
-            // http://www.cse.yorku.ca/~oz/hash.html
+
+            // djb2 by Dan Bernstein
             size_t hash = 5381;
             int c;
 
