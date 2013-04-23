@@ -9,13 +9,12 @@
 
 class ClangUnit;
 
-typedef Map<String, Set<Location> > UsrSet;
-typedef Map<String, Set<String> > VirtualSet;
+typedef Map<Location, Set<Location> > UsrSet;
 typedef Map<uint32_t, Set<uint32_t> > DependSet;
 
 struct CursorInfo
 {
-    String usr;
+    Location loc;
     int start, end;
     Database::Cursor::Kind kind;
 };
@@ -44,8 +43,8 @@ public:
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
 
 private:
-    void writeReferences(const String& usr, Connection* conn) const;
-    void writeDeclarations(const String& usr, Connection* conn) const;
+    void writeReferences(const Location& loc, Connection* conn) const;
+    void writeDeclarations(const Location& loc, Connection* conn) const;
 
 private:
     Map<Path, ClangUnit*> units;
@@ -57,10 +56,10 @@ private:
     int pendingJobs;
     Map<Location, uint32_t> incs;
     DependSet depends, reverseDepends;
-    Map<String, Set<String> > names; // name->usr
-    Map<Location, CursorInfo> usrs;  // location->usr
-    UsrSet decls, defs, refs;        // usr->locations
-    VirtualSet virtuals;             // usr->usrs
+    Map<String, Set<Location> > names; // name->usr
+    Map<Location, CursorInfo> usrs;    // location->usr
+    UsrSet decls, defs, refs;          // usr->locations
+    UsrSet virtuals;                   // usr->usrs
     
     friend class ClangUnit;
 };

@@ -27,14 +27,12 @@ public:
 
 struct ClangIndexInfo
 {
-    LinkedList<Path> files;
-
     Map<Location, uint32_t> incs;
     DependSet depends, reverseDepends;
-    Map<String, Set<String> > names;  // name->usr
+    Map<String, Set<Location> > names;  // name->usr
     Map<Location, CursorInfo> usrs; // location->usr
-    UsrSet decls, defs, refs;   // usr->locations
-    VirtualSet virtuals; // usr->usrs
+    UsrSet decls, defs, refs; // usr->locations
+    UsrSet virtuals; // usr->usrs
 
     void clear()
     {
@@ -112,25 +110,30 @@ private:
 
     static Mutex cachedMutex;
     static LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > cached;
+
+    static Mutex seenMutex;
+    static Set<uint32_t> globalSeen;
 };
 
 LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > ClangParseJob::cached;
 Mutex ClangParseJob::cachedMutex;
+Mutex ClangParseJob::seenMutex;
+Set<uint32_t> ClangParseJob::globalSeen;
 
 ClangUnit::ClangUnit(DatabaseClang* db)
     : database(db), indexed(false)
 {
 }
 
-static inline void dirtyUsr(const Location& start, const String& usr, UsrSet& usrs)
+static inline void dirtyLocation(const Location& start, const Location& loc, UsrSet& usrs)
 {
-    UsrSet::iterator entry = usrs.find(usr);
+    UsrSet::iterator entry = usrs.find(loc);
     if (entry == usrs.end())
         return;
-    const Path& startPath = start.path();
-    Set<Location>::iterator loc = entry->second.lower_bound(start);
-    while (loc != entry->second.end() && loc->path() == startPath) {
-        entry->second.erase(loc++);
+    const uint32_t startFileId = start.fileId();
+    Set<Location>::iterator locs = entry->second.lower_bound(start);
+    while (locs != entry->second.end() && locs->fileId() == startFileId) {
+        entry->second.erase(locs++);
     }
 }
 
@@ -148,9 +151,9 @@ void ClangUnit::dirty(uint32_t fileId)
     {
         Map<Location, CursorInfo>::iterator usr = database->usrs.lower_bound(start);
         while (usr != database->usrs.end() && usr->first.fileId() == fileId) {
-            dirtyUsr(start, usr->second.usr, database->decls);
-            dirtyUsr(start, usr->second.usr, database->defs);
-            dirtyUsr(start, usr->second.usr, database->refs);
+            dirtyLocation(start, usr->second.loc, database->decls);
+            dirtyLocation(start, usr->second.loc, database->defs);
+            dirtyLocation(start, usr->second.loc, database->refs);
             database->usrs.erase(usr++);
         }
     }
@@ -189,8 +192,8 @@ void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
     database->usrs.unite(info.usrs);
 
     {
-        Map<String, Set<String> >::const_iterator name = info.names.begin();
-        const Map<String, Set<String> >::const_iterator end = info.names.end();
+        Map<String, Set<Location> >::const_iterator name = info.names.begin();
+        const Map<String, Set<Location> >::const_iterator end = info.names.end();
         while (name != end) {
             database->names[name->first].unite(name->second);
             ++name;
@@ -221,8 +224,8 @@ void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
         }
     }
 
-    VirtualSet::const_iterator virt = info.virtuals.begin();
-    const VirtualSet::const_iterator end = info.virtuals.end();
+    UsrSet::const_iterator virt = info.virtuals.begin();
+    const UsrSet::const_iterator end = info.virtuals.end();
     while (virt != end) {
         database->virtuals[virt->first].unite(virt->second);
         ++virt;
@@ -239,25 +242,33 @@ ClangParseJob::~ClangParseJob()
 {
 }
 
-static inline Location makeLocation(const CXIdxLoc& cxloc)
+static inline Location makeLocation(const CXIdxLoc& cxloc, bool checkDisallowed = true)
 {
     CXIdxClientFile file = 0;
     CXFile cxfile = 0;
     unsigned line, column;
     clang_indexLoc_getFileLocation(cxloc, &file, &cxfile, &line, &column, 0);
 
-    Path path;
+    uint32_t fileId;
     if (file) {
-        path = *static_cast<Path*>(file);
+        fileId = reinterpret_cast<uint32_t>(file);
+        if (checkDisallowed && fileId == static_cast<uint32_t>(-1))
+            return Location();
     } else {
         // fall back to CXFile
         if (!cxfile)
             return Location();
         CXString fn = clang_getFileName(cxfile);
-        path = clang_getCString(fn);
+        const char* fileName = clang_getCString(fn);
+        if (fileName) {
+            fileId = Location::insertFile(Path::resolved(clang_getCString(fn)));
+            if (checkDisallowed && fileId == static_cast<uint32_t>(-1))
+                return Location();
+        } else {
+            return Location();
+        }
         clang_disposeString(fn);
     }
-    const uint32_t fileId = Location::insertFile(path.resolved());
     return Location(fileId, line, column);
 }
 
@@ -344,11 +355,10 @@ void ClangParseJob::diagnostic(CXClientData client_data, CXDiagnosticSet diags, 
 
 CXIdxClientFile ClangParseJob::enteredMainFile(CXClientData client_data, CXFile mainFile, void* /*reserved*/)
 {
-    ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
     CXString str = clang_getFileName(mainFile);
-    info->files.push_back(clang_getCString(str));
+    const uint32_t fileId = Location::insertFile(Path::resolved(clang_getCString(str)));
     clang_disposeString(str);
-    return &info->files.back();
+    return reinterpret_cast<CXIdxClientFile>(fileId);
 }
 
 CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXIdxIncludedFileInfo* incl)
@@ -357,15 +367,19 @@ CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXId
     CXString str = clang_getFileName(incl->file);
     const Path path = Path::resolved(clang_getCString(str));
     clang_disposeString(str);
-    info->files.push_back(path);
-    const Location loc = makeLocation(incl->hashLoc);
+    const Location loc = makeLocation(incl->hashLoc, false);
     if (loc.isEmpty())
         return 0;
     const uint32_t fileId = Location::insertFile(path);
+
     info->depends[loc.fileId()].insert(fileId);
     info->reverseDepends[fileId].insert(loc.fileId());
     info->incs[loc] = fileId;
-    return &info->files.back();
+
+    MutexLocker locker(&ClangParseJob::seenMutex);
+    if (!ClangParseJob::globalSeen.insert(fileId))
+        return reinterpret_cast<CXIdxClientFile>(-1);
+    return reinterpret_cast<CXIdxClientFile>(fileId);
 }
 
 static inline String makeUsr(const CXCursor& cursor)
@@ -394,16 +408,16 @@ static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor parent, CXC
         const Location refLoc = makeLocation(cursor);
         if (refLoc.isEmpty())
             return CXChildVisit_Continue;
-        const String usr = makeUsr(clang_getCursorReferenced(cursor));
+        const Location targetLoc = makeLocation(clang_getCursorReferenced(cursor));
 
         CursorInfo cursorInfo;
-        cursorInfo.usr = usr;
+        cursorInfo.loc = targetLoc;
         cursorInfo.kind = Database::Cursor::Reference;
         info->usrs[refLoc] = cursorInfo;
 
         //error() << "indexing ref" << usr << refLoc;
 
-        info->refs[usr].insert(refLoc);
+        info->refs[targetLoc].insert(refLoc);
         break; }
     case CXCursor_ParmDecl:
     case CXCursor_FunctionDecl:
@@ -421,7 +435,7 @@ void ClangParseJob::indexArguments(ClangIndexInfo* info, const CXCursor& cursor)
     clang_visitChildren(cursor, argumentVisistor, info);
 }
 
-static inline void addNamePermutations(CXCursor cursor, const String& usr, Map<String, Set<String> >& names)
+static inline void addNamePermutations(CXCursor cursor, const Location& loc, Map<String, Set<Location> >& names)
 {
     List<String> subnames;
     unsigned res = 0;
@@ -451,7 +465,7 @@ static inline void addNamePermutations(CXCursor cursor, const String& usr, Map<S
         if (!current.isEmpty())
             current.prepend("::");
         current.prepend(*n);
-        names[current].insert(usr);
+        names[current].insert(loc);
         ++n;
     }
 }
@@ -459,14 +473,15 @@ static inline void addNamePermutations(CXCursor cursor, const String& usr, Map<S
 void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl)
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
-    const bool def = decl->isDefinition;
     const Location declLoc = makeLocation(decl->loc);
     if (declLoc.isEmpty())
         return;
-    const String usr(decl->entityInfo->USR);
+
+    const bool def = decl->isDefinition;
+    const Location targetLoc = makeLocation(decl->entityInfo->cursor);
 
     CursorInfo cursorInfo;
-    cursorInfo.usr = usr;
+    cursorInfo.loc = targetLoc;
     cursorInfo.kind = makeKind(decl->entityInfo->kind, def);
     info->usrs[declLoc] = cursorInfo;
 
@@ -479,12 +494,12 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
             unsigned num;
             clang_getOverriddenCursors(decl->cursor, &overridden, &num);
             if (num) {
-                String virtusr;
+                Location virtLoc;
                 for (unsigned i = 0; i < num; ++i) {
-                    virtusr = makeUsr(overridden[i]);
+                    virtLoc = makeLocation(overridden[i]);
                     //error() << "overridden at" << makeLocation(overridden[i]) << virtusr;
-                    info->virtuals[usr].insert(virtusr);
-                    info->virtuals[virtusr].insert(usr);
+                    info->virtuals[targetLoc].insert(virtLoc);
+                    info->virtuals[virtLoc].insert(targetLoc);
                 }
                 clang_disposeOverriddenCursors(overridden);
             }
@@ -498,12 +513,12 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
         break;
     }
 
-    addNamePermutations(decl->cursor, usr, info->names);
+    addNamePermutations(decl->cursor, targetLoc, info->names);
 
     if (def)
-        info->defs[usr].insert(declLoc);
+        info->defs[targetLoc].insert(declLoc);
     else
-        info->decls[usr].insert(declLoc);
+        info->decls[targetLoc].insert(declLoc);
 }
 
 void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEntityRefInfo* ref)
@@ -512,16 +527,17 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
     const Location refLoc = makeLocation(ref->loc);
     if (refLoc.isEmpty())
         return;
-    const String usr(ref->referencedEntity->USR);
+
+    const Location targetLoc = makeLocation(ref->referencedEntity->cursor);
 
     CursorInfo cursorInfo;
-    cursorInfo.usr = usr;
+    cursorInfo.loc = targetLoc;
     cursorInfo.kind = Database::Cursor::Reference;
     info->usrs[refLoc] = cursorInfo;
 
     //error() << "indexing ref" << usr << refLoc;
 
-    info->refs[usr].insert(refLoc);
+    info->refs[targetLoc].insert(refLoc);
 }
 
 void ClangParseJob::disposeUnit(TUWrapper* unit)
@@ -612,7 +628,7 @@ void ClangParseJob::run()
                 callbacks.ppIncludedFile = includedFile;
                 callbacks.indexDeclaration = indexDeclaration;
                 callbacks.indexEntityReference = indexEntityReference;
-                const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
+                const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols;
 
                 if (clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit)) {
                     mInfo.clear();
@@ -681,7 +697,7 @@ void ClangParseJob::run()
             callbacks.ppIncludedFile = includedFile;
             callbacks.indexDeclaration = indexDeclaration;
             callbacks.indexEntityReference = indexEntityReference;
-            const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
+            const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols;
             const unsigned tuOpts =
                 CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
 
@@ -756,6 +772,7 @@ DatabaseClang::~DatabaseClang()
 
 Database::Cursor DatabaseClang::cursor(const Location &location) const
 {
+    DatabaseClang foo;
     MutexLocker locker(&mutex);
     Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(location);
     if (usr == usrs.end())
@@ -771,7 +788,7 @@ Database::Cursor DatabaseClang::cursor(const Location &location) const
     }
     assert(!(usr->first > location));
 
-    const String usrstr = usr->second.usr;
+    const Location targetLoc = usr->second.loc;
 
     Database::Cursor cursor;
     cursor.location = usr->first;
@@ -779,10 +796,10 @@ Database::Cursor DatabaseClang::cursor(const Location &location) const
 
     if (cursor.kind == Database::Cursor::Reference) {
         // reference, target should be definition (if possible)
-        UsrSet::const_iterator target = defs.find(usrstr);
+        UsrSet::const_iterator target = defs.find(targetLoc);
         if (target == defs.end()) {
             // try declaration
-            target = decls.find(usrstr);
+            target = decls.find(targetLoc);
             if (target != decls.end()) {
                 if (!target->second.isEmpty())
                     cursor.target = *target->second.begin();
@@ -793,14 +810,14 @@ Database::Cursor DatabaseClang::cursor(const Location &location) const
         }
     } else if (cursor.isDefinition()) {
         // definition, target should be declaration
-        const UsrSet::const_iterator target = decls.find(usrstr);
+        const UsrSet::const_iterator target = decls.find(targetLoc);
         if (target != decls.end()) {
             if (!target->second.isEmpty())
                 cursor.target = *target->second.begin();
         }
     } else {
         // declaration, taget should be definition
-        const UsrSet::const_iterator target = defs.find(usrstr);
+        const UsrSet::const_iterator target = defs.find(targetLoc);
         if (target != defs.end()) {
             if (!target->second.isEmpty())
                 cursor.target = *target->second.begin();
@@ -809,9 +826,9 @@ Database::Cursor DatabaseClang::cursor(const Location &location) const
     return cursor;
 }
 
-void DatabaseClang::writeReferences(const String& usr, Connection* conn) const
+void DatabaseClang::writeReferences(const Location& loc, Connection* conn) const
 {
-    const UsrSet::const_iterator ref = refs.find(usr);
+    const UsrSet::const_iterator ref = refs.find(loc);
     if (ref != refs.end()) {
         Set<Location>::const_iterator loc = ref->second.begin();
         const Set<Location>::const_iterator end = ref->second.end();
@@ -822,11 +839,11 @@ void DatabaseClang::writeReferences(const String& usr, Connection* conn) const
     }
 }
 
-void DatabaseClang::writeDeclarations(const String& usr, Connection* conn) const
+void DatabaseClang::writeDeclarations(const Location& loc, Connection* conn) const
 {
     const UsrSet* usrs[] = { &decls, &defs, 0 };
     for (int i = 0; usrs[i]; ++i) {
-        const UsrSet::const_iterator decl = usrs[i]->find(usr);
+        const UsrSet::const_iterator decl = usrs[i]->find(loc);
         if (decl != usrs[i]->end()) {
             Set<Location>::const_iterator loc = decl->second.begin();
             const Set<Location>::const_iterator end = decl->second.end();
@@ -865,26 +882,26 @@ void DatabaseClang::references(const Location& location, unsigned queryFlags,
     }
     assert(!(usr->first > location));
 
-    const String usrstr = usr->second.usr;
+    const Location targetLoc = usr->second.loc;
 
     if (wantAll || !wantVirtuals) {
-        writeReferences(usrstr, conn);
+        writeReferences(targetLoc, conn);
         if (wantAll)
-            writeDeclarations(usrstr, conn);
+            writeDeclarations(targetLoc, conn);
     }
     if (wantVirtuals) {
         if (wantAll)
-            writeReferences(usrstr, conn);
-        writeDeclarations(usrstr, conn);
+            writeReferences(targetLoc, conn);
+        writeDeclarations(targetLoc, conn);
 
-        const VirtualSet::const_iterator virt = virtuals.find(usrstr);
-        Set<String>::const_iterator vusr = virt->second.begin();
-        const Set<String>::const_iterator vend = virt->second.end();
-        while (vusr != vend) {
+        const UsrSet::const_iterator virt = virtuals.find(targetLoc);
+        Set<Location>::const_iterator vloc = virt->second.begin();
+        const Set<Location>::const_iterator vend = virt->second.end();
+        while (vloc != vend) {
             if (wantAll)
-                writeReferences(*vusr, conn);
-            writeDeclarations(*vusr, conn);
-            ++vusr;
+                writeReferences(*vloc, conn);
+            writeDeclarations(*vloc, conn);
+            ++vloc;
         }
     }
     conn->write("`");
@@ -994,8 +1011,8 @@ Set<String> DatabaseClang::listSymbols(const String &string, const List<Path> &p
     Set<String> result;
 
     MutexLocker locker(&mutex);
-    Map<String, Set<String> >::const_iterator name = names.lower_bound(string);
-    const Map<String, Set<String> >::const_iterator end = names.end();
+    Map<String, Set<Location> >::const_iterator name = names.lower_bound(string);
+    const Map<String, Set<Location> >::const_iterator end = names.end();
     while (name != end && name->first.startsWith(string)) {
         result.insert(name->first);
         ++name;
@@ -1004,9 +1021,9 @@ Set<String> DatabaseClang::listSymbols(const String &string, const List<Path> &p
     return result;
 }
 
-static inline Location firstLocation(const String& usr, const UsrSet& set)
+static inline Location firstLocation(const Location& loc, const UsrSet& set)
 {
-    const UsrSet::const_iterator it = set.find(usr);
+    const UsrSet::const_iterator it = set.find(loc);
     if (it == set.end())
         return Location();
     const Set<Location>& locs = it->second;
@@ -1019,14 +1036,14 @@ Set<Database::Cursor> DatabaseClang::findCursors(const String &string, const Lis
 {
 #warning need to respect pathFilter
     MutexLocker locker(&mutex);
-    Map<String, Set<String> >::const_iterator name = names.find(string);
+    Map<String, Set<Location> >::const_iterator name = names.find(string);
     if (name == names.end())
         return Set<Cursor>();
 
     Set<Cursor> cursors;
 
-    Set<String>::const_iterator usr = name->second.begin();
-    const Set<String>::const_iterator end = name->second.end();
+    Set<Location>::const_iterator usr = name->second.begin();
+    const Set<Location>::const_iterator end = name->second.end();
     while (usr != end) {
         const UsrSet* usrs[] = { &decls, &defs, 0 };
         for (int i = 0; usrs[i]; ++i) {
