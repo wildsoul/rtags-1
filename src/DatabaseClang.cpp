@@ -29,7 +29,7 @@ struct ClangIndexInfo
 {
     LinkedList<Path> files;
 
-    Map<Location, Path> incs;
+    Map<Location, uint32_t> incs;
     DependSet depends, reverseDepends;
     Map<String, Set<String> > names;  // name->usr
     Map<Location, CursorInfo> usrs; // location->usr
@@ -65,7 +65,7 @@ public:
 
     enum MergeMode { Dirty, Add };
     void merge(const ClangIndexInfo& info, MergeMode mode);
-    void dirty(const Path& path);
+    void dirty(uint32_t fileId);
 
     DatabaseClang* database;
     mutable Mutex mutex;
@@ -135,19 +135,19 @@ static inline void dirtyUsr(const Location& start, const String& usr, UsrSet& us
 }
 
 // should only be called with database->mutex locked
-void ClangUnit::dirty(const Path& path)
+void ClangUnit::dirty(uint32_t fileId)
 {
-    const Location start(path, 1, 1);
+    const Location start(fileId, 1, 1);
     {
-        Map<Location, Path>::iterator inc = database->incs.lower_bound(start);
-        const Map<Location, Path>::const_iterator end = database->incs.end();
-        while (inc != end && inc->first.path() == path) {
+        Map<Location, uint32_t>::iterator inc = database->incs.lower_bound(start);
+        const Map<Location, uint32_t>::const_iterator end = database->incs.end();
+        while (inc != end && inc->first.fileId() == fileId) {
             database->incs.erase(inc++);
         }
     }
     {
         Map<Location, CursorInfo>::iterator usr = database->usrs.lower_bound(start);
-        while (usr != database->usrs.end() && usr->first.path() == path) {
+        while (usr != database->usrs.end() && usr->first.fileId() == fileId) {
             dirtyUsr(start, usr->second.usr, database->decls);
             dirtyUsr(start, usr->second.usr, database->defs);
             dirtyUsr(start, usr->second.usr, database->refs);
@@ -156,15 +156,15 @@ void ClangUnit::dirty(const Path& path)
     }
     {
         // remove headers?
-        DependSet::iterator dep = database->depends.find(path);
+        DependSet::iterator dep = database->depends.find(fileId);
         if (dep != database->depends.end())
             database->depends.erase(dep);
     }
     {
         DependSet::iterator dep = database->reverseDepends.begin();
         while (dep != database->reverseDepends.end()) {
-            Set<Path>& set = dep->second;
-            if (set.remove(path)) {
+            Set<uint32_t>& set = dep->second;
+            if (set.remove(fileId)) {
                 if (set.isEmpty())
                     database->reverseDepends.erase(dep++);
                 else
@@ -183,7 +183,7 @@ void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
     --database->pendingJobs;
 
     if (mode == Dirty)
-        dirty(sourceInformation.sourceFile);
+        dirty(sourceInformation.sourceFileId());
 
     database->incs.unite(info.incs);
     database->usrs.unite(info.usrs);
@@ -257,7 +257,8 @@ static inline Location makeLocation(const CXIdxLoc& cxloc)
         path = clang_getCString(fn);
         clang_disposeString(fn);
     }
-    return Location(path, line, column);
+    const uint32_t fileId = Location::insertFile(path.resolved());
+    return Location(fileId, line, column);
 }
 
 static inline Location makeLocation(const CXCursor& cursor)
@@ -271,7 +272,8 @@ static inline Location makeLocation(const CXCursor& cursor)
     if (!file)
         return Location();
     CXString fileName = clang_getFileName(file);
-    const Location loc(clang_getCString(fileName), line, column);
+    const uint32_t fileId = Location::insertFile(Path::resolved(clang_getCString(fileName)));
+    const Location loc(fileId, line, column);
     clang_disposeString(fileName);
     return loc;
 }
@@ -353,15 +355,16 @@ CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXId
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
     CXString str = clang_getFileName(incl->file);
-    const Path path(clang_getCString(str));
+    const Path path = Path::resolved(clang_getCString(str));
     clang_disposeString(str);
     info->files.push_back(path);
     const Location loc = makeLocation(incl->hashLoc);
     if (loc.isEmpty())
         return 0;
-    info->depends[loc.path()].insert(path);
-    info->reverseDepends[path].insert(loc.path());
-    info->incs[loc] = path;
+    const uint32_t fileId = Location::insertFile(path);
+    info->depends[loc.fileId()].insert(fileId);
+    info->reverseDepends[fileId].insert(loc.fileId());
+    info->incs[loc] = fileId;
     return &info->files.back();
 }
 
@@ -916,18 +919,20 @@ int DatabaseClang::index(const SourceInformation &sourceInformation)
 
 void DatabaseClang::remove(const Path &sourceFile)
 {
+    const uint32_t fileId = Location::fileId(sourceFile);
+
     MutexLocker locker(&mutex);
     {
         // remove headers?
-        DependSet::iterator dep = depends.find(sourceFile);
+        DependSet::iterator dep = depends.find(fileId);
         if (dep != depends.end())
             depends.erase(dep);
     }
     {
         DependSet::iterator dep = reverseDepends.begin();
         while (dep != reverseDepends.end()) {
-            Set<Path>& set = dep->second;
-            if (set.remove(sourceFile)) {
+            Set<uint32_t>& set = dep->second;
+            if (set.remove(fileId)) {
                 if (set.isEmpty())
                     reverseDepends.erase(dep++);
                 else
@@ -945,15 +950,16 @@ bool DatabaseClang::isIndexing() const
     return (pendingJobs > 0);
 }
 
-static inline void addDeps(const Path& path, const DependSet& deps, Set<Path>& result)
+static inline void addDeps(uint32_t fileId, const DependSet& deps, Set<Path>& result)
 {
-    DependSet::const_iterator dep = deps.find(path);
+    DependSet::const_iterator dep = deps.find(fileId);
     if (dep != deps.end()) {
-        Set<Path>::const_iterator path = dep->second.begin();
-        const Set<Path>::const_iterator end = dep->second.end();
+        Set<uint32_t>::const_iterator path = dep->second.begin();
+        const Set<uint32_t>::const_iterator end = dep->second.end();
         while (path != end) {
-            if (!result.contains(*path)) {
-                result.insert(*path);
+            const Path& cand = Location::path(*path);
+            if (!result.contains(cand)) {
+                result.insert(cand);
                 addDeps(*path, deps, result);
             }
             ++path;
@@ -968,10 +974,11 @@ Set<Path> DatabaseClang::dependencies(const Path &path, DependencyMode mode) con
 
     MutexLocker locker(&mutex);
 
+    const uint32_t fileId = Location::fileId(path);
     if (mode == ArgDependsOn) {
-        addDeps(path, depends, result);
+        addDeps(fileId, depends, result);
     } else {
-        addDeps(path, reverseDepends, result);
+        addDeps(fileId, reverseDepends, result);
     }
     return result;
 }

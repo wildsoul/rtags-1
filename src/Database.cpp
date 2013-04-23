@@ -66,7 +66,7 @@ String Database::Cursor::toString(unsigned flags) const
 
     if (!target.isEmpty() && flags & IncludeTarget) {
         ret.append("Target: ");
-        ret.append(target.key(flags));
+        ret.append(target.toString(flags));
     }
 #warning need to do this, will need the Database pointer to do it though
     /*

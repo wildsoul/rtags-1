@@ -4,39 +4,42 @@
 #include <rct/String.h>
 #include <rct/Log.h>
 #include <rct/Path.h>
+#include <rct/ReadLocker.h>
+#include <rct/ReadWriteLock.h>
 #include <rct/Serializer.h>
-#include <rct/Rct.h>
+#include <rct/WriteLocker.h>
 #include <assert.h>
 #include <stdio.h>
-#include <math.h>
 
 class Location
 {
 public:
-    Location(const Path &path = Path(), int line = 0, int column = 0)
-        : mPath(path), mLine(line), mColumn(column)
+    uint64_t mData;
+
+    Location()
+        : mData(0)
+    {}
+    Location(uint64_t data)
+        : mData(data)
+    {}
+    Location(uint32_t fileId, uint32_t line, uint32_t column)
+        : mData((uint64_t(column & 0xFFF) << 52) | (uint64_t(line & 0xFFFFF) << 32) | fileId)
+    {}
+
+    bool isEmpty() const
     {
-        assert(line >= 0);
-        assert(column >= 0);
-        assert(path.isEmpty() == !line);
-        assert(path.isEmpty() == !column);
+        return !mData;
     }
-    inline Path path() const { return mPath; }
-    int line() const { return mLine; }
-    int column() const { return mColumn; }
-    inline bool isNull() const { return !mLine; }
-    inline bool isValid() const { return mLine; }
-    inline bool isEmpty() const { return !mLine; }
-    inline void clear() { mPath.clear(); mLine = mColumn = 0; }
+
     inline int compare(const Location &other) const
     {
-        int diff = mPath.compare(other.mPath);
+        int diff = fileId() - other.fileId();
         if (diff)
             return diff;
-        diff = mLine - other.mLine;
+        diff = line() - other.line();
         if (diff)
             return diff;
-        diff = mColumn - other.mColumn;
+        diff = column() - other.column();
         return diff;
     }
     inline bool operator==(const Location &other) const { return !compare(other); }
@@ -45,41 +48,73 @@ public:
     inline bool operator>(const Location &other) const { return compare(other) > 0; }
     inline bool operator==(const String &str) const { return !compare(Location::decode(str)); }
 
+    static inline uint32_t fileId(const Path &path)
+    {
+        ReadLocker lock(&sLock);
+        return sPathsToIds.value(path);
+    }
+    static inline Path path(uint32_t id)
+    {
+        ReadLocker lock(&sLock);
+        return sIdsToPaths.value(id);
+    }
+
+    static inline uint32_t insertFile(const Path &path)
+    {
+        uint32_t ret;
+        {
+            WriteLocker lock(&sLock);
+            uint32_t &id = sPathsToIds[path];
+            if (!id) {
+                id = ++sLastId;
+                sIdsToPaths[id] = path;
+            }
+            ret = id;
+        }
+
+        return ret;
+    }
+
+    inline uint32_t fileId() const { return uint32_t(mData); }
+    inline int line() const { return int((mData >> 32) & 0xFFFFF); }
+    inline int column() const { return int(mData >> 52); }
+
+    inline Path path() const
+    {
+        if (mCachedPath.isEmpty()) {
+            ReadLocker lock(&sLock);
+            mCachedPath = sIdsToPaths.value(fileId());
+        }
+        return mCachedPath;
+    }
+    inline bool isNull() const { return !mData; }
+    inline bool isValid() const { return mData; }
+    inline void clear() { mData = 0; mCachedPath.clear(); }
+
     enum KeyFlag {
         NoFlag = 0x0,
-        ShowContext = 0x2
+        Padded = 0x1,
+        ShowContext = 0x2,
+        ShowLineNumbers = 0x4
     };
-
-    String key(unsigned flags = NoFlag) const
+    String toString(unsigned flags = NoFlag) const
     {
-        if (isNull())
-            return String();
-        if (flags & ShowContext)
-            return encode() + '\t' + context();
         return encode();
     }
 
-    String context() const
+    static Location fromKey(const char *data)
     {
-        if (!isEmpty()) {
-            Path p = path();
-            FILE *f = fopen(p.constData(), "r");
-            char buf[1024];
-            if (f) {
-                int len = 0;
-                for (int i=1; i<mLine; ++i)
-                    len = Rct::readLine(f, buf, sizeof(buf) - 1);
-                fclose(f);
-                return String(buf, len);
-            }
-        }
-        return String();
+        Location ret;
+        memcpy(&ret.mData, data, sizeof(ret.mData));
+        return ret;
     }
 
     String encode() const
     {
-        int size = mPath.size() + 3; // account for the '\0'
-        int ints[] = { mLine, mColumn };
+        const String p = path();
+        const int l = line(), c = column();
+        int size = p.size() + 3; // account for the '\0'
+        int ints[] = { l, c };
         for (int i=0; i<2; ++i) {
             while (ints[i] >= 10) {
                 ints[i] /= 10;
@@ -89,7 +124,7 @@ public:
         }
 
         String ret(size, ' ');
-        snprintf(ret.data(), size, "%s:%d:%d", mPath.constData(), mLine, mColumn);
+        snprintf(ret.data(), size, "%s:%d:%d", p.constData(), l, c);
         ret.resize(size - 1); // we don't want the '\0' inside our actual data
         return ret;
     }
@@ -113,41 +148,61 @@ public:
             error("Can't create location from this: %s", string.constData());
             return Location();
         }
-        return Location(string.left(colon1), line, column);
+        const uint32_t fileId = insertFile(string.left(colon1));
+        return Location(fileId, line, column);
     }
-private:
-    static inline int digits(int len)
+
+    static Map<uint32_t, Path> idsToPaths()
     {
-        int ret = 1;
-        while (len >= 10) {
-            len /= 10;
-            ++ret;
-        }
-        return ret;
+        ReadLocker lock(&sLock);
+        return sIdsToPaths;
     }
-    
-    Path mPath;
-    int mLine, mColumn;
+
+    static Map<Path, uint32_t> pathsToIds()
+    {
+        ReadLocker lock(&sLock);
+        return sPathsToIds;
+    }
+
+    static void init(const Map<Path, uint32_t> &pathsToIds)
+    {
+        WriteLocker lock(&sLock);
+        sPathsToIds = pathsToIds;
+        sLastId = sPathsToIds.size();
+        for (Map<Path, uint32_t>::const_iterator it = sPathsToIds.begin(); it != sPathsToIds.end(); ++it) {
+            assert(it->second <= it->second);
+            sIdsToPaths[it->second] = it->first;
+        }
+    }
+
+private:
+    static Map<Path, uint32_t> sPathsToIds;
+    static Map<uint32_t, Path> sIdsToPaths;
+    static uint32_t sLastId;
+    static ReadWriteLock sLock;
+    mutable Path mCachedPath;
 };
+
+template <> inline int fixedSize(const Location &)
+{
+    return sizeof(uint64_t);
+}
 
 template <> inline Serializer &operator<<(Serializer &s, const Location &t)
 {
-    s << t.path() << t.line() << t.column();
+    s.write(reinterpret_cast<const char*>(&t.mData), sizeof(uint64_t));
     return s;
 }
 
 template <> inline Deserializer &operator>>(Deserializer &s, Location &t)
 {
-    Path p;
-    int l, c;
-    s >> p >> l >> c;
-    t = Location(p, l, c);
+    s.read(reinterpret_cast<char*>(&t), sizeof(uint64_t));
     return s;
 }
 
 static inline Log operator<<(Log dbg, const Location &loc)
 {
-    const String out = "Location(" + loc.key() + ")";
+    const String out = "Location(" + loc.encode() + ")";
     return (dbg << out);
 }
 

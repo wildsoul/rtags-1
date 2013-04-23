@@ -5,14 +5,23 @@
 #include <rct/String.h>
 #include <rct/Path.h>
 #include <rct/Serializer.h>
+#include "Location.h"
 
 class SourceInformation
 {
 public:
     SourceInformation()
+        : fileId(0)
     {}
 
     Path sourceFile;
+    mutable uint32_t fileId;
+    uint32_t sourceFileId() const
+    {
+        if (!fileId)
+            fileId = Location::insertFile(sourceFile);
+        return fileId;
+    }
 
     struct Build
     {

@@ -297,7 +297,7 @@ public:
 
     virtual String description() const
     {
-        return String::format<128>("CompletionMessage %s", location.key().constData());
+        return String::format<128>("CompletionMessage %s", location.toString().constData());
     }
 
     const Location location;

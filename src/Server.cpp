@@ -408,7 +408,7 @@ void Server::followLocation(const QueryMessage &query, Connection *conn)
         cursor = database->cursor(cursor.target);
 
     if (cursor.location.isValid() && !isFiltered(cursor.location, query))
-        conn->write(cursor.target.key(query.keyFlags()).constData());
+        conn->write(cursor.target.toString(query.keyFlags()).constData());
     conn->finish();
 }
 
@@ -565,8 +565,9 @@ void Server::findFile(const QueryMessage &query, Connection *conn)
 
 void Server::dumpFile(const QueryMessage &query, Connection *conn)
 {
-    const Path path = query.query();
-    const Location loc(path, 1, 1);
+    const Path& path = query.query();
+    const uint32_t fileId = Location::fileId(path);
+    const Location loc(fileId, 1, 1);
 
     shared_ptr<Project> project = updateProjectForLocation(path);
     if (!project || !project->isValid()) {
@@ -715,7 +716,7 @@ void Server::findSymbols(const QueryMessage &query, Connection *conn)
         std::sort(nodes.begin(), nodes.end());
         const unsigned keyFlags = query.keyFlags();
         for (int i=0; i<nodes.size(); ++i) {
-            conn->write(nodes.at(i).location.key(keyFlags));
+            conn->write(nodes.at(i).location.toString(keyFlags));
         }
     }
 

@@ -546,14 +546,16 @@ static inline Database::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
 
 static inline Location makeLocation(CPlusPlus::Symbol* sym)
 {
-    return Location(sym->fileName(), sym->line(), sym->column());
+    const uint32_t fileId = Location::insertFile(Path::resolved(sym->fileName()));
+    return Location(fileId, sym->line(), sym->column());
 }
 
 static inline Database::Cursor makeCursor(const CPlusPlus::Symbol* sym,
                                           const CPlusPlus::TranslationUnit* unit)
 {
     Database::Cursor cursor;
-    cursor.location = Location(sym->fileName(), sym->line(), sym->column());
+    const uint32_t fileId = Location::insertFile(Path::resolved(sym->fileName()));
+    cursor.location = Location(fileId, sym->line(), sym->column());
     const CPlusPlus::Token& token = unit->tokenAt(sym->sourceLocation());
     cursor.start = token.begin();
     cursor.end = token.end();
@@ -654,7 +656,8 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
 
                 //unsigned endLine, endColumn;
                 //unit->getTokenEndPosition(ast->lastToken() - 1, &endLine, &endColumn, 0);
-                loc = Location(file->chars(), startLine, startColumn);
+                const uint32_t fileId = Location::fileId(Path::resolved(file->chars()));
+                loc = Location(fileId, startLine, startColumn);
 
                 warning() << "got it at" << loc;
                 break;
@@ -987,7 +990,8 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
         foreach(const CPlusPlus::Document::Include& include, includes) {
             if (include.line() == static_cast<unsigned int>(location.line())) {
                 // yes
-                cursor.target = cursor.location = Location(fromQString(include.fileName()), 1, 1);
+                const uint32_t fileId = Location::insertFile(Path::resolved(fromQString(include.fileName())));
+                cursor.target = cursor.location = Location(fileId, 1, 1);
                 cursor.kind = Cursor::File;
                 return cursor;
             }
@@ -1212,9 +1216,10 @@ Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const L
             }
 
             if (path->endsWith(string)) { // file name, add custom target for the file
+                const uint32_t fileId = Location::fileId(*path);
                 Cursor fileCursor;
                 fileCursor.kind = Cursor::File;
-                fileCursor.location = fileCursor.target = Location(*path, 1, 1);
+                fileCursor.location = fileCursor.target = Location(fileId, 1, 1);
                 fileCursor.symbolName = *path;
                 cursors.insert(fileCursor);
             }

@@ -54,6 +54,7 @@ set(RTAGS_SHARED_SOURCES
   Client.cpp
   CompileMessage.cpp
   CompletionMessage.cpp
+  Location.cpp
   QueryMessage.cpp
   RTags.cpp)
 
