@@ -2,6 +2,7 @@
 #define DatabaseClang_h
 
 #include "Database.h"
+#include "UsrMap.h"
 #include <rct/Map.h>
 #include <rct/Mutex.h>
 #include <rct/ThreadPool.h>
@@ -9,12 +10,13 @@
 
 class ClangUnit;
 
-typedef Map<Location, Set<Location> > UsrSet;
+typedef Map<uint32_t, Set<Location> > UsrSet;
 typedef Map<uint32_t, Set<uint32_t> > DependSet;
+typedef Map<uint32_t, Set<uint32_t> > VirtualSet;
 
 struct CursorInfo
 {
-    Location loc;
+    uint32_t usr;
     int start, end;
     Database::Cursor::Kind kind;
 };
@@ -42,9 +44,11 @@ public:
     virtual Set<Cursor> cursors(const Path &path) const;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
 
+    static LockingUsrMap& usrMap() { return umap; }
+
 private:
-    void writeReferences(const Location& loc, Connection* conn) const;
-    void writeDeclarations(const Location& loc, Connection* conn) const;
+    void writeReferences(const uint32_t usr, Connection* conn) const;
+    void writeDeclarations(const uint32_t usr, Connection* conn) const;
 
 private:
     Map<Path, ClangUnit*> units;
@@ -56,10 +60,11 @@ private:
     int pendingJobs;
     Map<Location, uint32_t> incs;
     DependSet depends, reverseDepends;
-    Map<String, Set<Location> > names; // name->usr
+    Map<String, Set<uint32_t> > names; // name->usr
     Map<Location, CursorInfo> usrs;    // location->usr
     UsrSet decls, defs, refs;          // usr->locations
-    UsrSet virtuals;                   // usr->usrs
+    VirtualSet virtuals;               // usr->usrs
+    static LockingUsrMap umap;
     
     friend class ClangUnit;
 };
