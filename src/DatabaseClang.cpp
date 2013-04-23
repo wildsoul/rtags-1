@@ -788,41 +788,14 @@ Database::Cursor DatabaseClang::cursor(const Location &location) const
     }
     assert(!(usr->first > location));
 
-    const Location targetLoc = usr->second.loc;
+    //error() << "found loc, asked for" << location << "resolved to" << usr->first
+    //        << "refers to" << usr->second.loc << "and kind" << usr->second.kind;
 
     Database::Cursor cursor;
     cursor.location = usr->first;
     cursor.kind = usr->second.kind;
+    cursor.target = usr->second.loc;
 
-    if (cursor.kind == Database::Cursor::Reference) {
-        // reference, target should be definition (if possible)
-        UsrSet::const_iterator target = defs.find(targetLoc);
-        if (target == defs.end()) {
-            // try declaration
-            target = decls.find(targetLoc);
-            if (target != decls.end()) {
-                if (!target->second.isEmpty())
-                    cursor.target = *target->second.begin();
-            }
-        } else {
-            if (!target->second.isEmpty())
-                cursor.target = *target->second.begin();
-        }
-    } else if (cursor.isDefinition()) {
-        // definition, target should be declaration
-        const UsrSet::const_iterator target = decls.find(targetLoc);
-        if (target != decls.end()) {
-            if (!target->second.isEmpty())
-                cursor.target = *target->second.begin();
-        }
-    } else {
-        // declaration, taget should be definition
-        const UsrSet::const_iterator target = defs.find(targetLoc);
-        if (target != defs.end()) {
-            if (!target->second.isEmpty())
-                cursor.target = *target->second.begin();
-        }
-    }
     return cursor;
 }
 
