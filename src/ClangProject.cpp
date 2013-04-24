@@ -113,9 +113,9 @@ public:
     CXIndex index() { return project->cidx; }
     CXIndexAction action() { return project->caction; }
 
-    enum MergeMode { Dirty, Add };
-    void merge(const ClangIndexInfo& info, MergeMode mode);
-    void dirty(uint32_t fileId);
+    enum MergeMode { Add = 0x1, Dirty = 0x2, DontDirtyDeps = 0x4 };
+    void merge(const ClangIndexInfo& info, int mode);
+    void dirty(uint32_t fileId, int mode);
 
     ClangProject* project;
     mutable Mutex mutex;
@@ -175,16 +175,11 @@ static inline void dirtyUsr(const Location& start, uint32_t usr, UsrSet& usrs)
 }
 
 // should only be called with project->mutex locked
-void ClangUnit::dirty(uint32_t fileId)
+void ClangUnit::dirty(uint32_t fileId, int mode)
 {
+    assert(mode & ClangUnit::Dirty);
+
     const Location start(fileId, 1, 1);
-    {
-        Map<Location, uint32_t>::iterator inc = project->incs.lower_bound(start);
-        const Map<Location, uint32_t>::const_iterator end = project->incs.end();
-        while (inc != end && inc->first.fileId() == fileId) {
-            project->incs.erase(inc++);
-        }
-    }
     {
         Map<Location, CursorInfo>::iterator usr = project->usrs.lower_bound(start);
         while (usr != project->usrs.end() && usr->first.fileId() == fileId) {
@@ -194,36 +189,47 @@ void ClangUnit::dirty(uint32_t fileId)
             project->usrs.erase(usr++);
         }
     }
-    {
-        // remove headers?
-        DependSet::iterator dep = project->depends.find(fileId);
-        if (dep != project->depends.end())
-            project->depends.erase(dep);
-    }
-    {
-        DependSet::iterator dep = project->reverseDepends.begin();
-        while (dep != project->reverseDepends.end()) {
-            Set<uint32_t>& set = dep->second;
-            if (set.remove(fileId)) {
-                if (set.isEmpty())
-                    project->reverseDepends.erase(dep++);
-                else
+
+    if (!(mode & ClangUnit::DontDirtyDeps)) {
+        {
+            Map<Location, uint32_t>::iterator inc = project->incs.lower_bound(start);
+            const Map<Location, uint32_t>::const_iterator end = project->incs.end();
+            while (inc != end && inc->first.fileId() == fileId) {
+                project->incs.erase(inc++);
+            }
+        }
+        {
+            // remove headers?
+            DependSet::iterator dep = project->depends.find(fileId);
+            if (dep != project->depends.end()) {
+                project->depends.erase(dep);
+            }
+        }
+        {
+            DependSet::iterator dep = project->reverseDepends.begin();
+            while (dep != project->reverseDepends.end()) {
+                Set<uint32_t>& set = dep->second;
+                if (set.remove(fileId)) {
+                    if (set.isEmpty()) {
+                        project->reverseDepends.erase(dep++);
+                    } else
+                        ++dep;
+                } else {
                     ++dep;
-            } else {
-                ++dep;
+                }
             }
         }
     }
 }
 
-void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
+void ClangUnit::merge(const ClangIndexInfo& info, int mode)
 {
     MutexLocker locker(&project->mutex);
 
     --project->pendingJobs;
 
-    if (mode == Dirty)
-        dirty(sourceInformation.sourceFileId());
+    if (mode & Dirty)
+        dirty(sourceInformation.sourceFileId(), mode);
 
     project->incs.unite(info.incs);
     project->usrs.unite(info.usrs);
@@ -643,6 +649,23 @@ void ClangParseJob::wait()
     mWait.wait(&mUnit->mutex);
 }
 
+static CXChildVisitResult hasInclusionsVisitor(CXCursor cursor, CXCursor /*parent*/, CXClientData client_data)
+{
+    if (clang_getCursorKind(cursor) == CXCursor_InclusionDirective) {
+        *static_cast<bool*>(client_data) = true;
+        return CXChildVisit_Break;
+    }
+    return CXChildVisit_Continue;
+}
+
+static inline bool hasInclusions(CXTranslationUnit unit)
+{
+    CXCursor top = clang_getTranslationUnitCursor(unit);
+    bool has = false;
+    clang_visitChildren(top, hasInclusionsVisitor, &has);
+    return has;
+}
+
 void ClangParseJob::run()
 {
     const Path sourceFile = mUnit->sourceInformation.sourceFile;
@@ -679,11 +702,15 @@ void ClangParseJob::run()
                 callbacks.indexEntityReference = indexEntityReference;
                 const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
 
+                int dirtyFlags = ClangUnit::Dirty;
+
                 if (clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit)) {
                     parseTime = time(0);
                     mInfo.clear();
                     mReparse = false;
                 } else {
+                    if (hasInclusions(unit) && !mInfo.depends.size())
+                        dirtyFlags |= ClangUnit::DontDirtyDeps;
                     parseTime = time(0);
                 }
 
@@ -698,7 +725,7 @@ void ClangParseJob::run()
                 }
 
                 if (mReparse)
-                    mUnit->merge(mInfo, ClangUnit::Dirty);
+                    mUnit->merge(mInfo, dirtyFlags);
             }
         } else {
             mReparse = false;
@@ -865,7 +892,7 @@ ClangProject::ClangProject(const Path &path)
     : Project(path), pool(Server::options().threadPoolSize, Server::options().threadPoolStackSize),
       pendingJobs(0), jobsProcessed(0)
 {
-    cidx = clang_createIndex(1, 1);
+    cidx = clang_createIndex(0, 1);
     caction = clang_IndexAction_create(cidx);
 }
 
