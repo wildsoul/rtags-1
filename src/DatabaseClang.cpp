@@ -487,7 +487,8 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
     if (!decl->entityInfo->USR || declLoc.isEmpty())
         return;
 
-    {
+    switch (decl->entityInfo->templateKind) {
+    case CXIdxEntity_NonTemplate: {
         const uint32_t fileId = declLoc.fileId();
         const Map<uint32_t, bool>::const_iterator seen = info->localSeen.find(fileId);
         if (seen != info->localSeen.end()) {
@@ -501,6 +502,9 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
             }
             info->localSeen[fileId] = true;
         }
+        break; }
+    default:
+        break;
     }
 
     const bool def = decl->isDefinition;
