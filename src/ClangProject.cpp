@@ -829,6 +829,10 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
 
     switch (decl->entityInfo->templateKind) {
     case CXIdxEntity_NonTemplate: {
+        // Hack, typedefs for templates are not actually template entities. Allow them all for now
+        // ### better/possible to get the referenced symbol here?
+        if (decl->entityInfo->kind == CXIdxEntity_Typedef)
+            break;
         const uint32_t fileId = declLoc.fileId();
         const Map<uint32_t, bool>::const_iterator seen = info->localSeen.find(fileId);
         if (seen != info->localSeen.end()) {
