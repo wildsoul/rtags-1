@@ -407,7 +407,7 @@ static inline void addReference(CXClientData client_data, CXCursor cursor)
     info->refs[usr].insert(refLoc);
 }
 
-static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor /*parent*/, CXClientData client_data)
 {
     switch (clang_getCursorKind(cursor)) {
     case CXCursor_ParmDecl:
@@ -421,7 +421,7 @@ static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor parent, CXC
     return CXChildVisit_Break;
 }
 
-static CXChildVisitResult memberVisistor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+static CXChildVisitResult memberVisistor(CXCursor cursor, CXCursor /*parent*/, CXClientData client_data)
 {
     //error() << "found" << clang_getCursorKind(cursor);
     switch (clang_getCursorKind(cursor)) {
@@ -1065,10 +1065,11 @@ Set<Path> DatabaseClang::dependencies(const Path &path, DependencyMode mode) con
 
     const uint32_t fileId = Location::fileId(path);
     if (mode == ArgDependsOn) {
-        addDeps(fileId, depends, result);
-    } else {
         addDeps(fileId, reverseDepends, result);
+    } else {
+        addDeps(fileId, depends, result);
     }
+
     return result;
 }
 
