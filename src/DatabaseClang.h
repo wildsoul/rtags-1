@@ -3,10 +3,11 @@
 
 #include "Database.h"
 #include "UsrMap.h"
+#include <clang-c/Index.h>
+#include <rct/EventReceiver.h>
 #include <rct/Map.h>
 #include <rct/Mutex.h>
 #include <rct/ThreadPool.h>
-#include <clang-c/Index.h>
 
 class ClangUnit;
 
@@ -21,7 +22,7 @@ struct CursorInfo
     Database::Cursor::Kind kind;
 };
 
-class DatabaseClang : public Database
+class DatabaseClang : public Database, public EventReceiver
 {
 public:
     DatabaseClang();
@@ -65,7 +66,7 @@ private:
     UsrSet decls, defs, refs;          // usr->locations
     VirtualSet virtuals;               // usr->usrs
     static LockingUsrMap umap;
-    
+
     friend class ClangUnit;
 };
 #endif

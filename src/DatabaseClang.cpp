@@ -826,7 +826,6 @@ DatabaseClang::~DatabaseClang()
 
 Database::Cursor DatabaseClang::cursor(const Location &location) const
 {
-    DatabaseClang foo;
     MutexLocker locker(&mutex);
     Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(location);
     if (usr == usrs.end())

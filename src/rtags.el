@@ -1567,8 +1567,8 @@ References to references will be treated as references to the referenced symbol"
             (atend (goto-char (point-max)))
             (t nil))
       (when done
-        (rtags-handle-completion-buffer)
-        (setq buffer-read-only t)))
+        (setq buffer-read-only t)
+        (rtags-handle-completion-buffer)))
     )
   )
 
