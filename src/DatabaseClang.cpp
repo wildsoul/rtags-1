@@ -255,7 +255,7 @@ static inline Location makeLocation(const CXIdxLoc& cxloc)
 
     uint32_t fileId;
     if (file) {
-        fileId = reinterpret_cast<uint32_t>(file);
+        fileId = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(file));
     } else {
         // fall back to CXFile
         if (!cxfile)
