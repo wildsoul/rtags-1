@@ -104,6 +104,7 @@ private:
     static void indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl);
     static void indexEntityReference(CXClientData client_data, const CXIdxEntityRefInfo* ref);
     static void indexArguments(ClangIndexInfo* info, const CXCursor& cursor);
+    static void indexMembers(ClangIndexInfo* info, const CXCursor& cursor);
 
 private:
     ClangUnit* mUnit;
@@ -386,49 +387,61 @@ static inline uint32_t makeUsr(const CXCursor& cursor)
     return usr;
 }
 
+static inline void addReference(CXClientData client_data, CXCursor cursor)
+{
+    ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
+    const Location refLoc = makeLocation(cursor);
+    if (refLoc.isEmpty())
+        return;
+    const uint32_t usr = makeUsr(clang_getCursorReferenced(cursor));
+
+    CursorInfo cursorInfo;
+    cursorInfo.usr = usr;
+    cursorInfo.kind = Database::Cursor::Reference;
+    info->usrs[refLoc] = cursorInfo;
+
+    //error() << "indexing ref" << usr << refLoc;
+
+    info->refs[usr].insert(refLoc);
+}
+
 static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
-    switch (clang_getCursorKind(parent)) {
-    case CXCursor_ParmDecl:
-    case CXCursor_FunctionDecl:
-    case CXCursor_CXXMethod:
-    case CXCursor_Constructor:
-        break;
-    default:
-        return CXChildVisit_Break;
-    }
     switch (clang_getCursorKind(cursor)) {
-    case CXCursor_TypeRef: {
-        // do stuff
-        ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
-        const Location refLoc = makeLocation(cursor);
-        if (refLoc.isEmpty())
-            return CXChildVisit_Continue;
-        const uint32_t usr = makeUsr(clang_getCursorReferenced(cursor));
-
-        CursorInfo cursorInfo;
-        cursorInfo.usr = usr;
-        cursorInfo.kind = Database::Cursor::Reference;
-        info->usrs[refLoc] = cursorInfo;
-
-        //error() << "indexing ref" << usr << refLoc;
-
-        info->refs[usr].insert(refLoc);
-        break; }
     case CXCursor_ParmDecl:
-    case CXCursor_FunctionDecl:
-    case CXCursor_CXXMethod:
-    case CXCursor_Constructor:
         return CXChildVisit_Recurse;
+    case CXCursor_TypeRef:
+        addReference(client_data, cursor);
+        return CXChildVisit_Continue;
     default:
         break;
     }
-    return CXChildVisit_Continue;
+    return CXChildVisit_Break;
+}
+
+static CXChildVisitResult memberVisistor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    switch (clang_getCursorKind(cursor)) {
+    case CXCursor_FieldDecl:
+    case CXCursor_CXXBaseSpecifier:
+        return CXChildVisit_Recurse;
+    case CXCursor_TypeRef:
+        addReference(client_data, cursor);
+        return CXChildVisit_Continue;
+    default:
+        break;
+    }
+    return CXChildVisit_Break;
 }
 
 void ClangParseJob::indexArguments(ClangIndexInfo* info, const CXCursor& cursor)
 {
     clang_visitChildren(cursor, argumentVisistor, info);
+}
+
+void ClangParseJob::indexMembers(ClangIndexInfo* info, const CXCursor& cursor)
+{
+    clang_visitChildren(cursor, memberVisistor, info);
 }
 
 static inline void addNamePermutations(CXCursor cursor, const uint32_t usr, Map<String, Set<uint32_t> >& names)
@@ -521,6 +534,12 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
     case CXIdxEntity_CXXConstructor:
     case CXIdxEntity_Function:
         indexArguments(info, decl->cursor);
+        break;
+    case CXIdxEntity_CXXClass:
+    case CXIdxEntity_Struct:
+    case CXIdxEntity_Union:
+        indexMembers(info, decl->cursor);
+        break;
     default:
         break;
     }

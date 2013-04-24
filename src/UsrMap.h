@@ -31,7 +31,7 @@ class UsrMap
         bool operator()(const char* str1, const char* str2) const
         {
             if (!str1 || !str2)
-                return (!str1 && !str2);
+                return str1 == str2;
             return !strcmp(str1, str2);
         }
     };
