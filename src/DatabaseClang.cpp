@@ -1065,9 +1065,9 @@ Set<Path> DatabaseClang::dependencies(const Path &path, DependencyMode mode) con
 
     const uint32_t fileId = Location::fileId(path);
     if (mode == ArgDependsOn) {
-        addDeps(fileId, reverseDepends, result);
-    } else {
         addDeps(fileId, depends, result);
+    } else {
+        addDeps(fileId, reverseDepends, result);
     }
 
     return result;
