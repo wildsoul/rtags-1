@@ -805,8 +805,41 @@ void ClangParseJob::run()
     mWait.wakeOne();
 }
 
+static inline void addDeps(uint32_t fileId, const DependSet& deps, Set<uint32_t>& result)
+{
+    DependSet::const_iterator dep = deps.find(fileId);
+    if (dep != deps.end()) {
+        Set<uint32_t>::const_iterator path = dep->second.begin();
+        const Set<uint32_t>::const_iterator end = dep->second.end();
+        while (path != end) {
+            if (!result.contains(*path)) {
+                result.insert(*path);
+                addDeps(*path, deps, result);
+            }
+            ++path;
+        }
+    }
+}
+
 void ClangUnit::reindex(const SourceInformation& info)
 {
+    {
+        MutexLocker locker(&ClangIndexInfo::seenMutex);
+        const uint32_t fileId = Location::fileId(info.sourceFile);
+        if (fileId && ClangIndexInfo::globalSeen.contains(fileId)) {
+            // the file has already been indexed, we need to take out the fileid from the seen list
+            ClangIndexInfo::globalSeen.remove(fileId);
+
+            // ### do we need to take out all the deps as well?
+            Set<uint32_t> deps;
+            {
+                MutexLocker locker(&project->mutex);
+                addDeps(fileId, project->depends, deps);
+            }
+            ClangIndexInfo::globalSeen.subtract(deps);
+        }
+    }
+
     MutexLocker locker(&mutex);
     if (job) {
         while (!job->done()) {
@@ -1104,35 +1137,26 @@ bool ClangProject::isIndexing() const
     return (pendingJobs > 0);
 }
 
-static inline void addDeps(uint32_t fileId, const DependSet& deps, Set<Path>& result)
-{
-    DependSet::const_iterator dep = deps.find(fileId);
-    if (dep != deps.end()) {
-        Set<uint32_t>::const_iterator path = dep->second.begin();
-        const Set<uint32_t>::const_iterator end = dep->second.end();
-        while (path != end) {
-            const Path& cand = Location::path(*path);
-            if (!result.contains(cand)) {
-                result.insert(cand);
-                addDeps(*path, deps, result);
-            }
-            ++path;
-        }
-    }
-}
-
 Set<Path> ClangProject::dependencies(const Path &path, DependencyMode mode) const
 {
+    MutexLocker locker(&mutex);
+
+    Set<uint32_t> deps;
+    const uint32_t fileId = Location::fileId(path);
+    if (mode == ArgDependsOn) {
+        addDeps(fileId, depends, deps);
+    } else {
+        addDeps(fileId, reverseDepends, deps);
+    }
+
     Set<Path> result;
     result.insert(path); // all files depend on themselves
 
-    MutexLocker locker(&mutex);
-
-    const uint32_t fileId = Location::fileId(path);
-    if (mode == ArgDependsOn) {
-        addDeps(fileId, depends, result);
-    } else {
-        addDeps(fileId, reverseDepends, result);
+    Set<uint32_t>::const_iterator dep = deps.begin();
+    const Set<uint32_t>::const_iterator end = deps.end();
+    while (dep != end) {
+        result.insert(Location::path(*dep));
+        ++dep;
     }
 
     return result;
