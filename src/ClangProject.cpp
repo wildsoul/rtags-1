@@ -709,7 +709,7 @@ void ClangParseJob::run()
                     mInfo.clear();
                     mReparse = false;
                 } else {
-                    if (hasInclusions(unit) && !mInfo.depends.size())
+                    if (hasInclusions(unit) && mInfo.depends.isEmpty())
                         dirtyFlags |= ClangUnit::DontDirtyDeps;
                     parseTime = time(0);
                 }
