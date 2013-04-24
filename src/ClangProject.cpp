@@ -10,21 +10,6 @@
 
 class ClangParseJob;
 
-class TUWrapper
-{
-public:
-    TUWrapper(CXTranslationUnit u)
-        : unit(u)
-    {
-    }
-    ~TUWrapper()
-    {
-        clang_disposeTranslationUnit(unit);
-    }
-
-    CXTranslationUnit unit;
-};
-
 struct ClangIndexInfo
 {
     Map<Location, uint32_t> incs;
@@ -59,6 +44,65 @@ struct ClangIndexInfo
 Mutex ClangIndexInfo::seenMutex;
 Set<uint32_t> ClangIndexInfo::globalSeen;
 
+class UnitCache
+{
+public:
+    enum { MaxSize = 5 };
+
+    class Unit
+    {
+    public:
+        Unit(CXTranslationUnit u) : unit(u) { }
+        ~Unit() { clang_disposeTranslationUnit(unit); }
+
+        bool operator<(const Unit& other) const { return unit < other.unit; }
+
+        CXTranslationUnit unit;
+
+    private:
+        Unit(const Unit& other);
+        Unit& operator=(const Unit& other);
+    };
+
+    static void add(const Path& path, CXTranslationUnit unit)
+    {
+        shared_ptr<Unit> u(new Unit(unit));
+        put(path, u);
+    }
+
+    static shared_ptr<Unit> get(const Path& path)
+    {
+        MutexLocker locker(&mutex);
+        LinkedList<std::pair<Path, shared_ptr<Unit> > >::iterator it = units.begin();
+        const LinkedList<std::pair<Path, shared_ptr<Unit> > >::const_iterator end = units.end();
+        while (it != end) {
+            if (it->first == path) {
+                shared_ptr<Unit> copy = it->second;
+                units.erase(it);
+                return copy;
+            }
+            ++it;
+        }
+        return shared_ptr<Unit>();
+    }
+
+    static void put(const Path& path, const shared_ptr<Unit>& unit)
+    {
+        MutexLocker locker(&mutex);
+        assert(path.isAbsolute());
+        units.push_back(std::make_pair(path, unit));
+        if (units.size() > MaxSize)
+            units.pop_front();
+    }
+
+private:
+    static Mutex mutex;
+    static LinkedList<std::pair<Path, shared_ptr<Unit> > > units;
+};
+
+Mutex UnitCache::mutex;
+LinkedList<std::pair<Path, shared_ptr<UnitCache::Unit> > > UnitCache::units;
+
 class ClangUnit
 {
 public:
@@ -76,7 +120,6 @@ public:
     ClangProject* project;
     mutable Mutex mutex;
     SourceInformation sourceInformation;
-    weak_ptr<TUWrapper> unit;
     time_t indexed;
     shared_ptr<ClangParseJob> job;
 };
@@ -112,17 +155,7 @@ private:
     bool mDone;
     WaitCondition mWait;
     ClangIndexInfo mInfo;
-
-private:
-    static shared_ptr<TUWrapper> addCached(const Path& path, CXTranslationUnit unit, bool reparsed);
-    static void disposeUnit(TUWrapper* unit);
-
-    static Mutex cachedMutex;
-    static LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > cached;
 };
-
-LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > ClangParseJob::cached;
-Mutex ClangParseJob::cachedMutex;
 
 ClangUnit::ClangUnit(ClangProject* p)
     : project(p), indexed(0)
@@ -599,51 +632,6 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
     info->refs[usr].insert(refLoc);
 }
 
-void ClangParseJob::disposeUnit(TUWrapper* unit)
-{
-    MutexLocker locker(&cachedMutex);
-    LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::iterator c = cached.begin();
-    const LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::const_iterator end = cached.end();
-    while (c != end) {
-        if (c->second.get() == unit) {
-            cached.erase(c);
-            return;
-        }
-        ++c;
-    }
-}
-
-shared_ptr<TUWrapper> ClangParseJob::addCached(const Path& path, CXTranslationUnit unit, bool reparsed)
-{
-    MutexLocker locker(&cachedMutex);
-    LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::iterator c = cached.begin();
-    const LinkedList<std::pair<Path, shared_ptr<TUWrapper> > >::const_iterator end = cached.end();
-    while (c != end) {
-        if (c->first == path) {
-            shared_ptr<TUWrapper> result = c->second;
-            if (!reparsed) {
-                if (c->second->unit != unit) {
-                    cached.erase(c);
-                    result.reset(new TUWrapper(unit));
-                    cached.push_back(std::make_pair(path, result));
-                }
-                return result;
-            }
-            assert(c->second->unit == unit);
-            return result;
-        }
-        ++c;
-    }
-    shared_ptr<TUWrapper> result(new TUWrapper(unit));
-    cached.push_back(std::make_pair(path, result));
-    static int maxCached = std::max(Server::options().threadPoolSize, 5);
-    if (cached.size() > maxCached) {
-        cached.pop_front();
-        assert(cached.size() == maxCached);
-    }
-    return result;
-}
-
 void ClangParseJob::stop()
 {
     MutexLocker locker(&mInfo.mutex);
@@ -657,6 +645,8 @@ void ClangParseJob::wait()
 
 void ClangParseJob::run()
 {
+    const Path sourceFile = mUnit->sourceInformation.sourceFile;
+
     {
         MutexLocker locker(&mInfo.mutex);
         if (mInfo.stopped) {
@@ -667,17 +657,18 @@ void ClangParseJob::run()
         }
     }
 
+    bool indexed = false;
+
     // clang parse
-    CXTranslationUnit unit;
     time_t parseTime = 0;
     if (mReparse) {
         // ### should handle multiple builds here
-        shared_ptr<TUWrapper> unitwrapper = mUnit->unit.lock();
-        if (unitwrapper) {
-            unit = unitwrapper->unit;
+        shared_ptr<UnitCache::Unit> unitptr = UnitCache::get(sourceFile);
+        if (unitptr) {
+            CXTranslationUnit unit = unitptr->unit;
             if (clang_reparseTranslationUnit(unit, 0, 0, clang_defaultReparseOptions(unit)) != 0) {
                 // bad
-                disposeUnit(unitwrapper.get());
+                mInfo.clear();
                 mReparse = false;
             } else {
                 IndexerCallbacks callbacks;
@@ -693,6 +684,7 @@ void ClangParseJob::run()
                 if (clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit)) {
                     parseTime = time(0);
                     mInfo.clear();
+                    mReparse = false;
                 }
 
                 {
@@ -704,10 +696,19 @@ void ClangParseJob::run()
                         return;
                     }
                 }
-                mUnit->merge(mInfo, ClangUnit::Dirty);
+
+                if (mReparse)
+                    mUnit->merge(mInfo, ClangUnit::Dirty);
             }
         } else {
             mReparse = false;
+        }
+
+        if (mReparse) {
+            // all ok
+            assert(unitptr != 0);
+            UnitCache::put(sourceFile, unitptr);
+            indexed = true;
         }
     }
     if (!mReparse) {
@@ -762,11 +763,15 @@ void ClangParseJob::run()
             const unsigned tuOpts =
                 CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
 
+            CXTranslationUnit unit = 0;
             if (clang_indexSourceFile(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts,
-                                      mUnit->sourceInformation.sourceFile.nullTerminated(),
-                                      clangArgs, args.size(), 0, 0, &unit, tuOpts)) {
-                parseTime = time(0);
-                mInfo.clear();
+				      sourceFile.nullTerminated(), clangArgs, args.size(), 0, 0, &unit, tuOpts)) {
+		parseTime = time(0);
+		if (unit) {
+                    clang_disposeTranslationUnit(unit);
+                    unit = 0;
+                }
+		mInfo.clear();
             }
 
             {
@@ -778,21 +783,22 @@ void ClangParseJob::run()
                     return;
                 }
             }
+
+            if (unit) {
+                UnitCache::add(sourceFile, unit);
+                assert(!indexed);
+                indexed = true;
+            }
+
             mUnit->merge(mInfo, build == builds.begin() ? ClangUnit::Dirty : ClangUnit::Add);
 
             ++build;
         }
     }
 
-    error() << "done parsing" << mUnit->sourceInformation.sourceFile << unit << "reparse" << mReparse;
-
-    shared_ptr<TUWrapper> wrapper;
-    if (unit) {
-        wrapper = addCached(mUnit->sourceInformation.sourceFile, unit, mReparse);
-    }
+    error() << "done parsing" << mUnit->sourceInformation.sourceFile << "reparse" << mReparse;
 
     MutexLocker locker(&mUnit->mutex);
-    mUnit->unit = wrapper;
     mUnit->indexed = parseTime;
     mDone = true;
     mWait.wakeOne();
