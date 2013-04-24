@@ -421,17 +421,18 @@ static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor parent, CXC
 
 static CXChildVisitResult memberVisistor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
+    //error() << "found" << clang_getCursorKind(cursor);
     switch (clang_getCursorKind(cursor)) {
     case CXCursor_FieldDecl:
     case CXCursor_CXXBaseSpecifier:
         return CXChildVisit_Recurse;
     case CXCursor_TypeRef:
         addReference(client_data, cursor);
-        return CXChildVisit_Continue;
+        break;
     default:
         break;
     }
-    return CXChildVisit_Break;
+    return CXChildVisit_Continue;
 }
 
 void ClangParseJob::indexArguments(ClangIndexInfo* info, const CXCursor& cursor)
