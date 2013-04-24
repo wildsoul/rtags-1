@@ -41,7 +41,7 @@ class RParserJob;
 class DatabaseRParser : public QThread, public Database
 {
 public:
-    DatabaseRParser();
+    DatabaseRParser(const Path &path);
     virtual ~DatabaseRParser();
 
     virtual Cursor cursor(const Location &location) const;

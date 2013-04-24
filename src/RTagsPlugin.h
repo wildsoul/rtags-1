@@ -10,7 +10,7 @@ class RTagsPlugin
 {
 public:
     virtual ~RTagsPlugin() {}
-    virtual shared_ptr<Database> createDatabase() = 0;
+    virtual shared_ptr<Database> createDatabase(const Path &) = 0;
 };
 
 #endif

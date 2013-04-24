@@ -2,7 +2,6 @@
 #define Database_h
 
 #include <Location.h>
-#include <rct/Serializer.h>
 #include <rct/String.h>
 #include <rct/List.h>
 
@@ -11,11 +10,12 @@ class SourceInformation;
 class Database
 {
 public:
-    Database() {}
+    Database(const Path &path)
+        : mPath(path)
+    {}
     virtual ~Database() {}
 
-    virtual bool save(Serializer &) const { return false; }
-    virtual bool load(Deserializer &) const { return false; }
+    Path path() const { return mPath; }
 
     typedef Set<Location> References;
 
@@ -99,5 +99,7 @@ public:
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const = 0;
     virtual Set<Cursor> cursors(const Path &path) const = 0;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn) = 0;
+private:
+    const Path mPath;
 };
 #endif

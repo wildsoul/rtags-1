@@ -701,8 +701,8 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
     return sym;
 }
 
-DatabaseRParser::DatabaseRParser()
-    : state(Starting), parser(0)
+DatabaseRParser::DatabaseRParser(const Path &path)
+    : Database(path), state(Starting), parser(0)
 {
     start();
     moveToThread(this);
@@ -1285,9 +1285,9 @@ void DatabaseRParser::remove(const Path &sourceFile)
 class DatabaseRParserPlugin : public RTagsPlugin
 {
 public:
-    virtual shared_ptr<Database> createDatabase()
+    virtual shared_ptr<Database> createDatabase(const Path &path)
     {
-        return shared_ptr<Database>(new DatabaseRParser);
+        return shared_ptr<Database>(new DatabaseRParser(path));
     }
 };
 

@@ -25,8 +25,11 @@ struct CursorInfo
 class DatabaseClang : public Database, public EventReceiver
 {
 public:
-    DatabaseClang();
+    DatabaseClang(const Path &path);
     virtual ~DatabaseClang();
+
+    void save();
+    bool load();
 
     virtual Cursor cursor(const Location &location) const;
     virtual void references(const Location& location, unsigned queryFlags,

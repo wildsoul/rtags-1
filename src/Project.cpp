@@ -21,7 +21,7 @@ Project::Project(const Path &path)
 {
     mWatcher.modified().connect(this, &Project::onFileModified);
     mWatcher.removed().connect(this, &Project::onFileRemoved);
-    mDatabase = Server::factory().createDatabase();
+    mDatabase = Server::factory().createDatabase(path);
 }
 
 void Project::init()

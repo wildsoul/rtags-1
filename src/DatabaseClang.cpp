@@ -234,6 +234,8 @@ void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
         database->virtuals[virt->first].unite(virt->second);
         ++virt;
     }
+    if (!database->pendingJobs)
+        database->save();
 }
 
 ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
@@ -811,8 +813,9 @@ void ClangUnit::reindex(const SourceInformation& info)
 
 LockingUsrMap DatabaseClang::umap;
 
-DatabaseClang::DatabaseClang()
-    : pool(Server::options().threadPoolSize, Server::options().threadPoolStackSize), pendingJobs(0)
+DatabaseClang::DatabaseClang(const Path &path)
+    : Database(path), pool(Server::options().threadPoolSize, Server::options().threadPoolStackSize),
+      pendingJobs(0)
 {
     cidx = clang_createIndex(1, 1);
     caction = clang_IndexAction_create(cidx);
@@ -822,6 +825,16 @@ DatabaseClang::~DatabaseClang()
 {
     clang_IndexAction_dispose(caction);
     clang_disposeIndex(cidx);
+}
+
+void DatabaseClang::save()
+{
+
+}
+
+bool DatabaseClang::load()
+{
+    return false;
 }
 
 Database::Cursor DatabaseClang::cursor(const Location &location) const
@@ -1141,9 +1154,9 @@ bool DatabaseClang::codeCompleteAt(const Location &location, const String &sourc
 class DatabaseClangPlugin : public RTagsPlugin
 {
 public:
-    virtual shared_ptr<Database> createDatabase()
+    virtual shared_ptr<Database> createDatabase(const Path &path)
     {
-        return shared_ptr<Database>(new DatabaseClang);
+        return shared_ptr<Database>(new DatabaseClang(path));
     }
 };
 
