@@ -459,7 +459,7 @@ static inline void addNamePermutations(CXCursor cursor, const uint32_t usr, Map<
             if (!name.isEmpty()) {
                 subnames.append(name);
                 res += name.size();
-            } else {
+            } else if (subnames.isEmpty()) {
                 break;
             }
         }
