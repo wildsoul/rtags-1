@@ -63,7 +63,6 @@ void usage(FILE *f, const Server::Options &options)
             "  --no-current-project|-o           Don't restore the last current project on startup.\n"
             "  --allow-multiple-builds|-m        Without this setting different flags for the same compiler will be merged for each source file.\n"
             "  --unload-timer|-u [arg]           Number of minutes to wait before unloading non-current projects (disabled by default).\n"
-            "  --no-clang-thread|-O              Don't run clang thread (for fixits)\n"
             "  --disable-plugin|-p [arg]         Don't load this plugin\n", options.threadPoolSize, options.threadPoolStackSize);
 }
 
@@ -93,7 +92,6 @@ int main(int argc, char** argv)
         { "Wlarge-by-value-copy", required_argument, 0, 'r' },
         { "allow-multiple-builds", no_argument, 0, 'm' },
         { "no-current-project", no_argument, 0, 'o' },
-        { "no-clang-thread", no_argument, 0, 'O' },
         { "disable-plugin", required_argument, 0, 'p' },
         { "thread-pool-stack-size", required_argument, 0, 'T' },
         { "thread-pool-size", required_argument, 0, 'j' },

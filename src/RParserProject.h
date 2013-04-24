@@ -56,6 +56,7 @@ public:
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
     virtual Set<Cursor> cursors(const Path &path) const;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
+    virtual String fixits(const Path &path) const;
     virtual bool isIndexing() const;
     virtual void remove(const Path &sourceFile);
 

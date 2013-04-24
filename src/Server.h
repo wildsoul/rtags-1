@@ -24,7 +24,6 @@ class GccArguments;
 class Job;
 class TimerEvent;
 class Project;
-class ClangThread;
 class Server : public EventReceiver
 {
 public:
@@ -39,8 +38,7 @@ public:
         Wall = 0x004,
         IgnorePrintfFixits = 0x008,
         AllowMultipleBuildsForSameCompiler = 0x010,
-        NoStartupCurrentProject = 0x020,
-        NoClangThread = 0x040
+        NoStartupCurrentProject = 0x020
     };
     struct Options {
         Options() : options(0), threadPoolSize(0), threadPoolStackSize(0) {}
@@ -56,7 +54,7 @@ public:
     static void decodePath(Path &path);
     static bool loadFileIds();
     static bool saveFileIds();
-    Path currentSourceFile() const { return mCurrentSourceFile; }
+
 private:
     bool selectProject(const Match &match, Connection *conn);
     bool updateProject(const List<String> &projects);
@@ -68,7 +66,6 @@ private:
     signalslot::Signal2<int, const List<String> &> &complete() { return mComplete; }
     shared_ptr<Project> setCurrentProject(const Path &path);
     shared_ptr<Project> setCurrentProject(const shared_ptr<Project> &project);
-    void onSourceIndexed(const shared_ptr<Project> &project, const SourceInformation &source);
     void onNewMessage(Message *message, Connection *conn);
     void clearProjects();
     void handleCompileMessage(CompileMessage *message, Connection *conn);
@@ -117,13 +114,11 @@ private:
 
     static Options sOptions;
     SocketServer *mServer;
-    Path mCurrentSourceFile;
     bool mVerbose;
 
     signalslot::Signal2<int, const List<String> &> mComplete;
 
     static RTagsPluginFactory sPluginFactory;
-    ClangThread *mClangThread;
 
     friend class CommandProcess;
 };

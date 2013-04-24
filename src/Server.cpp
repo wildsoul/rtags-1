@@ -1,6 +1,5 @@
 #include "Server.h"
 
-#include "ClangThread.h"
 #include "Client.h"
 #include "CompileMessage.h"
 #include "CompletionMessage.h"
@@ -30,18 +29,13 @@ void *UnloadTimer = &UnloadTimer;
 Server::Options Server::sOptions;
 RTagsPluginFactory Server::sPluginFactory;
 Server::Server()
-    : mServer(0), mVerbose(false), mClangThread(0)
+    : mServer(0), mVerbose(false)
 {
 }
 
 Server::~Server()
 {
     clear();
-    if (mClangThread) {
-        mClangThread->stop();
-        mClangThread->join();
-        delete mClangThread;
-    }
     Messages::cleanup();
 }
 
@@ -109,11 +103,6 @@ bool Server::init(const Options &options)
 
     mServer->clientConnected().connect(this, &Server::onNewConnection);
 
-    if (!(sOptions.options & NoClangThread)) {
-        mClangThread = new ClangThread;
-        mClangThread->start();
-    }
-
     reloadProjects();
     if (!(sOptions.options & NoStartupCurrentProject)) {
         Path current = Path(sOptions.dataDir + ".currentProject").readAll(1024);
@@ -139,8 +128,6 @@ shared_ptr<Project> Server::addProject(const Path &path)
                 error("Can't load plugin");
                 project.reset();
                 remove = true;
-            } else if (mClangThread) {
-                project->sourceIndexed().connect(this, &Server::onSourceIndexed);
             }
             if (project)
                 return project;
@@ -635,12 +622,17 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
 
 void Server::fixIts(const QueryMessage &query, Connection *conn)
 {
-    if (mClangThread) {
-        const Path path = Path::resolved(query.query());
-        const String out = mClangThread->fixIts(path);
-        if (!out.isEmpty())
-            conn->write(out);
+    const Path path = Path::resolved(query.query());
+    shared_ptr<Project> project = updateProjectForLocation(path);
+    if (!project) {
+        conn->finish();
+        return;
     }
+
+    const String out = project->fixits(path);
+    if (!out.isEmpty())
+        conn->write(out);
+
     conn->finish();
 }
 
@@ -1031,14 +1023,6 @@ bool Server::updateProject(const List<String> &projects)
 {
     for (int i=0; i<projects.size(); ++i) {
         if (selectProject(projects.at(i), 0)) {
-            const Path p = Path::resolved(projects.at(i));
-            if (p.isFile() && p != mCurrentSourceFile) {
-                shared_ptr<Project> project = mCurrentProject.lock();
-                assert(project);
-                mCurrentSourceFile = p;
-                const SourceInformation info = project->sourceInfo(p);
-                onSourceIndexed(project, info);
-            }
             return true;
         }
     }
@@ -1191,18 +1175,6 @@ void Server::decodePath(Path &path)
                 size -= EncodedUnderscoreLength - 1;
             }
             break;
-        }
-    }
-}
-
-void Server::onSourceIndexed(const shared_ptr<Project> &project, const SourceInformation &source)
-{
-    if (source.sourceFile == mCurrentSourceFile) {
-        mClangThread->index(source);
-    } else if (mCurrentSourceFile.isHeader() && mClangThread->isIdle()) {
-        const Set<Path> deps = project->dependencies(mCurrentSourceFile, Project::DependsOnArg);
-        if (deps.contains(source.sourceFile)) {
-            mClangThread->index(source);
         }
     }
 }

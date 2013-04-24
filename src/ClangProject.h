@@ -7,6 +7,7 @@
 #include <rct/EventReceiver.h>
 #include <rct/Map.h>
 #include <rct/Mutex.h>
+#include <rct/String.h>
 #include <rct/ThreadPool.h>
 
 class ClangUnit;
@@ -36,6 +37,25 @@ template <> inline Deserializer &operator>>(Deserializer &s, CursorInfo &b)
     return s;
 }
 
+struct FixIt
+{
+    inline FixIt(uint32_t s = 0, uint32_t e = 0, const String &t = String())
+        : start(s), end(e), text(t)
+    {
+    }
+    inline bool operator<(const FixIt &other) const
+    {
+        return start < other.start;
+    }
+    inline bool operator==(const FixIt &other) const
+    {
+        return (start == other.start && end == other.end && text == other.text);
+    }
+
+    uint32_t start, end;
+    String text;
+};
+
 class ClangProject : public Project
 {
 public:
@@ -61,6 +81,7 @@ public:
     virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
     virtual Set<Cursor> cursors(const Path &path) const;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
+    virtual String fixits(const Path &path) const;
 
     static LockingUsrMap& usrMap() { return umap; }
 
@@ -83,8 +104,11 @@ private:
     Map<Location, CursorInfo> usrs;    // location->usr
     UsrSet decls, defs, refs;          // usr->locations
     VirtualSet virtuals;               // usr->usrs
+    Map<Path, Set<FixIt> > fixIts;
+
     static LockingUsrMap umap;
 
     friend class ClangUnit;
+    friend class ClangParseJob;
 };
 #endif

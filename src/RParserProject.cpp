@@ -1263,6 +1263,11 @@ bool RParserProject::codeCompleteAt(const Location &location, const String &sour
     return false;
 }
 
+String RParserProject::fixits(const Path &/*path*/) const
+{
+    return String();
+}
+
 bool RParserProject::isIndexing() const
 {
     QMutexLocker locker(&mutex);
