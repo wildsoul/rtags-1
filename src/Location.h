@@ -116,6 +116,9 @@ public:
 
     String encode() const
     {
+        if (isNull())
+            return String();
+
         const String p = path();
         const int l = line(), c = column();
         int size = p.size() + 3; // account for the '\0'
