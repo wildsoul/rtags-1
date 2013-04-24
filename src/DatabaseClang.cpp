@@ -459,6 +459,8 @@ static inline void addNamePermutations(CXCursor cursor, const uint32_t usr, Map<
             if (!name.isEmpty()) {
                 subnames.append(name);
                 res += name.size();
+            } else {
+                break;
             }
         }
         cursor = clang_getCursorSemanticParent(cursor);
