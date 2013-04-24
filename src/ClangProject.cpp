@@ -657,8 +657,6 @@ void ClangParseJob::run()
         }
     }
 
-    bool indexed = false;
-
     // clang parse
     time_t parseTime = 0;
     if (mReparse) {
@@ -685,6 +683,8 @@ void ClangParseJob::run()
                     parseTime = time(0);
                     mInfo.clear();
                     mReparse = false;
+                } else {
+                    parseTime = time(0);
                 }
 
                 {
@@ -707,8 +707,8 @@ void ClangParseJob::run()
         if (mReparse) {
             // all ok
             assert(unitptr != 0);
+            assert(parseTime);
             UnitCache::put(sourceFile, unitptr);
-            indexed = true;
         }
     }
     if (!mReparse) {
@@ -766,12 +766,14 @@ void ClangParseJob::run()
             CXTranslationUnit unit = 0;
             if (clang_indexSourceFile(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts,
 				      sourceFile.nullTerminated(), clangArgs, args.size(), 0, 0, &unit, tuOpts)) {
-		parseTime = time(0);
-		if (unit) {
+                if (unit) {
                     clang_disposeTranslationUnit(unit);
                     unit = 0;
                 }
 		mInfo.clear();
+            } else {
+                assert(!parseTime);
+                parseTime = time(0);
             }
 
             {
@@ -785,9 +787,8 @@ void ClangParseJob::run()
             }
 
             if (unit) {
+                assert(parseTime);
                 UnitCache::add(sourceFile, unit);
-                assert(!indexed);
-                indexed = true;
             }
 
             mUnit->merge(mInfo, build == builds.begin() ? ClangUnit::Dirty : ClangUnit::Add);
