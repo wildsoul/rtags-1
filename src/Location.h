@@ -95,14 +95,17 @@ public:
 
     enum KeyFlag {
         NoFlag = 0x0,
-        Padded = 0x1,
-        ShowContext = 0x2,
-        ShowLineNumbers = 0x4
+        ShowContext = 0x1
     };
     String toString(unsigned flags = NoFlag) const
     {
-        return encode();
+        String ret = encode();
+        if (flags & ShowContext)
+            ret += '\t' + context();
+        return ret;
     }
+
+    String context() const;
 
     static Location fromKey(const char *data)
     {

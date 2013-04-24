@@ -5,6 +5,7 @@
 Map<Path, uint32_t> Location::sPathsToIds;
 Map<uint32_t, Path> Location::sIdsToPaths;
 Mutex Location::sMutex;
+
 String Location::context() const
 {
     const Path p = path();
