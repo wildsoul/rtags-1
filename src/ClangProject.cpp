@@ -1,4 +1,4 @@
-#include "DatabaseClang.h"
+#include "ClangProject.h"
 #include "RTagsPlugin.h"
 #include "SourceInformation.h"
 #include "QueryMessage.h"
@@ -62,18 +62,18 @@ Set<uint32_t> ClangIndexInfo::globalSeen;
 class ClangUnit
 {
 public:
-    ClangUnit(DatabaseClang* db);
+    ClangUnit(ClangProject* project);
 
     void reindex(const SourceInformation& info);
 
-    CXIndex index() { return database->cidx; }
-    CXIndexAction action() { return database->caction; }
+    CXIndex index() { return project->cidx; }
+    CXIndexAction action() { return project->caction; }
 
     enum MergeMode { Dirty, Add };
     void merge(const ClangIndexInfo& info, MergeMode mode);
     void dirty(uint32_t fileId);
 
-    DatabaseClang* database;
+    ClangProject* project;
     mutable Mutex mutex;
     SourceInformation sourceInformation;
     weak_ptr<TUWrapper> unit;
@@ -124,8 +124,8 @@ private:
 LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > ClangParseJob::cached;
 Mutex ClangParseJob::cachedMutex;
 
-ClangUnit::ClangUnit(DatabaseClang* db)
-    : database(db), indexed(0)
+ClangUnit::ClangUnit(ClangProject* p)
+    : project(p), indexed(0)
 {
 }
 
@@ -141,39 +141,39 @@ static inline void dirtyUsr(const Location& start, uint32_t usr, UsrSet& usrs)
     }
 }
 
-// should only be called with database->mutex locked
+// should only be called with project->mutex locked
 void ClangUnit::dirty(uint32_t fileId)
 {
     const Location start(fileId, 1, 1);
     {
-        Map<Location, uint32_t>::iterator inc = database->incs.lower_bound(start);
-        const Map<Location, uint32_t>::const_iterator end = database->incs.end();
+        Map<Location, uint32_t>::iterator inc = project->incs.lower_bound(start);
+        const Map<Location, uint32_t>::const_iterator end = project->incs.end();
         while (inc != end && inc->first.fileId() == fileId) {
-            database->incs.erase(inc++);
+            project->incs.erase(inc++);
         }
     }
     {
-        Map<Location, CursorInfo>::iterator usr = database->usrs.lower_bound(start);
-        while (usr != database->usrs.end() && usr->first.fileId() == fileId) {
-            dirtyUsr(start, usr->second.usr, database->decls);
-            dirtyUsr(start, usr->second.usr, database->defs);
-            dirtyUsr(start, usr->second.usr, database->refs);
-            database->usrs.erase(usr++);
+        Map<Location, CursorInfo>::iterator usr = project->usrs.lower_bound(start);
+        while (usr != project->usrs.end() && usr->first.fileId() == fileId) {
+            dirtyUsr(start, usr->second.usr, project->decls);
+            dirtyUsr(start, usr->second.usr, project->defs);
+            dirtyUsr(start, usr->second.usr, project->refs);
+            project->usrs.erase(usr++);
         }
     }
     {
         // remove headers?
-        DependSet::iterator dep = database->depends.find(fileId);
-        if (dep != database->depends.end())
-            database->depends.erase(dep);
+        DependSet::iterator dep = project->depends.find(fileId);
+        if (dep != project->depends.end())
+            project->depends.erase(dep);
     }
     {
-        DependSet::iterator dep = database->reverseDepends.begin();
-        while (dep != database->reverseDepends.end()) {
+        DependSet::iterator dep = project->reverseDepends.begin();
+        while (dep != project->reverseDepends.end()) {
             Set<uint32_t>& set = dep->second;
             if (set.remove(fileId)) {
                 if (set.isEmpty())
-                    database->reverseDepends.erase(dep++);
+                    project->reverseDepends.erase(dep++);
                 else
                     ++dep;
             } else {
@@ -185,27 +185,27 @@ void ClangUnit::dirty(uint32_t fileId)
 
 void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
 {
-    MutexLocker locker(&database->mutex);
+    MutexLocker locker(&project->mutex);
 
-    --database->pendingJobs;
+    --project->pendingJobs;
 
     if (mode == Dirty)
         dirty(sourceInformation.sourceFileId());
 
-    database->incs.unite(info.incs);
-    database->usrs.unite(info.usrs);
+    project->incs.unite(info.incs);
+    project->usrs.unite(info.usrs);
 
     {
         Map<String, Set<uint32_t> >::const_iterator name = info.names.begin();
         const Map<String, Set<uint32_t> >::const_iterator end = info.names.end();
         while (name != end) {
-            database->names[name->first].unite(name->second);
+            project->names[name->first].unite(name->second);
             ++name;
         }
     }
     {
         const UsrSet* src[] = { &info.decls, &info.defs, &info.refs, 0 };
-        UsrSet* dst[] = { &database->decls, &database->defs, &database->refs, 0 };
+        UsrSet* dst[] = { &project->decls, &project->defs, &project->refs, 0 };
         for (unsigned i = 0; src[i]; ++i) {
             UsrSet::const_iterator usr = src[i]->begin();
             const UsrSet::const_iterator end = src[i]->end();
@@ -217,7 +217,7 @@ void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
     }
     {
         const DependSet* src[] = { &info.depends, &info.reverseDepends, 0 };
-        DependSet* dst[] = { &database->depends, &database->reverseDepends, 0 };
+        DependSet* dst[] = { &project->depends, &project->reverseDepends, 0 };
         for (unsigned i = 0; src[i]; ++i) {
             DependSet::const_iterator usr = src[i]->begin();
             const DependSet::const_iterator end = src[i]->end();
@@ -231,11 +231,14 @@ void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
     VirtualSet::const_iterator virt = info.virtuals.begin();
     const VirtualSet::const_iterator end = info.virtuals.end();
     while (virt != end) {
-        database->virtuals[virt->first].unite(virt->second);
+        project->virtuals[virt->first].unite(virt->second);
         ++virt;
     }
-    if (!database->pendingJobs)
-        database->save(); // should I release the mutex first?
+    if (!project->pendingJobs) {
+        error() << "Parsed" << project->jobsProcessed << "files in" << project->timer.elapsed() << "ms";
+        project->jobsProcessed = 0;
+        project->save(); // should I release the mutex first?
+    }
 }
 
 ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
@@ -291,41 +294,41 @@ static inline Location makeLocation(const CXCursor& cursor)
     return loc;
 }
 
-static inline Database::Cursor::Kind makeKind(CXIdxEntityKind cxkind, bool def)
+static inline Project::Cursor::Kind makeKind(CXIdxEntityKind cxkind, bool def)
 {
     switch (cxkind) {
     case CXIdxEntity_CXXClass:
         if (def)
-            return Database::Cursor::Class;
-        return Database::Cursor::ClassForwardDeclaration;
+            return Project::Cursor::Class;
+        return Project::Cursor::ClassForwardDeclaration;
     case CXIdxEntity_CXXNamespace:
-        return Database::Cursor::Namespace;
+        return Project::Cursor::Namespace;
     case CXIdxEntity_CXXInstanceMethod:
     case CXIdxEntity_CXXConstructor:
     case CXIdxEntity_CXXDestructor:
     case CXIdxEntity_CXXStaticMethod:
         if (def)
-            return Database::Cursor::MemberFunctionDefinition;
-        return Database::Cursor::MemberFunctionDeclaration;
+            return Project::Cursor::MemberFunctionDefinition;
+        return Project::Cursor::MemberFunctionDeclaration;
     case CXIdxEntity_Function:
         if (def)
-            return Database::Cursor::MethodDefinition;
-        return Database::Cursor::MethodDeclaration;
+            return Project::Cursor::MethodDefinition;
+        return Project::Cursor::MethodDeclaration;
     case CXIdxEntity_Struct:
         if (def)
-            return Database::Cursor::Struct;
-        return Database::Cursor::StructForwardDeclaration;
+            return Project::Cursor::Struct;
+        return Project::Cursor::StructForwardDeclaration;
     case CXIdxEntity_Enum:
-        return Database::Cursor::Enum;
+        return Project::Cursor::Enum;
     case CXIdxEntity_EnumConstant:
-        return Database::Cursor::EnumValue;
+        return Project::Cursor::EnumValue;
     case CXIdxEntity_Variable:
     case CXIdxEntity_CXXStaticVariable:
-        return Database::Cursor::Variable;
+        return Project::Cursor::Variable;
     case CXIdxEntity_Field:
-        return Database::Cursor::Field;
+        return Project::Cursor::Field;
     case CXIdxEntity_Union:
-        return Database::Cursor::Union;
+        return Project::Cursor::Union;
     case CXIdxEntity_Unexposed:
     case CXIdxEntity_Typedef:
     case CXIdxEntity_ObjCClass:
@@ -341,7 +344,7 @@ static inline Database::Cursor::Kind makeKind(CXIdxEntityKind cxkind, bool def)
     case CXIdxEntity_CXXInterface:
         break;
     }
-    return Database::Cursor::Invalid;
+    return Project::Cursor::Invalid;
 }
 
 int ClangParseJob::abortQuery(CXClientData client_data, void* /*reserved*/)
@@ -384,7 +387,7 @@ CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXId
 static inline uint32_t makeUsr(const CXCursor& cursor)
 {
     CXString str = clang_getCursorUSR(cursor);
-    const uint32_t usr = DatabaseClang::usrMap().insert(clang_getCString(str));
+    const uint32_t usr = ClangProject::usrMap().insert(clang_getCString(str));
     clang_disposeString(str);
     return usr;
 }
@@ -399,7 +402,7 @@ static inline void addReference(CXClientData client_data, CXCursor cursor)
 
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
-    cursorInfo.kind = Database::Cursor::Reference;
+    cursorInfo.kind = Project::Cursor::Reference;
     info->usrs[refLoc] = cursorInfo;
 
     //error() << "indexing ref" << usr << refLoc;
@@ -512,7 +515,7 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
     }
 
     const bool def = decl->isDefinition;
-    const uint32_t usr = DatabaseClang::usrMap().insert(decl->entityInfo->USR);
+    const uint32_t usr = ClangProject::usrMap().insert(decl->entityInfo->USR);
 
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
@@ -584,11 +587,11 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
         }
     }
 
-    const uint32_t usr = DatabaseClang::usrMap().insert(ref->referencedEntity->USR);
+    const uint32_t usr = ClangProject::usrMap().insert(ref->referencedEntity->USR);
 
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
-    cursorInfo.kind = Database::Cursor::Reference;
+    cursorInfo.kind = Project::Cursor::Reference;
     info->usrs[refLoc] = cursorInfo;
 
     //error() << "indexing ref" << usr << refLoc;
@@ -800,7 +803,7 @@ void ClangUnit::reindex(const SourceInformation& info)
     MutexLocker locker(&mutex);
     if (job) {
         while (!job->done()) {
-            if (!database->pool.remove(job)) {
+            if (!project->pool.remove(job)) {
                 job->stop();
                 job->wait();
             } else {
@@ -813,27 +816,28 @@ void ClangUnit::reindex(const SourceInformation& info)
     if (!reparse)
         sourceInformation = info;
     job.reset(new ClangParseJob(this, reparse));
-    database->pool.start(job);
+    project->pool.start(job);
 }
 
-LockingUsrMap DatabaseClang::umap;
+LockingUsrMap ClangProject::umap;
 
-DatabaseClang::DatabaseClang(const Path &path)
-    : Database(path), pool(Server::options().threadPoolSize, Server::options().threadPoolStackSize),
-      pendingJobs(0)
+ClangProject::ClangProject(const Path &path)
+    : Project(path), pool(Server::options().threadPoolSize, Server::options().threadPoolStackSize),
+      pendingJobs(0), jobsProcessed(0)
 {
     cidx = clang_createIndex(1, 1);
     caction = clang_IndexAction_create(cidx);
 }
 
-DatabaseClang::~DatabaseClang()
+ClangProject::~ClangProject()
 {
     clang_IndexAction_dispose(caction);
     clang_disposeIndex(cidx);
 }
 
-bool DatabaseClang::save() // mutex held
+bool ClangProject::save() // mutex held
 {
+    return false;
     if (!Server::saveFileIds())
         return false;
     Path p = path();
@@ -852,7 +856,7 @@ bool DatabaseClang::save() // mutex held
                << static_cast<uint32_t>(units.size());
     for (Map<uint32_t, ClangUnit*>::const_iterator it = units.begin(); it != units.end(); ++it) {
         // probably don't need a mutex here since all threads have finished and
-        // I hold the database mutex so nothing new should be able to happen
+        // I hold the project mutex so nothing new should be able to happen
         serializer << it->first << it->second->indexed;
     }
 
@@ -863,8 +867,9 @@ bool DatabaseClang::save() // mutex held
     return true;
 }
 
-bool DatabaseClang::load()
+bool ClangProject::load()
 {
+    return false;
     Path p = path();
     Server::encodePath(p);
     p.prepend(Server::options().dataDir);
@@ -894,19 +899,19 @@ bool DatabaseClang::load()
     return true;
 }
 
-Database::Cursor DatabaseClang::cursor(const Location &location) const
+Project::Cursor ClangProject::cursor(const Location &location) const
 {
     MutexLocker locker(&mutex);
     Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(location);
     if (usr == usrs.end())
-        return Database::Cursor();
+        return Project::Cursor();
     if (usr->first > location) { // we're looking for the previous one
         if (usr == usrs.begin())
-            return Database::Cursor();
+            return Project::Cursor();
         --usr;
         if (usr->first.path() != location.path()) {
             // we've iterated past the beginning of the file
-            return Database::Cursor();
+            return Project::Cursor();
         }
     }
     assert(!(usr->first > location));
@@ -914,13 +919,13 @@ Database::Cursor DatabaseClang::cursor(const Location &location) const
     //error() << "found loc, asked for" << location << "resolved to" << usr->first
     //        << "refers to" << usr->second.loc << "and kind" << usr->second.kind;
 
-    Database::Cursor cursor;
+    Project::Cursor cursor;
     cursor.location = usr->first;
     cursor.kind = usr->second.kind;
 
     const uint32_t targetUsr = usr->second.usr;
 
-    if (cursor.kind == Database::Cursor::Reference) {
+    if (cursor.kind == Project::Cursor::Reference) {
         // reference, target should be definition (if possible)
         UsrSet::const_iterator target = defs.find(targetUsr);
         if (target == defs.end()) {
@@ -953,7 +958,7 @@ Database::Cursor DatabaseClang::cursor(const Location &location) const
     return cursor;
 }
 
-void DatabaseClang::writeReferences(const uint32_t usr, Connection* conn) const
+void ClangProject::writeReferences(const uint32_t usr, Connection* conn) const
 {
     const UsrSet::const_iterator ref = refs.find(usr);
     if (ref != refs.end()) {
@@ -966,7 +971,7 @@ void DatabaseClang::writeReferences(const uint32_t usr, Connection* conn) const
     }
 }
 
-void DatabaseClang::writeDeclarations(const uint32_t usr, Connection* conn) const
+void ClangProject::writeDeclarations(const uint32_t usr, Connection* conn) const
 {
     const UsrSet* usrs[] = { &decls, &defs, 0 };
     for (int i = 0; usrs[i]; ++i) {
@@ -982,7 +987,7 @@ void DatabaseClang::writeDeclarations(const uint32_t usr, Connection* conn) cons
     }
 }
 
-void DatabaseClang::references(const Location& location, unsigned queryFlags,
+void ClangProject::references(const Location& location, unsigned queryFlags,
                                const List<Path> &pathFilter, Connection *conn) const
 {
 #warning need to respect pathFilter
@@ -1034,15 +1039,15 @@ void DatabaseClang::references(const Location& location, unsigned queryFlags,
     conn->write("`");
 }
 
-void DatabaseClang::status(const String &query, Connection *conn) const
+void ClangProject::status(const String &query, Connection *conn) const
 {
 }
 
-void DatabaseClang::dump(const SourceInformation &sourceInformation, Connection *conn) const
+void ClangProject::dump(const SourceInformation &sourceInformation, Connection *conn) const
 {
 }
 
-int DatabaseClang::index(const SourceInformation &sourceInformation)
+int ClangProject::index(const SourceInformation &sourceInformation)
 {
     const uint32_t fileId = Location::insertFile(sourceInformation.sourceFile);
     ClangUnit *&unit = units[fileId];
@@ -1051,13 +1056,15 @@ int DatabaseClang::index(const SourceInformation &sourceInformation)
     assert(unit);
     {
         MutexLocker locker(&mutex);
-        ++pendingJobs;
+        if (!pendingJobs++)
+            timer.restart();
+        ++jobsProcessed;
     }
     unit->reindex(sourceInformation);
     return -1;
 }
 
-void DatabaseClang::remove(const Path &sourceFile)
+void ClangProject::remove(const Path &sourceFile)
 {
     const uint32_t fileId = Location::fileId(sourceFile);
 
@@ -1084,7 +1091,7 @@ void DatabaseClang::remove(const Path &sourceFile)
     }
 }
 
-bool DatabaseClang::isIndexing() const
+bool ClangProject::isIndexing() const
 {
     MutexLocker locker(&mutex);
     return (pendingJobs > 0);
@@ -1107,7 +1114,7 @@ static inline void addDeps(uint32_t fileId, const DependSet& deps, Set<Path>& re
     }
 }
 
-Set<Path> DatabaseClang::dependencies(const Path &path, DependencyMode mode) const
+Set<Path> ClangProject::dependencies(const Path &path, DependencyMode mode) const
 {
     Set<Path> result;
     result.insert(path); // all files depend on themselves
@@ -1124,12 +1131,12 @@ Set<Path> DatabaseClang::dependencies(const Path &path, DependencyMode mode) con
     return result;
 }
 
-Set<Path> DatabaseClang::files(int mode) const
+Set<Path> ClangProject::files(int mode) const
 {
     return Set<Path>();
 }
 
-Set<String> DatabaseClang::listSymbols(const String &string, const List<Path> &pathFilter) const
+Set<String> ClangProject::listSymbols(const String &string, const List<Path> &pathFilter) const
 {
 #warning need to respect pathFilter
     Set<String> result;
@@ -1156,7 +1163,7 @@ static inline Location firstLocation(const uint32_t usr, const UsrSet& set)
     return *locs.begin();
 }
 
-Set<Database::Cursor> DatabaseClang::findCursors(const String &string, const List<Path> &pathFilter) const
+Set<Project::Cursor> ClangProject::findCursors(const String &string, const List<Path> &pathFilter) const
 {
 #warning need to respect pathFilter
     MutexLocker locker(&mutex);
@@ -1176,8 +1183,8 @@ Set<Database::Cursor> DatabaseClang::findCursors(const String &string, const Lis
                 Set<Location>::const_iterator loc = decl->second.begin();
                 const Set<Location>::const_iterator end = decl->second.end();
                 while (loc != end) {
-                    Map<Location, CursorInfo>::const_iterator info = DatabaseClang::usrs.find(*loc);
-                    if (info != DatabaseClang::usrs.end()) {
+                    Map<Location, CursorInfo>::const_iterator info = ClangProject::usrs.find(*loc);
+                    if (info != ClangProject::usrs.end()) {
                         Cursor cursor;
                         cursor.symbolName = name->first;
                         cursor.location = *loc;
@@ -1195,26 +1202,26 @@ Set<Database::Cursor> DatabaseClang::findCursors(const String &string, const Lis
     return cursors;
 }
 
-Set<Database::Cursor> DatabaseClang::cursors(const Path &path) const
+Set<Project::Cursor> ClangProject::cursors(const Path &path) const
 {
     return Set<Cursor>();
 }
 
-bool DatabaseClang::codeCompleteAt(const Location &location, const String &source, Connection *conn)
+bool ClangProject::codeCompleteAt(const Location &location, const String &source, Connection *conn)
 {
     return false;
 }
 
-class DatabaseClangPlugin : public RTagsPlugin
+class ClangProjectPlugin : public RTagsPlugin
 {
 public:
-    virtual shared_ptr<Database> createDatabase(const Path &path)
+    virtual shared_ptr<Project> createProject(const Path &path)
     {
-        return shared_ptr<Database>(new DatabaseClang(path));
+        return shared_ptr<Project>(new ClangProject(path));
     }
 };
 
 extern "C" RTagsPlugin* createInstance()
 {
-    return new DatabaseClangPlugin;
+    return new ClangProjectPlugin;
 }

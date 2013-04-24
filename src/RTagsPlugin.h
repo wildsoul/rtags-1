@@ -5,12 +5,12 @@
 #include <rct/Path.h>
 #include <rct/Tr1.h>
 
-class Database;
+class Project;
 class RTagsPlugin
 {
 public:
     virtual ~RTagsPlugin() {}
-    virtual shared_ptr<Database> createDatabase(const Path &) = 0;
+    virtual shared_ptr<Project> createProject(const Path &) = 0;
 };
 
 #endif

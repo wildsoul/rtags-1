@@ -1,5 +1,5 @@
 #include "QueryMessage.h"
-#include "Database.h"
+#include "Project.h"
 #include <rct/Serializer.h>
 
 QueryMessage::QueryMessage(Type type)
@@ -27,9 +27,9 @@ unsigned QueryMessage::keyFlags(unsigned queryFlags)
     if (!(queryFlags & QueryMessage::NoContext))
         ret |= Location::ShowContext;
     if (queryFlags & QueryMessage::CursorInfoIncludeReferences)
-        ret |= Database::Cursor::IncludeReferences;
+        ret |= Project::Cursor::IncludeReferences;
     if (queryFlags & QueryMessage::CursorInfoIncludeTarget)
-        ret |= Database::Cursor::IncludeTarget;
+        ret |= Project::Cursor::IncludeTarget;
     return ret;
 }
 

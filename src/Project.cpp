@@ -1,7 +1,6 @@
 #include "Project.h"
 #include "FileManager.h"
 #include "Server.h"
-#include "Database.h"
 #include <math.h>
 #include <rct/Log.h>
 #include <rct/MemoryMonitor.h>
@@ -21,7 +20,6 @@ Project::Project(const Path &path)
 {
     mWatcher.modified().connect(this, &Project::onFileModified);
     mWatcher.removed().connect(this, &Project::onFileRemoved);
-    mDatabase = Server::factory().createDatabase(path);
 }
 
 void Project::init()
@@ -114,7 +112,6 @@ bool Project::isValid() const
 
 void Project::unload()
 {
-    mDatabase.reset();
     mFileManager.reset();
 }
 
@@ -130,7 +127,7 @@ bool Project::match(const Match &p, bool *indexed) const
             if (indexed)
                 *indexed = true;
             return true;
-        } else if (mFiles.contains(path) || p.match(mPath)) {
+        } else if (mFilesMap.contains(path) || p.match(mPath)) {
             if (!indexed)
                 return true;
             ret = true;
@@ -158,11 +155,11 @@ void Project::index(const SourceInformation &sourceInformation, Type type)
     if (mWatchedPaths.insert(dir))
         mWatcher.watch(dir);
 
-    mDatabase->index(sourceInformation);
+    index(sourceInformation);
     mSourceIndexed(static_pointer_cast<Project>(shared_from_this()), sourceInformation);
 
     static const char *names[] = { "index", "dirty", "dump", "restore" };
-    error("Indexed %s (%s)", sourceInformation.sourceFile.constData(), names[type]);
+    warning("Indexed %s (%s)", sourceInformation.sourceFile.constData(), names[type]);
 }
 
 static inline Path resolveCompiler(const Path &compiler)
@@ -281,7 +278,7 @@ void Project::onFileModified(const Path &file)
 void Project::onFileRemoved(const Path &path)
 {
     if (mSources.remove(path))
-        mDatabase->remove(path);
+        remove(path);
 }
 
 SourceInformationMap Project::sourceInfos() const
@@ -298,9 +295,9 @@ int Project::reindex(const Match &match)
 {
     int ret = 0;
 
-    const Set<Path> files = mDatabase->files();
-    Set<Path>::const_iterator file = files.begin();
-    const Set<Path>::const_iterator end = files.end();
+    const Set<Path> f = files(AllFiles);
+    Set<Path>::const_iterator file = f.begin();
+    const Set<Path>::const_iterator end = f.end();
     while (file != end) {
         if (match.match(*file)) {
             SourceInformationMap::const_iterator info = mSources.find(*file);
@@ -312,7 +309,7 @@ int Project::reindex(const Match &match)
             index(info->second, Dirty);
             ++ret;
 
-            const Set<Path> subfiles = mDatabase->dependencies(*file, Database::DependsOnArg);
+            const Set<Path> subfiles = dependencies(*file, DependsOnArg);
             Set<Path>::const_iterator subfile = subfiles.begin();
             const Set<Path>::const_iterator subend = subfiles.end();
             while (subfile != subend) {
@@ -354,7 +351,7 @@ int Project::dirty(const Set<Path> &dirty)
     Set<Path> dirtyFiles = dirty;
     Map<Path, List<String> > toIndex;
     for (Set<Path>::const_iterator it = dirty.begin(); it != dirty.end(); ++it)
-        dirtyFiles += mDatabase->dependencies(*it, Database::DependsOnArg);
+        dirtyFiles += dependencies(*it, DependsOnArg);
     for (Set<Path>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
         const SourceInformationMap::const_iterator found = mSources.find(*it);
         if (found != mSources.end()) {
@@ -378,7 +375,7 @@ void Project::timerEvent(TimerEvent *e)
 
 bool Project::isIndexed(const Path &file) const
 {
-    return mSources.contains(file) || !mDatabase->dependencies(file, Database::DependsOnArg).isEmpty();
+    return mSources.contains(file) || !dependencies(file, DependsOnArg).isEmpty();
 }
 
 SourceInformationMap Project::sources() const
@@ -386,7 +383,113 @@ SourceInformationMap Project::sources() const
     return mSources;
 }
 
-bool Project::isIndexing() const
+const char * Project::Cursor::kindToString(Kind kind)
 {
-    return mDatabase->isIndexing();
+    const char *names[] = {
+        "Invalid",
+        "File",
+        "MemberFunctionDefinition",
+        "MemberFunctionDeclaration",
+        "MethodDefinition",
+        "MethodDeclaration",
+        "Class",
+        "ClassForwardDeclaration",
+        "Namespace",
+        "Struct",
+        "StructForwardDeclaration",
+        "Variable",
+        "Argument",
+        "Field",
+        "Enum",
+        "EnumValue",
+        "Union",
+        "Macro",
+        "Reference",
+        0
+    };
+    return names[kind];
+}
+
+char Project::Cursor::kindToChar(Kind kind)
+{
+    const char chars[] = {
+        '0', // Invalid
+        'p', // File
+        'F', // MemberFunctionDefinition
+        'f', // MemberFunctionDeclaration
+        'M', // MethodDefinition
+        'm', // MethodDeclaration
+        'C', // Class
+        'c', // ClassForwardDeclaration
+        'n', // Namespace
+        'S', // Struct
+        's', // StructForwardDeclaration,
+        'v', // Variable
+        'a', // Argument
+        'l', // Field
+        'E', // Enum
+        'e', // EnumValue
+        'u', // Union
+        'D', // Macro
+        'r' // Reference
+    };
+    return chars[kind];
+}
+
+String Project::Cursor::toString(unsigned flags) const
+{
+    String ret = String::format<1024>("SymbolName: %s\n"
+                                      "Kind: %s\n"
+                                      "%s" // range
+                                      "%s", // definition
+                                      symbolName.constData(),
+                                      kindToString(kind),
+                                      (start != -1 && end != -1 ? String::format<32>("Range: %d-%d\n", start, end).constData() : ""),
+                                      isDefinition() ? "Definition\n" : "");
+
+    if (!target.isEmpty() && flags & IncludeTarget) {
+        ret.append("Target: ");
+        ret.append(target.toString(flags));
+    }
+#warning need to do this, will need the Database pointer to do it though
+    /*
+      if (!references.isEmpty() && !(flags & IncludeReferences)) {
+      ret.append("References:");
+      for (Set<Location>::const_iterator rit = references.begin(); rit != references.end(); ++rit) {
+      const Location &l = *rit;
+      ret.append("\n    ");
+      ret.append(l.key(flags));
+      }
+      ret.append('\n');
+      }
+    */
+    return ret;
+}
+
+bool Project::Cursor::isDefinition() const
+{
+    switch (kind) {
+    case Invalid:
+    case MemberFunctionDeclaration:
+    case MethodDeclaration:
+    case Reference:
+    case ClassForwardDeclaration:
+    case StructForwardDeclaration:
+        return false;
+    case File:
+    case Macro:
+    case MemberFunctionDefinition:
+    case MethodDefinition:
+    case Class:
+    case Namespace:
+    case Struct:
+    case Variable:
+    case Argument:
+    case Field:
+    case Enum:
+    case EnumValue:
+    case Union:
+        return true;
+    }
+    return false;
 }

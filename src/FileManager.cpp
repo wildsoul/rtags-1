@@ -76,7 +76,7 @@ void FileManager::onScanFinished(Set<Path> paths)
 
         shared_ptr<Project> project = mProject.lock();
         assert(project);
-        FilesMap &map = project->files();
+        FilesMap &map = project->filesMap();
         mWatcher.clear();
         for (Set<Path>::const_iterator it = paths.begin(); it != paths.end(); ++it) {
             if (it->endsWith(".js"))
@@ -121,7 +121,7 @@ void FileManager::onFileAdded(const Path &path)
 
         shared_ptr<Project> project = mProject.lock();
         assert(project);
-        FilesMap &map = project->files();
+        FilesMap &map = project->filesMap();
         const Path parent = path.parentDir();
         if (!parent.isEmpty()) {
             Set<String> &dir = map[parent];
@@ -142,7 +142,7 @@ void FileManager::onFileRemoved(const Path &path)
 {
     MutexLocker lock(&mMutex);
     shared_ptr<Project> project = mProject.lock();
-    FilesMap &map = project->files();
+    FilesMap &map = project->filesMap();
     if (map.contains(path)) {
         recurseDirs();
         return;
@@ -182,7 +182,7 @@ void FileManager::reload()
 {
     MutexLocker lock(&mMutex);
     shared_ptr<Project> proj = mProject.lock();
-    FilesMap &map = proj->files();
+    FilesMap &map = proj->filesMap();
     map.clear();
     recurseDirs();
 }

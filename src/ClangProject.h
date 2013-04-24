@@ -1,7 +1,7 @@
-#ifndef DatabaseClang_h
-#define DatabaseClang_h
+#ifndef ProjectClang_h
+#define ProjectClang_h
 
-#include "Database.h"
+#include "Project.h"
 #include "UsrMap.h"
 #include <clang-c/Index.h>
 #include <rct/EventReceiver.h>
@@ -19,7 +19,7 @@ struct CursorInfo
 {
     uint32_t usr;
     int start, end;
-    Database::Cursor::Kind kind;
+    Project::Cursor::Kind kind;
 };
 
 template <> inline Serializer &operator<<(Serializer &s, const CursorInfo &b)
@@ -32,15 +32,15 @@ template <> inline Deserializer &operator>>(Deserializer &s, CursorInfo &b)
 {
     uint32_t kind;
     s >> b.usr >> b.start >> b.end >> kind;
-    b.kind = static_cast<Database::Cursor::Kind>(kind);
+    b.kind = static_cast<Project::Cursor::Kind>(kind);
     return s;
 }
 
-class DatabaseClang : public Database, public EventReceiver
+class ClangProject : public Project
 {
 public:
-    DatabaseClang(const Path &path);
-    virtual ~DatabaseClang();
+    ClangProject(const Path &path);
+    virtual ~ClangProject();
 
     bool save();
     bool load();
@@ -75,7 +75,8 @@ private:
     CXIndexAction caction;
 
     mutable Mutex mutex;
-    int pendingJobs;
+    int pendingJobs, jobsProcessed;
+    StopWatch timer;
     Map<Location, uint32_t> incs;
     DependSet depends, reverseDepends;
     Map<String, Set<uint32_t> > names; // name->usr

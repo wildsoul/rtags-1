@@ -64,7 +64,6 @@ add_definitions("-DCLANG_INCLUDEPATH=\"${CLANG_SYSTEM_INCLUDE}\"")
 
 set(RDM_SOURCES
   ClangThread.cpp
-  Database.cpp
   FileManager.cpp
   GccArguments.cpp
   Preprocessor.cpp
@@ -125,15 +124,15 @@ set(RPARSER_INCLUDES
     CPlusPlus/src/libs/cplusplus)
 include_directories(${RPARSER_INCLUDES})
 
-set(RPARSER_SRCS DatabaseRParser.cpp)
-set(RPARSER_MOC_HDRS DatabaseRParser.h)
+set(RPARSER_SRCS RParserProject.cpp)
+set(RPARSER_MOC_HDRS RParserProject.h)
 qt4_wrap_cpp(RPARSER_MOC_SRCS ${RPARSER_MOC_HDRS})
 
 add_library(rtagsrparser MODULE ${RPARSER_SRCS} ${RPARSER_MOC_SRCS})
 add_dependencies(rtagsrparser rtags rct CPlusPlus)
 target_link_libraries(rtagsrparser rtags ${QT_LIBRARIES} rct CPlusPlus)
 
-set(CLANG_SRCS DatabaseClang.cpp)
+set(CLANG_SRCS ClangProject.cpp)
 add_library(rtagsclang MODULE ${CLANG_SRCS})
 add_dependencies(rtagsclang rtags rct)
 target_link_libraries(rtagsclang rtags rct ${CLANG_LIBS})

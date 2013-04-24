@@ -4,7 +4,6 @@
 #include "Client.h"
 #include "CompileMessage.h"
 #include "CompletionMessage.h"
-#include "Database.h"
 #include "Filter.h"
 #include "LogObject.h"
 #include "Match.h"
@@ -135,8 +134,8 @@ shared_ptr<Project> Server::addProject(const Path &path)
     {
         shared_ptr<Project> &project = mProjects[path];
         if (!project) {
-            project.reset(new Project(path));
-            if (!project->database()) {
+            project = sPluginFactory.createProject(path);
+            if (!project) {
                 error("Can't load plugin");
                 project.reset();
                 remove = true;
@@ -282,8 +281,7 @@ void Server::handleCompletionMessage(CompletionMessage *message, Connection *con
         conn->finish();
         return;
     }
-    shared_ptr<Database> database = project->database();
-    database->codeCompleteAt(loc, message->contents(), conn);
+    project->codeCompleteAt(loc, message->contents(), conn);
     conn->finish();
 }
 
@@ -402,10 +400,9 @@ void Server::followLocation(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    shared_ptr<Database> database = project->database();
-    Database::Cursor cursor = database->cursor(loc);
+    Project::Cursor cursor = project->cursor(loc);
     if (query.flags() & QueryMessage::DeclarationOnly && cursor.isDefinition() && cursor.target.isValid())
-        cursor = database->cursor(cursor.target);
+        cursor = project->cursor(cursor.target);
 
     if (cursor.location.isValid() && !isFiltered(cursor.location, query))
         conn->write(cursor.target.toString(query.keyFlags()).constData());
@@ -497,7 +494,7 @@ void Server::findFile(const QueryMessage &query, Connection *conn)
         out.append(srcRoot);
         assert(srcRoot.endsWith('/'));
     }
-    const FilesMap& dirs = project->files();
+    const FilesMap& dirs = project->filesMap();
     FilesMap::const_iterator dirit = dirs.begin();
     bool foundExact = false;
     const int patternSize = pattern.size();
@@ -582,7 +579,7 @@ void Server::dumpFile(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    project->database()->dump(c, conn);
+    project->dump(c, conn);
     conn->finish(); // this might block the main thread too long
 }
 
@@ -600,8 +597,7 @@ void Server::cursorInfo(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    shared_ptr<Database> db = project->database();
-    Database::Cursor cursor = db->cursor(loc);
+    Project::Cursor cursor = project->cursor(loc);
     if (cursor.location.isValid())
         conn->write(cursor.toString(query.keyFlags()));
     conn->finish();
@@ -618,7 +614,7 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
 
     const Path srcRoot = project->path();
 
-    Set<Path> dependencies = project->database()->dependencies(path, Database::DependsOnArg);
+    Set<Path> dependencies = project->dependencies(path, Project::DependsOnArg);
     dependencies.remove(path);
     if (!dependencies.isEmpty()) {
         conn->write<64>("%s is depended on by:", path.constData());
@@ -626,7 +622,7 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
             conn->write<64>("  %s", it->constData());
         }
     }
-    dependencies = project->database()->dependencies(path, Database::ArgDependsOn);
+    dependencies = project->dependencies(path, Project::ArgDependsOn);
     if (!dependencies.isEmpty()) {
         conn->write<64>("%s depends on:", path.constData());
         for (Set<Path>::const_iterator it = dependencies.begin(); it != dependencies.end(); ++it) {
@@ -662,7 +658,7 @@ void Server::referencesForLocation(const QueryMessage &query, Connection *conn)
         conn->finish();
         return;
     }
-    project->database()->references(loc, query.flags(), query.pathFilters(), conn);
+    project->references(loc, query.flags(), query.pathFilters(), conn);
     conn->finish();
 }
 
@@ -674,10 +670,9 @@ void Server::referencesForName(const QueryMessage& query, Connection *conn)
         conn->finish();
         return;
     }
-    shared_ptr<Database> database = project->database();
-    const Set<Database::Cursor> cursors = database->findCursors(query.query(), query.pathFilters());
-    for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
-        project->database()->references(it->location, query.flags(), query.pathFilters(), conn);
+    const Set<Project::Cursor> cursors = project->findCursors(query.query(), query.pathFilters());
+    for (Set<Project::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
+        project->references(it->location, query.flags(), query.pathFilters(), conn);
     }
     conn->finish();
 }
@@ -707,8 +702,7 @@ void Server::findSymbols(const QueryMessage &query, Connection *conn)
         conn->finish();
         return;
     }
-    shared_ptr<Database> database = project->database();
-    List<Database::Cursor> cursors = database->findCursors(query.query(), query.pathFilters()).toList();
+    List<Project::Cursor> cursors = project->findCursors(query.query(), query.pathFilters()).toList();
     if (!cursors.isEmpty()) {
         List<Node> nodes(cursors.size());
         for (int i=0; i<cursors.size(); ++i)
@@ -732,15 +726,14 @@ void Server::listSymbols(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    shared_ptr<Database> db = project->database();
     Set<String> strings;
     if (query.type() == QueryMessage::LocalSymbols) {
-        Set<Database::Cursor> cursors = db->cursors(query.query());
-        for (Set<Database::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
+        Set<Project::Cursor> cursors = project->cursors(query.query());
+        for (Set<Project::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
             switch (it->kind) {
-            case Database::Cursor::Reference:
-            case Database::Cursor::EnumValue:
-            case Database::Cursor::Namespace:
+            case Project::Cursor::Reference:
+            case Project::Cursor::EnumValue:
+            case Project::Cursor::Namespace:
                 break;
             default:
                 strings.insert(it->symbolName);
@@ -748,7 +741,7 @@ void Server::listSymbols(const QueryMessage &query, Connection *conn)
             }
         }
     } else {
-        strings = db->listSymbols(query.query(), query.pathFilters());
+        strings = project->listSymbols(query.query(), query.pathFilters());
     }
 
     const bool elispList = query.flags() & QueryMessage::ElispList;
@@ -789,7 +782,7 @@ void Server::status(const QueryMessage &query, Connection *conn)
         conn->finish();
         return;
     }
-    project->database()->status(query.query(), conn);
+    project->status(query.query(), conn);
     conn->finish();
 }
 
@@ -1207,7 +1200,7 @@ void Server::onSourceIndexed(const shared_ptr<Project> &project, const SourceInf
     if (source.sourceFile == mCurrentSourceFile) {
         mClangThread->index(source);
     } else if (mCurrentSourceFile.isHeader() && mClangThread->isIdle()) {
-        const Set<Path> deps = project->database()->dependencies(mCurrentSourceFile, Database::DependsOnArg);
+        const Set<Path> deps = project->dependencies(mCurrentSourceFile, Project::DependsOnArg);
         if (deps.contains(source.sourceFile)) {
             mClangThread->index(source);
         }

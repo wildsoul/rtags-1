@@ -1,10 +1,11 @@
-#ifndef DatabaseRParser_h
-#define DatabaseRParser_h
+#ifndef RParserProject_h
+#define RParserProject_h
 
-#include "Database.h"
+#include "Project.h"
 #include <cplusplus/AST.h>
 #include <cppmodelmanager.h>
 #include <FindUsages.h>
+#include <rct/Path.h>
 #include <LookupContext.h>
 #include <QObject>
 #include <QPointer>
@@ -13,14 +14,14 @@
 #include <QWaitCondition>
 #include <QQueue>
 
-class DatabaseRParser;
+class RParserProject;
 
 class DocumentParser : public QObject
 {
     Q_OBJECT
 public:
     DocumentParser(QPointer<CppTools::Internal::CppModelManager> mgr,
-                   DatabaseRParser* parser,
+                   RParserProject* parser,
                    QObject* parent = 0);
     ~DocumentParser();
 
@@ -32,17 +33,17 @@ private slots:
 public:
     int symbolCount;
     QPointer<CppTools::Internal::CppModelManager> manager;
-    DatabaseRParser* rparser;
+    RParserProject* rparser;
 };
 
 class DocumentParser;
 class RParserUnit;
 class RParserJob;
-class DatabaseRParser : public QThread, public Database
+class RParserProject : public QThread, public Project
 {
 public:
-    DatabaseRParser(const Path &path);
-    virtual ~DatabaseRParser();
+    RParserProject(const Path &path);
+    virtual ~RParserProject();
 
     virtual Cursor cursor(const Location &location) const;
     virtual void status(const String &query, Connection *conn) const;

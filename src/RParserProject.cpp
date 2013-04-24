@@ -1,4 +1,4 @@
-#include "DatabaseRParser.h"
+#include "RParserProject.h"
 #include "QueryMessage.h"
 #include "RTagsPlugin.h"
 #include "SourceInformation.h"
@@ -174,15 +174,15 @@ public:
     void operator()(CPlusPlus::Symbol* symbol);
 
     Set<CPlusPlus::Symbol*> symbols() { return syms; }
-    Map<String, DatabaseRParser::RParserName> symbolNames() { return names; };
+    Map<String, RParserProject::RParserName> symbolNames() { return names; };
 
 private:
     Mode mode;
     Set<CPlusPlus::Symbol*> syms;
-    Map<String, DatabaseRParser::RParserName> names;
+    Map<String, RParserProject::RParserName> names;
 };
 
-void DatabaseRParser::RParserName::merge(const RParserName& other)
+void RParserProject::RParserName::merge(const RParserName& other)
 {
     paths += other.paths;
     names += other.names;
@@ -211,7 +211,7 @@ bool FindSymbols::preVisit(CPlusPlus::Symbol* symbol)
     if (mode == Cursors) {
         syms.insert(symbol);
     } else {
-        DatabaseRParser::RParserName cur;
+        RParserProject::RParserName cur;
         cur.paths.insert(Path(symbol->fileName()));
 
         QVector<int> seps;
@@ -299,7 +299,7 @@ static inline CPlusPlus::Symbol *canonicalSymbol(CPlusPlus::Scope *scope, const 
 }
 
 DocumentParser::DocumentParser(QPointer<CppModelManager> mgr,
-                               DatabaseRParser* parser,
+                               RParserProject* parser,
                                QObject* parent)
     : QObject(parent), symbolCount(0), manager(mgr), rparser(parser)
 {
@@ -487,7 +487,7 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
     }
 }
 
-RParserUnit* DatabaseRParser::findUnit(const Path& path)
+RParserUnit* RParserProject::findUnit(const Path& path)
 {
     Map<Path, RParserUnit*>::const_iterator unit = units.find(path);
     if (unit == units.end())
@@ -495,37 +495,37 @@ RParserUnit* DatabaseRParser::findUnit(const Path& path)
     return unit->second;
 }
 
-static inline Database::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
+static inline Project::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
 {
     if (sym->asEnum()) {
         //error("enum");
-        return Database::Cursor::Enum;
+        return Project::Cursor::Enum;
     } else if (sym->asFunction()) {
         //error("function");
-        return Database::Cursor::MemberFunctionDeclaration;
+        return Project::Cursor::MemberFunctionDeclaration;
     } else if (sym->asNamespace()) {
         //error("namespace");
-        return Database::Cursor::Namespace;
+        return Project::Cursor::Namespace;
     } else if (sym->asTemplate()) {
         //error("template");
     } else if (sym->asNamespaceAlias()) {
         //error("namespaceAlias");
     } else if (sym->asForwardClassDeclaration()) {
         //error("forward class");
-        return Database::Cursor::Class;
+        return Project::Cursor::Class;
     } else if (sym->asClass()) {
         //error("class");
-        return Database::Cursor::Class;
+        return Project::Cursor::Class;
     } else if (sym->asUsingNamespaceDirective()) {
         //error("using 1");
     } else if (sym->asUsingDeclaration()) {
         //error("using 2");
     } else if (sym->asDeclaration()) {
         //error("decl");
-        return Database::Cursor::Variable; // ### ???
+        return Project::Cursor::Variable; // ### ???
     } else if (sym->asArgument()) {
         //error("arg");
-        return Database::Cursor::Variable;
+        return Project::Cursor::Variable;
     } else if (sym->asTypenameArgument()) {
         //error("typename");
     } else if (sym->asBaseClass()) {
@@ -541,7 +541,7 @@ static inline Database::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
     } else if (sym->asObjCMethod()) {
     } else if (sym->asObjCPropertyDeclaration()) {
     }
-    return Database::Cursor::Invalid;
+    return Project::Cursor::Invalid;
 }
 
 static inline Location makeLocation(CPlusPlus::Symbol* sym)
@@ -550,10 +550,10 @@ static inline Location makeLocation(CPlusPlus::Symbol* sym)
     return Location(fileId, sym->line(), sym->column());
 }
 
-static inline Database::Cursor makeCursor(const CPlusPlus::Symbol* sym,
+static inline Project::Cursor makeCursor(const CPlusPlus::Symbol* sym,
                                           const CPlusPlus::TranslationUnit* unit)
 {
-    Database::Cursor cursor;
+    Project::Cursor cursor;
     const uint32_t fileId = Location::insertFile(Path::resolved(sym->fileName()));
     cursor.location = Location(fileId, sym->line(), sym->column());
     const CPlusPlus::Token& token = unit->tokenAt(sym->sourceLocation());
@@ -564,7 +564,7 @@ static inline Database::Cursor makeCursor(const CPlusPlus::Symbol* sym,
     return cursor;
 }
 
-CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
+CPlusPlus::Symbol* RParserProject::findSymbol(CPlusPlus::Document::Ptr doc,
                                                const Location& srcLoc,
                                                FindSymbolMode mode,
                                                const QByteArray& src,
@@ -701,14 +701,14 @@ CPlusPlus::Symbol* DatabaseRParser::findSymbol(CPlusPlus::Document::Ptr doc,
     return sym;
 }
 
-DatabaseRParser::DatabaseRParser(const Path &path)
-    : Database(path), state(Starting), parser(0)
+RParserProject::RParserProject(const Path &path)
+    : Project(path), state(Starting), parser(0)
 {
     start();
     moveToThread(this);
 }
 
-DatabaseRParser::~DatabaseRParser()
+RParserProject::~RParserProject()
 {
     Map<Path, RParserUnit*>::const_iterator unit = units.begin();
     const Map<Path, RParserUnit*>::const_iterator end = units.end();
@@ -719,7 +719,7 @@ DatabaseRParser::~DatabaseRParser()
     delete parser;
 }
 
-void DatabaseRParser::run()
+void RParserProject::run()
 {
     manager = new CppModelManager;
     parser = new DocumentParser(manager, this);
@@ -778,15 +778,15 @@ void DatabaseRParser::run()
     }
 }
 
-static inline const char* stateName(DatabaseRParser::State st)
+static inline const char* stateName(RParserProject::State st)
 {
     struct states {
-        DatabaseRParser::State state;
+        RParserProject::State state;
         const char* name;
-    } static s[] = { { DatabaseRParser::Starting, "starting" },
-                     { DatabaseRParser::Indexing, "indexing" },
-                     { DatabaseRParser::CollectingNames, "collectingnames" },
-                     { DatabaseRParser::Idle, "idle" } };
+    } static s[] = { { RParserProject::Starting, "starting" },
+                     { RParserProject::Indexing, "indexing" },
+                     { RParserProject::CollectingNames, "collectingnames" },
+                     { RParserProject::Idle, "idle" } };
     for (unsigned int i = 0; i < sizeof(s); ++i) {
         if (s[i].state == st)
             return s[i].name;
@@ -795,7 +795,7 @@ static inline const char* stateName(DatabaseRParser::State st)
 }
 
 // needs to be called with mutex locked
-void DatabaseRParser::changeState(State st)
+void RParserProject::changeState(State st)
 {
     if (state == st)
         return;
@@ -805,7 +805,7 @@ void DatabaseRParser::changeState(State st)
 }
 
 // needs to be called with mutex locked
-void DatabaseRParser::waitForState(WaitMode m, State st) const
+void RParserProject::waitForState(WaitMode m, State st) const
 {
     for (;;) {
         if (m == GreaterOrEqual && state >= st)
@@ -816,7 +816,7 @@ void DatabaseRParser::waitForState(WaitMode m, State st) const
     }
 }
 
-void DatabaseRParser::status(const String &query, Connection *conn) const
+void RParserProject::status(const String &query, Connection *conn) const
 {
 }
 
@@ -866,7 +866,7 @@ private:
 };
 
 
-void DatabaseRParser::dump(const SourceInformation &sourceInformation, Connection *conn) const
+void RParserProject::dump(const SourceInformation &sourceInformation, Connection *conn) const
 {
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(sourceInformation.sourceFile));
     if (!doc) {
@@ -877,7 +877,7 @@ void DatabaseRParser::dump(const SourceInformation &sourceInformation, Connectio
     dump.accept(doc->translationUnit()->ast());
 }
 
-void DatabaseRParser::processJob(RParserJob* job)
+void RParserProject::processJob(RParserJob* job)
 {
     const Path& fileName = job->info.sourceFile;
     //error() << "  indexing" << fileName;
@@ -890,7 +890,7 @@ void DatabaseRParser::processJob(RParserJob* job)
     unit->reindex(manager);
 }
 
-inline void DatabaseRParser::dirty(const Set<Path>& files)
+inline void RParserProject::dirty(const Set<Path>& files)
 {
     Map<String, RParserName>::iterator name = names.begin();
     while (name != names.end()) {
@@ -901,7 +901,7 @@ inline void DatabaseRParser::dirty(const Set<Path>& files)
     }
 }
 
-void DatabaseRParser::mergeNames(const Map<String, RParserName>& lnames)
+void RParserProject::mergeNames(const Map<String, RParserName>& lnames)
 {
     Map<String, RParserName>::const_iterator name = lnames.begin();
     const Map<String, RParserName>::const_iterator end = lnames.end();
@@ -911,7 +911,7 @@ void DatabaseRParser::mergeNames(const Map<String, RParserName>& lnames)
     }
 }
 
-void DatabaseRParser::collectNames(const Set<Path>& files)
+void RParserProject::collectNames(const Set<Path>& files)
 {
     dirty(files);
 
@@ -942,7 +942,7 @@ void DatabaseRParser::collectNames(const Set<Path>& files)
     }
 }
 
-int DatabaseRParser::symbolCount(const Path& file)
+int RParserProject::symbolCount(const Path& file)
 {
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(file));
     if (!doc)
@@ -951,7 +951,7 @@ int DatabaseRParser::symbolCount(const Path& file)
     return doc->globalSymbolCount();
 }
 
-int DatabaseRParser::index(const SourceInformation &sourceInformation)
+int RParserProject::index(const SourceInformation &sourceInformation)
 {
     QMutexLocker locker(&mutex);
     jobs.enqueue(new RParserJob(sourceInformation));
@@ -962,7 +962,7 @@ int DatabaseRParser::index(const SourceInformation &sourceInformation)
     return 0;
 }
 
-Database::Cursor DatabaseRParser::cursor(const Location &location) const
+Project::Cursor RParserProject::cursor(const Location &location) const
 {
     QMutexLocker locker(&mutex);
     waitForState(GreaterOrEqual, CollectingNames);
@@ -1014,7 +1014,7 @@ Database::Cursor DatabaseRParser::cursor(const Location &location) const
     return cursor;
 }
 
-void DatabaseRParser::references(const Location& location, unsigned flags,
+void RParserProject::references(const Location& location, unsigned flags,
                                  const List<Path> &pathFilters, Connection *conn) const
 {
     QMutexLocker locker(&mutex);
@@ -1081,7 +1081,7 @@ void DatabaseRParser::references(const Location& location, unsigned flags,
         //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
         if (wantContext) {
             conn->write<256>("%s:%d:%d %c\t%s", qPrintable(usage.path), usage.line, usage.col + 1,
-                             Database::Cursor::kindToChar(kind), qPrintable(usage.lineText));
+                             Project::Cursor::kindToChar(kind), qPrintable(usage.lineText));
         } else {
             conn->write<256>("%s:%d:%d", qPrintable(usage.path), usage.line, usage.col + 1);
         }
@@ -1089,7 +1089,7 @@ void DatabaseRParser::references(const Location& location, unsigned flags,
     conn->write("`");
 }
 
-Set<Path> DatabaseRParser::files(int mode) const
+Set<Path> RParserProject::files(int mode) const
 {
     Set<Path> result;
 
@@ -1120,7 +1120,7 @@ Set<Path> DatabaseRParser::files(int mode) const
     return result;
 }
 
-Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) const
+Set<Path> RParserProject::dependencies(const Path &path, DependencyMode mode) const
 {
     Set<Path> result;
 
@@ -1153,7 +1153,7 @@ Set<Path> DatabaseRParser::dependencies(const Path &path, DependencyMode mode) c
     return result;
 }
 
-Set<String> DatabaseRParser::listSymbols(const String &string, const List<Path> &pathFilter) const
+Set<String> RParserProject::listSymbols(const String &string, const List<Path> &pathFilter) const
 {
     QMutexLocker locker(&mutex);
     waitForState(GreaterOrEqual, Idle);
@@ -1172,7 +1172,7 @@ Set<String> DatabaseRParser::listSymbols(const String &string, const List<Path> 
     return ret;
 }
 
-Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const List<Path> &pathFilter) const
+Set<Project::Cursor> RParserProject::findCursors(const String &string, const List<Path> &pathFilter) const
 {
     QMutexLocker locker(&mutex);
     waitForState(GreaterOrEqual, Idle);
@@ -1230,7 +1230,7 @@ Set<Database::Cursor> DatabaseRParser::findCursors(const String &string, const L
     return cursors;
 }
 
-Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
+Set<Project::Cursor> RParserProject::cursors(const Path &path) const
 {
     QMutexLocker locker(&mutex);
     waitForState(GreaterOrEqual, CollectingNames);
@@ -1256,20 +1256,20 @@ Set<Database::Cursor> DatabaseRParser::cursors(const Path &path) const
     return cursors;
 }
 
-bool DatabaseRParser::codeCompleteAt(const Location &location, const String &source,
+bool RParserProject::codeCompleteAt(const Location &location, const String &source,
                                      Connection *conn)
 {
     error() << "Got code complete" << location << source;
     return false;
 }
 
-bool DatabaseRParser::isIndexing() const
+bool RParserProject::isIndexing() const
 {
     QMutexLocker locker(&mutex);
     return state == Indexing;
 }
 
-void DatabaseRParser::remove(const Path &sourceFile)
+void RParserProject::remove(const Path &sourceFile)
 {
     QMutexLocker locker(&mutex);
     waitForState(GreaterOrEqual, Idle);
@@ -1282,16 +1282,16 @@ void DatabaseRParser::remove(const Path &sourceFile)
     manager->removeFromSnapshot(qfile);
 }
 
-class DatabaseRParserPlugin : public RTagsPlugin
+class RParserProjectPlugin : public RTagsPlugin
 {
 public:
-    virtual shared_ptr<Database> createDatabase(const Path &path)
+    virtual shared_ptr<Project> createProject(const Path &path)
     {
-        return shared_ptr<Database>(new DatabaseRParser(path));
+        return shared_ptr<Project>(new RParserProject(path));
     }
 };
 
 extern "C" RTagsPlugin* createInstance()
 {
-    return new DatabaseRParserPlugin;
+    return new RParserProjectPlugin;
 }

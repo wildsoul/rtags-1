@@ -32,12 +32,12 @@ public:
 
     String error() const { return mError; }
 
-    shared_ptr<Database> createDatabase(const Path &path)
+    shared_ptr<Project> createProject(const Path &path)
     {
-        shared_ptr<Database> ret;
+        shared_ptr<Project> ret;
         for (int i=0; i<mPlugins.size(); ++i) {
             assert(mPlugins.at(i)->instance());
-            ret = mPlugins.at(i)->instance()->createDatabase(path);
+            ret = mPlugins.at(i)->instance()->createProject(path);
             if (ret)
                 break;
         }
