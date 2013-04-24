@@ -54,6 +54,8 @@ public:
     static RTagsPluginFactory &factory() { return sPluginFactory; }
     static bool encodePath(Path &path);
     static void decodePath(Path &path);
+    static bool loadFileIds();
+    static bool saveFileIds();
     Path currentSourceFile() const { return mCurrentSourceFile; }
 private:
     bool selectProject(const Match &match, Connection *conn);

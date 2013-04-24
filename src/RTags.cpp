@@ -1,6 +1,7 @@
 #include "RTags.h"
 #include "CompileMessage.h"
 #include "QueryMessage.h"
+#include <rct/Mutex.h>
 #include "CompletionMessage.h"
 #include <dirent.h>
 #include <fnmatch.h>

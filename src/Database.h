@@ -85,7 +85,7 @@ public:
     virtual bool isIndexing() const = 0;
     enum DependencyMode {
         DependsOnArg,
-        ArgDependsOn // slow
+        ArgDependsOn
     };
 
     virtual Set<Path> dependencies(const Path &path, DependencyMode mode) const = 0;

@@ -78,6 +78,8 @@ private:
     // non-copyable
     UsrMap(const UsrMap& usr);
     UsrMap& operator=(const UsrMap& usr);
+
+    friend class LockingUsrMap;
 };
 
 class LockingUsrMap
@@ -97,6 +99,32 @@ public:
         return map.value(str);
     }
 
+    void serialize(Serializer &s) const
+    {
+        s << map.nextId << static_cast<uint32_t>(map.usrs.size());
+        for (UsrMap::MapType::const_iterator it = map.usrs.begin(); it != map.usrs.end(); ++it) {
+            const uint16_t len = strlen(it->first);
+            s << len;
+            s.write(it->first, len);
+            s << it->second;
+        }
+    }
+
+    void deserialize(Deserializer &s)
+    {
+        uint32_t size;
+        s >> map.nextId >> size;
+        while (size--) {
+            uint16_t len;
+            s >> len;
+            char *string = new char[len + 1];
+            s.read(string, len);
+            string[len] = '\0';
+            uint32_t val;
+            s >> val;
+            map.usrs[string] = val;
+        }
+    }
 private:
     mutable Mutex mutex;
     UsrMap map;
@@ -105,5 +133,18 @@ private:
     LockingUsrMap(const LockingUsrMap& usr);
     LockingUsrMap& operator=(const LockingUsrMap& usr);
 };
+
+
+template <> inline Serializer &operator<<(Serializer &s, const LockingUsrMap &u)
+{
+    u.serialize(s);
+    return s;
+}
+
+template <> inline Deserializer &operator>>(Deserializer &s, LockingUsrMap &u)
+{
+    u.deserialize(s);
+    return s;
+}
 
 #endif

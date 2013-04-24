@@ -4,10 +4,9 @@
 #include <rct/String.h>
 #include <rct/Log.h>
 #include <rct/Path.h>
-#include <rct/ReadLocker.h>
-#include <rct/ReadWriteLock.h>
 #include <rct/Serializer.h>
-#include <rct/WriteLocker.h>
+#include <rct/Mutex.h>
+#include <rct/MutexLocker.h>
 #include <assert.h>
 #include <stdio.h>
 
@@ -50,12 +49,12 @@ public:
 
     static inline uint32_t fileId(const Path &path)
     {
-        ReadLocker lock(&sLock);
+        MutexLocker lock(&sMutex);
         return sPathsToIds.value(path);
     }
     static inline Path path(uint32_t id)
     {
-        ReadLocker lock(&sLock);
+        MutexLocker lock(&sMutex);
         return sIdsToPaths.value(id);
     }
 
@@ -63,10 +62,10 @@ public:
     {
         uint32_t ret;
         {
-            WriteLocker lock(&sLock);
+            MutexLocker lock(&sMutex);
             uint32_t &id = sPathsToIds[path];
             if (!id) {
-                id = ++sLastId;
+                id = sIdsToPaths.size() + 1;
                 sIdsToPaths[id] = path;
             }
             ret = id;
@@ -82,8 +81,11 @@ public:
     inline Path path() const
     {
         if (mCachedPath.isEmpty()) {
-            ReadLocker lock(&sLock);
-            mCachedPath = sIdsToPaths.value(fileId());
+            const uint32_t f = fileId();
+            if (f) {
+                MutexLocker lock(&sMutex);
+                mCachedPath = sIdsToPaths.value(f);
+            }
         }
         return mCachedPath;
     }
@@ -154,32 +156,20 @@ public:
 
     static Map<uint32_t, Path> idsToPaths()
     {
-        ReadLocker lock(&sLock);
+        MutexLocker lock(&sMutex);
         return sIdsToPaths;
     }
 
     static Map<Path, uint32_t> pathsToIds()
     {
-        ReadLocker lock(&sLock);
+        MutexLocker lock(&sMutex);
         return sPathsToIds;
     }
-
-    static void init(const Map<Path, uint32_t> &pathsToIds)
-    {
-        WriteLocker lock(&sLock);
-        sPathsToIds = pathsToIds;
-        sLastId = sPathsToIds.size();
-        for (Map<Path, uint32_t>::const_iterator it = sPathsToIds.begin(); it != sPathsToIds.end(); ++it) {
-            assert(it->second <= it->second);
-            sIdsToPaths[it->second] = it->first;
-        }
-    }
-
 private:
+    friend class Server;
     static Map<Path, uint32_t> sPathsToIds;
     static Map<uint32_t, Path> sIdsToPaths;
-    static uint32_t sLastId;
-    static ReadWriteLock sLock;
+    static Mutex sMutex;
     mutable Path mCachedPath;
 };
 

@@ -77,7 +77,7 @@ public:
     mutable Mutex mutex;
     SourceInformation sourceInformation;
     weak_ptr<TUWrapper> unit;
-    bool indexed;
+    time_t indexed;
     shared_ptr<ClangParseJob> job;
 };
 
@@ -125,7 +125,7 @@ LinkedList<std::pair<Path, shared_ptr<TUWrapper> > > ClangParseJob::cached;
 Mutex ClangParseJob::cachedMutex;
 
 ClangUnit::ClangUnit(DatabaseClang* db)
-    : database(db), indexed(false)
+    : database(db), indexed(0)
 {
 }
 
@@ -235,7 +235,7 @@ void ClangUnit::merge(const ClangIndexInfo& info, MergeMode mode)
         ++virt;
     }
     if (!database->pendingJobs)
-        database->save();
+        database->save(); // should I release the mutex first?
 }
 
 ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
@@ -666,6 +666,7 @@ void ClangParseJob::run()
 
     // clang parse
     CXTranslationUnit unit;
+    time_t parseTime = 0;
     if (mReparse) {
         // ### should handle multiple builds here
         shared_ptr<TUWrapper> unitwrapper = mUnit->unit.lock();
@@ -687,6 +688,7 @@ void ClangParseJob::run()
                 const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
 
                 if (clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit)) {
+                    parseTime = time(0);
                     mInfo.clear();
                 }
 
@@ -760,6 +762,7 @@ void ClangParseJob::run()
             if (clang_indexSourceFile(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts,
                                       mUnit->sourceInformation.sourceFile.nullTerminated(),
                                       clangArgs, args.size(), 0, 0, &unit, tuOpts)) {
+                parseTime = time(0);
                 mInfo.clear();
             }
 
@@ -787,7 +790,7 @@ void ClangParseJob::run()
 
     MutexLocker locker(&mUnit->mutex);
     mUnit->unit = wrapper;
-    mUnit->indexed = (unit != 0);
+    mUnit->indexed = parseTime;
     mDone = true;
     mWait.wakeOne();
 }
@@ -829,14 +832,66 @@ DatabaseClang::~DatabaseClang()
     clang_disposeIndex(cidx);
 }
 
-void DatabaseClang::save()
+bool DatabaseClang::save() // mutex held
 {
+    if (!Server::saveFileIds())
+        return false;
+    Path p = path();
+    Server::encodePath(p);
+    p.prepend(Server::options().dataDir);
+    Path::mkdir(Server::options().dataDir);
 
+    FILE *f = fopen(p.constData(), "w");
+    if (!f) {
+        error("Couldn't open %s for writing", p.constData());
+        return false;
+    }
+    Serializer serializer(f);
+    serializer << static_cast<uint32_t>(0) << static_cast<uint32_t>(Server::DatabaseVersion)
+               << incs << depends << reverseDepends << names << usrs << decls << defs << refs << virtuals << umap
+               << static_cast<uint32_t>(units.size());
+    for (Map<uint32_t, ClangUnit*>::const_iterator it = units.begin(); it != units.end(); ++it) {
+        // probably don't need a mutex here since all threads have finished and
+        // I hold the database mutex so nothing new should be able to happen
+        serializer << it->first << it->second->indexed;
+    }
+
+    const uint32_t size = ftell(f);
+    fseek(f, sizeof(uint32_t), SEEK_SET);
+    serializer << size;
+    fclose(f);
+    return true;
 }
 
 bool DatabaseClang::load()
 {
-    return false;
+    Path p = path();
+    Server::encodePath(p);
+    p.prepend(Server::options().dataDir);
+    FILE *f = fopen(p.constData(), "r");
+    if (!f)
+        return false;
+
+    Deserializer deserializer(f);
+    uint32_t size;
+    deserializer >> size;
+    if (size != static_cast<uint32_t>(Rct::fileSize(f))) {
+        fclose(f);
+        error() << p << "seems to be corrupted. Refusing to load";
+        return false;
+    }
+    uint32_t version;
+    deserializer >> version;
+    if (version != Server::DatabaseVersion) {
+        fclose(f);
+        return false;
+    }
+    uint32_t unitCount;
+    deserializer >> incs >> depends >> reverseDepends >> names >> usrs >> decls >> defs
+                 >> refs >> virtuals >> umap >> unitCount;
+
+    fclose(f);
+    return true;
 }
 
 Database::Cursor DatabaseClang::cursor(const Location &location) const
@@ -989,14 +1044,10 @@ void DatabaseClang::dump(const SourceInformation &sourceInformation, Connection 
 
 int DatabaseClang::index(const SourceInformation &sourceInformation)
 {
-    ClangUnit* unit;
-    const Map<Path, ClangUnit*>::const_iterator it = units.find(sourceInformation.sourceFile);
-    if (it == units.end()) {
+    const uint32_t fileId = Location::insertFile(sourceInformation.sourceFile);
+    ClangUnit *&unit = units[fileId];
+    if (!unit)
         unit = new ClangUnit(this);
-        units[sourceInformation.sourceFile] = unit;
-    } else {
-        unit = it->second;
-    }
     assert(unit);
     {
         MutexLocker locker(&mutex);

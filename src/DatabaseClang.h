@@ -22,13 +22,27 @@ struct CursorInfo
     Database::Cursor::Kind kind;
 };
 
+template <> inline Serializer &operator<<(Serializer &s, const CursorInfo &b)
+{
+    s << b.usr << b.start << static_cast<uint32_t>(b.kind);
+    return s;
+}
+
+template <> inline Deserializer &operator>>(Deserializer &s, CursorInfo &b)
+{
+    uint32_t kind;
+    s >> b.usr >> b.start >> b.end >> kind;
+    b.kind = static_cast<Database::Cursor::Kind>(kind);
+    return s;
+}
+
 class DatabaseClang : public Database, public EventReceiver
 {
 public:
     DatabaseClang(const Path &path);
     virtual ~DatabaseClang();
 
-    void save();
+    bool save();
     bool load();
 
     virtual Cursor cursor(const Location &location) const;
@@ -55,7 +69,7 @@ private:
     void writeDeclarations(const uint32_t usr, Connection* conn) const;
 
 private:
-    Map<Path, ClangUnit*> units;
+    Map<uint32_t, ClangUnit*> units;
     ThreadPool pool;
     CXIndex cidx;
     CXIndexAction caction;

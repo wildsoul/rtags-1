@@ -1213,3 +1213,57 @@ void Server::onSourceIndexed(const shared_ptr<Project> &project, const SourceInf
         }
     }
 }
+
+bool Server::loadFileIds()
+{
+    MutexLocker lock(&Location::sMutex);
+    const Path p = sOptions.dataDir + "fileids";
+    FILE *f = fopen(p.constData(), "r");
+    if (!f)
+        return false;
+    Deserializer s(f);
+    uint32_t fileSize;
+    s >> fileSize;
+    if (fileSize != static_cast<uint32_t>(Rct::fileSize(f))) {
+        fclose(f);
+        return false;
+    }
+    uint32_t version;
+    s >> version;
+    if (version != Server::DatabaseVersion) {
+        fclose(f);
+        return false;
+    }
+    uint32_t size;
+    s >> size;
+    Path path;
+    uint32_t fileId;
+    while (size--) {
+        s >> path >> fileId;
+        Location::sPathsToIds[path] = fileId;
+        Location::sIdsToPaths[fileId] = path;
+    }
+    fclose(f);
+    return true;
+}
+
+bool Server::saveFileIds()
+{
+    MutexLocker lock(&Location::sMutex);
+    const Path p = sOptions.dataDir + "fileids";
+    FILE *f = fopen(p.constData(), "w");
+    if (!f)
+        return false;
+    Serializer s(f);
+    s << static_cast<uint32_t>(0);
+    s << static_cast<uint32_t>(Server::DatabaseVersion);
+    for (Map<Path, uint32_t>::const_iterator it = Location::sPathsToIds.begin();
+         it != Location::sPathsToIds.end(); ++it) {
+        s << it->first << it->second;
+    }
+    const uint32_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    s << size;
+    fclose(f);
+    return true;
+}
