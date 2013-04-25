@@ -97,9 +97,13 @@ public:
         NoFlag = 0x0,
         ShowContext = 0x1
     };
-    String toString(unsigned flags = NoFlag) const
+    String toString(unsigned flags = NoFlag, const char type = '\0') const
     {
         String ret = encode();
+        if (type != '\0') {
+            ret += ' ';
+            ret += type;
+        }
         if (flags & ShowContext)
             ret += '\t' + context();
         return ret;

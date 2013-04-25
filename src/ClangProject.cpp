@@ -1300,7 +1300,7 @@ Project::Cursor ClangProject::cursor(const Location &location) const
         }
         if ((usr->first.line() < location.line())
             || (usr->first.column() + usr->second.length() <= location.column())) {
-            // our location is after the start of the the previous location
+            // our location is after the end of the the previous location
             return Project::Cursor();
         }
         assert(usr->first.line() == location.line());
@@ -1349,20 +1349,29 @@ Project::Cursor ClangProject::cursor(const Location &location) const
     return cursor;
 }
 
-void ClangProject::writeReferences(const uint32_t usr, Connection* conn) const
+inline char ClangProject::locationType(const Location& location) const
+{
+    //Map<Location, CursorInfo> usrs;    // location->usr
+    const Map<Location, CursorInfo>::const_iterator info = usrs.find(location);
+    if (info == usrs.end())
+        return '\0';
+    return Cursor::kindToChar(info->second.kind);
+}
+
+void ClangProject::writeReferences(const uint32_t usr, Connection* conn, unsigned int keyFlags) const
 {
     const UsrSet::const_iterator ref = refs.find(usr);
     if (ref != refs.end()) {
         Set<Location>::const_iterator loc = ref->second.begin();
         const Set<Location>::const_iterator end = ref->second.end();
         while (loc != end) {
-            conn->write<256>("%s:%d:%d %c\t", loc->path().nullTerminated(), loc->line(), loc->column(), 'r');
+            conn->write(loc->toString(keyFlags, locationType(*loc)));
             ++loc;
         }
     }
 }
 
-void ClangProject::writeDeclarations(const uint32_t usr, Connection* conn) const
+void ClangProject::writeDeclarations(const uint32_t usr, Connection* conn, unsigned int keyFlags) const
 {
     const UsrSet* usrs[] = { &decls, &defs, 0 };
     for (int i = 0; usrs[i]; ++i) {
@@ -1371,7 +1380,7 @@ void ClangProject::writeDeclarations(const uint32_t usr, Connection* conn) const
             Set<Location>::const_iterator loc = decl->second.begin();
             const Set<Location>::const_iterator end = decl->second.end();
             while (loc != end) {
-                conn->write<256>("%s:%d:%d %c\t", loc->path().nullTerminated(), loc->line(), loc->column(), 'r');
+                conn->write(loc->toString(keyFlags, locationType(*loc)));
                 ++loc;
             }
         }
@@ -1382,6 +1391,8 @@ void ClangProject::references(const Location& location, unsigned queryFlags,
                                const List<Path> &pathFilter, Connection *conn) const
 {
 #warning need to respect pathFilter
+    const unsigned keyFlags = QueryMessage::keyFlags(queryFlags);
+
     const bool wantVirtuals = queryFlags & QueryMessage::FindVirtuals;
     const bool wantAll = queryFlags & QueryMessage::AllReferences;
 
@@ -1404,7 +1415,7 @@ void ClangProject::references(const Location& location, unsigned queryFlags,
         }
         if ((usr->first.line() < location.line())
             || (usr->first.column() + usr->second.length() <= location.column())) {
-            // our location is after the start of the the previous location
+            // our location is after the end of the the previous location
             conn->write("`");
             return;
         }
@@ -1415,22 +1426,22 @@ void ClangProject::references(const Location& location, unsigned queryFlags,
     const uint32_t targetUsr = usr->second.usr;
 
     if (wantAll || !wantVirtuals) {
-        writeReferences(targetUsr, conn);
+        writeReferences(targetUsr, conn, keyFlags);
         if (wantAll)
-            writeDeclarations(targetUsr, conn);
+            writeDeclarations(targetUsr, conn, keyFlags);
     }
     if (wantVirtuals) {
         if (wantAll)
-            writeReferences(targetUsr, conn);
-        writeDeclarations(targetUsr, conn);
+            writeReferences(targetUsr, conn, keyFlags);
+        writeDeclarations(targetUsr, conn, keyFlags);
 
         const VirtualSet::const_iterator virt = virtuals.find(targetUsr);
         Set<uint32_t>::const_iterator vusr = virt->second.begin();
         const Set<uint32_t>::const_iterator vend = virt->second.end();
         while (vusr != vend) {
             if (wantAll)
-                writeReferences(*vusr, conn);
-            writeDeclarations(*vusr, conn);
+                writeReferences(*vusr, conn, keyFlags);
+            writeDeclarations(*vusr, conn, keyFlags);
             ++vusr;
         }
     }

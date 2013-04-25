@@ -88,8 +88,9 @@ public:
     static LockingUsrMap& usrMap() { return umap; }
 
 private:
-    void writeReferences(const uint32_t usr, Connection* conn) const;
-    void writeDeclarations(const uint32_t usr, Connection* conn) const;
+    char locationType(const Location& location) const;
+    void writeReferences(const uint32_t usr, Connection* conn, unsigned keyFlags) const;
+    void writeDeclarations(const uint32_t usr, Connection* conn, unsigned keyFlags) const;
 
 private:
     Map<uint32_t, ClangUnit*> units;
