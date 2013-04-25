@@ -12,16 +12,16 @@ class Connection;
 class ClangCompletionJob : public ThreadPool::Job
 {
 public:
-    ClangCompletionJob(const shared_ptr<UnitCache::Unit> &unit, const Location &location,
-                       const String &unsaved, Connection *conn);
+    ClangCompletionJob(const shared_ptr<UnitCache::Unit> &unit, const Location &location, const String &unsaved);
     virtual void run();
-    void onConnectionDestroyed(Connection*);
+    signalslot::Signal1<ClangCompletionJob*> &finished() { return mFinished; }
+    signalslot::Signal3<ClangCompletionJob*, String, String> &completion() { return mCompletion; }
 private:
     shared_ptr<UnitCache::Unit> mUnit;
     const Location mLocation;
     const String mUnsaved;
-    Connection *mConnection;
-    Mutex mMutex;
+    signalslot::Signal3<ClangCompletionJob*, String, String> mCompletion;
+    signalslot::Signal1<ClangCompletionJob*> mFinished;
 };
 
 #endif

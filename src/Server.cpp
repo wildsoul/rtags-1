@@ -268,8 +268,9 @@ void Server::handleCompletionMessage(CompletionMessage *message, Connection *con
         conn->finish();
         return;
     }
-    project->codeCompleteAt(loc, message->contents(), conn);
-    conn->finish();
+    if (!project->codeCompleteAt(loc, message->contents(), conn))
+        conn->finish();
+    // not calling finish, could be async
 }
 
 void Server::handleQueryMessage(QueryMessage *message, Connection *conn)

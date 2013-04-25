@@ -1683,10 +1683,39 @@ bool ClangProject::codeCompleteAt(const Location &location, const String &source
         return false;
     }
 
-    shared_ptr<ClangCompletionJob> job(new ClangCompletionJob(unit, location, source, conn));
+    shared_ptr<ClangCompletionJob> job(new ClangCompletionJob(unit, location, source));
+    job->finished().connectAsync(this, &ClangProject::onCompletionFinished);
+    job->completion().connectAsync(this, &ClangProject::onCompletion);
+    conn->destroyed().connect(this, &ClangProject::onConnectionDestroyed);
+    mCompletions[job.get()] = conn;
     pool->start(job);
 
     return true;
+}
+
+void ClangProject::onConnectionDestroyed(Connection *conn)
+{
+    for (Map<ClangCompletionJob*, Connection*>::iterator it = mCompletions.begin(); it != mCompletions.end(); ++it) {
+        if (it->second == conn) {
+            mCompletions.erase(it);
+            // could abort completion job
+            break;
+        }
+    }
+}
+
+void ClangProject::onCompletionFinished(ClangCompletionJob *job)
+{
+    if (Connection *conn = mCompletions.take(job)) {
+        conn->destroyed().disconnect(this, &ClangProject::onConnectionDestroyed);
+        conn->finish();
+    }
+}
+
+void ClangProject::onCompletion(ClangCompletionJob *job, String completion, String signature)
+{
+    if (Connection *conn = mCompletions.value(job))
+        conn->write(completion + ' ' + signature);
 }
 
 class ClangProjectPlugin : public RTagsPlugin
@@ -1702,3 +1731,4 @@ extern "C" RTagsPlugin* createInstance()
 {
     return new ClangProjectPlugin;
 }
+

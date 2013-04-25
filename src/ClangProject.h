@@ -59,6 +59,7 @@ struct FixIt
     String text;
 };
 
+class ClangCompletionJob;
 class ClangProject : public Project
 {
 public:
@@ -92,7 +93,9 @@ private:
     char locationType(const Location& location) const;
     void writeReferences(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned keyFlags) const;
     void writeDeclarations(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned keyFlags) const;
-
+    void onConnectionDestroyed(Connection *conn);
+    void onCompletionFinished(ClangCompletionJob *job);
+    void onCompletion(ClangCompletionJob *job, String completion, String signature);
 private:
     Map<uint32_t, ClangUnit*> units;
     ThreadPool *pool;
@@ -111,6 +114,8 @@ private:
     Map<Path, Set<FixIt> > fixIts;
 
     static LockingUsrMap umap;
+
+    Map<ClangCompletionJob *, Connection*> mCompletions;
 
     friend class ClangUnit;
     friend class ClangParseJob;

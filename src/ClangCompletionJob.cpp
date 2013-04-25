@@ -8,19 +8,9 @@ static inline String eatString(CXString string)
     return ret;
 }
 
-ClangCompletionJob::ClangCompletionJob(const shared_ptr<UnitCache::Unit> &unit,
-                                       const Location &location,
-                                       const String &unsaved, Connection *conn)
-    : mUnit(unit), mLocation(location), mUnsaved(unsaved), mConnection(conn)
+ClangCompletionJob::ClangCompletionJob(const shared_ptr<UnitCache::Unit> &unit, const Location &location, const String &unsaved)
+    : mUnit(unit), mLocation(location), mUnsaved(unsaved)
 {
-    assert(conn);
-    conn->destroyed().connect(this, &ClangCompletionJob::onConnectionDestroyed);
-}
-
-void ClangCompletionJob::onConnectionDestroyed(Connection*)
-{
-    MutexLocker lock(&mMutex);
-    mConnection = 0;
 }
 
 static inline bool isPartOfSymbol(char ch)
@@ -114,7 +104,6 @@ static inline void tokenize(const char *data, int size, Map<Token, int> &tokens)
 void ClangCompletionJob::run()
 {
     const Path path = mLocation.path();
-    error() << "Running up some completions here" << path << mUnsaved;
     CXUnsavedFile unsavedFile = { mUnsaved.isEmpty() ? 0 : path.constData(),
                                   mUnsaved.isEmpty() ? 0 : mUnsaved.constData(),
                                   static_cast<unsigned long>(mUnsaved.size()) };
@@ -185,22 +174,18 @@ void ClangCompletionJob::run()
         }
         if (nodeCount) {
             qsort(nodes, nodeCount, sizeof(CompletionNode), compareCompletionNode);
-            MutexLocker lock(&mMutex);
-            if (mConnection) {
-                mConnection->write<128>("`%s %s", nodes[0].completion.constData(), nodes[0].signature.constData());
-                for (int i=1; i<nodeCount; ++i) {
-                    mConnection->write<128>("%s %s", nodes[i].completion.constData(), nodes[i].signature.constData());
-                }
+            mCompletion(this, '`' + nodes[0].completion, nodes[0].signature);
+            for (int i=1; i<nodeCount; ++i) {
+                mCompletion(this, nodes[i].completion, nodes[i].signature);
             }
         }
 
         delete[] nodes;
 
-        //processDiagnostics(results);
+        // processDiagnostics(results); // Should we do this?
 
         clang_disposeCodeCompleteResults(results);
-    } else {
-        error() << "No results";
     }
     UnitCache::put(path, mUnit);
+    mFinished(this);
 }
