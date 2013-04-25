@@ -135,7 +135,8 @@ bool Project::match(const Match &p, bool *indexed) const
     }
     if (indexed)
         *indexed = false;
-    return ret;
+    // error() << p.pattern() << mPath << ret << p.match(mPath);
+    return ret || p.match(mPath);
 }
 
 void Project::index(const SourceInformation &sourceInformation, Type type)
@@ -375,7 +376,8 @@ void Project::timerEvent(TimerEvent *e)
 
 bool Project::isIndexed(const Path &file) const
 {
-    return mSources.contains(file) || !dependencies(file, DependsOnArg).isEmpty();
+    // error() << mPath << "isIndexed" << file << mSources.contains(file) << dependencies(file, DependsOnArg).size();
+    return mSources.contains(file) || dependencies(file, DependsOnArg).size() > 1;
 }
 
 SourceInformationMap Project::sources() const

@@ -31,23 +31,12 @@ public:
 
     inline bool match(const String &text) const
     {
-        return indexIn(text) != -1;
+        return indexIn(text) != -1 || indexIn(text, mPattern, mRegExp, mFlags) != -1;
     }
 
     inline int indexIn(const String &text) const
     {
-        int index = -1;
-        if (mFlags & Flag_StringMatch) {
-            index = text.indexOf(mPattern, 0, mFlags & Flag_CaseInsensitive ? String::CaseInsensitive : String::CaseSensitive);
-            if (index == -1) {
-                const Path p = Path::resolved(mPattern);
-                const Path p2 = Path::resolved(text);
-                index = p2.indexOf(p, 0, mFlags & Flag_CaseInsensitive ? String::CaseInsensitive : String::CaseSensitive);
-            }
-        }
-        if (index == -1 && mFlags & Flag_RegExp)
-            index = mRegExp.indexIn(text);
-        return index;
+        return indexIn(mPattern, text, mRegExp, mFlags);
     }
     inline bool isEmpty() const
     {
@@ -64,6 +53,23 @@ public:
         return mPattern;
     }
 private:
+    static inline int indexIn(const String &pattern, const String &text, const RegExp &regExp, unsigned flags)
+    {
+        int index = -1;
+        if (flags & Flag_StringMatch) {
+            index = text.indexOf(pattern, 0, flags & Flag_CaseInsensitive ? String::CaseInsensitive : String::CaseSensitive);
+            if (index == -1) {
+                const Path p = Path::resolved(pattern);
+                const Path p2 = Path::resolved(text);
+                if (p != pattern || p2 != text)
+                    index = indexIn(p, p2, regExp, flags);
+            }
+        }
+        if (index == -1 && flags & Flag_RegExp)
+            index = regExp.indexIn(text);
+        return index;
+    }
+    
     RegExp mRegExp;
     String mPattern;
     unsigned mFlags;
