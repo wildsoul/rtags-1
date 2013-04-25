@@ -1701,8 +1701,37 @@ String ClangProject::fixits(const Path &path) const
 
 Set<Project::Cursor> ClangProject::cursors(const Path &path) const
 {
-#warning implement me
-    return Set<Cursor>();
+    Set<Cursor> cursors;
+
+    MutexLocker lock(&mutex);
+    const uint32_t fileId = Location::fileId(path);
+    if (fileId) {
+        const Location start(fileId, 1, 1);
+        Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(start);
+        const Map<Location, CursorInfo>::const_iterator usrEnd = usrs.end();
+        while (usr != usrEnd && usr->first.fileId() == fileId) {
+            if (usr->second.kind != Cursor::Reference) {
+                Cursor cursor;
+                cursor.start = usr->second.start;
+                cursor.end = usr->second.end;
+                cursor.location = usr->first;
+                // this will be wrong if the file has changed since the CursorInfo was created
+                cursor.symbolName = cursor.location.read(cursor.start, cursor.end);
+                cursor.kind = usr->second.kind;
+                if (cursor.isDefinition()) {
+                    // target is decl if it exists
+                    cursor.target = firstLocation(usr->second.usr, decls);
+                } else {
+                    // target is def if it exists
+                    cursor.target = firstLocation(usr->second.usr, defs);
+                }
+                cursors.insert(cursor);
+            }
+            ++usr;
+        }
+    }
+
+    return cursors;
 }
 
 bool ClangProject::codeCompleteAt(const Location &location, const String &source, Connection *conn)

@@ -19,6 +19,25 @@ String Location::context() const
         char buf[1024];
         const int r = Rct::readLine(f, buf, sizeof(buf) - 1);
         ret.append(buf, r);
+        fclose(f);
+    }
+    return ret;
+}
+
+String Location::read(unsigned start, unsigned end) const
+{
+    if (start >= end)
+        return String();
+
+    const Path p = path();
+    FILE *f = fopen(p.constData(), "r");
+    String ret;
+    ret.resize(end - start);
+    if (f) {
+        fseek(f, start, SEEK_SET);
+        if (fread(ret.data(), end - start, 1, f) != 1)
+            ret.clear();
+        fclose(f);
     }
     return ret;
 }

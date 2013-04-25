@@ -96,6 +96,8 @@ public:
     String toString(unsigned flags = 0, const char type = '\0') const;
     String context() const;
 
+    String read(unsigned start, unsigned end) const;
+
     static Location fromKey(const char *data)
     {
         Location ret;
