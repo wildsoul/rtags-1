@@ -436,24 +436,24 @@ char Project::Cursor::kindToChar(Kind kind)
     return chars[kind];
 }
 
-String Project::Cursor::toString(unsigned flags) const
+String Project::toString(const Cursor &cursor, unsigned flags) const
 {
     String ret = String::format<1024>("SymbolName: %s\n"
                                       "Kind: %s\n"
                                       "%s" // range
                                       "%s", // definition
-                                      symbolName.constData(),
-                                      kindToString(kind),
-                                      (start != -1 && end != -1 ? String::format<32>("Range: %d-%d\n", start, end).constData() : ""),
-                                      isDefinition() ? "Definition\n" : "");
+                                      cursor.symbolName.constData(),
+                                      Cursor::kindToString(cursor.kind),
+                                      (cursor.start != -1 && cursor.end != -1 ? String::format<32>("Range: %d-%d\n", cursor.start, cursor.end).constData() : ""),
+                                      cursor.isDefinition() ? "Definition\n" : "");
 
-    if (!target.isEmpty() && flags & IncludeTarget) {
+    if (!cursor.target.isEmpty() && flags & QueryMessage::CursorInfoIncludeTarget) {
         ret.append("Target: ");
-        ret.append(target.toString(flags));
+        ret.append(cursor.target.toString(flags));
     }
 #warning need to do this, will need the Database pointer to do it though
     /*
-      if (!references.isEmpty() && !(flags & IncludeReferences)) {
+      if (!references.isEmpty() && flags & QueryMessage::CursorInfoIncludeReferences)) {
       ret.append("References:");
       for (Set<Location>::const_iterator rit = references.begin(); rit != references.end(); ++rit) {
       const Location &l = *rit;

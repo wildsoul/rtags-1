@@ -816,7 +816,7 @@ void RParserProject::waitForState(WaitMode m, State st) const
     }
 }
 
-void RParserProject::status(const String &query, Connection *conn) const
+void RParserProject::status(const String &query, Connection *conn, unsigned queryFlags) const
 {
 }
 

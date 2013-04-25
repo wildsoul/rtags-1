@@ -21,18 +21,6 @@ void QueryMessage::decode(Deserializer &deserializer)
     setProjects(projects);
 }
 
-unsigned QueryMessage::keyFlags(unsigned queryFlags)
-{
-    unsigned ret = Location::NoFlag;
-    if (!(queryFlags & QueryMessage::NoContext))
-        ret |= Location::ShowContext;
-    if (queryFlags & QueryMessage::CursorInfoIncludeReferences)
-        ret |= Project::Cursor::IncludeReferences;
-    if (queryFlags & QueryMessage::CursorInfoIncludeTarget)
-        ret |= Project::Cursor::IncludeTarget;
-    return ret;
-}
-
 Match QueryMessage::match() const
 {
     unsigned flags = Match::Flag_StringMatch;

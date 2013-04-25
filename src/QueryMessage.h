@@ -96,9 +96,6 @@ public:
     unsigned flags() const { return mFlags; }
     void setFlags(unsigned flags) { mFlags = flags; }
 
-    static unsigned keyFlags(unsigned queryFlags);
-    inline unsigned keyFlags() const { return keyFlags(mFlags); }
-
     virtual void encode(Serializer &serializer) const;
     virtual void decode(Deserializer &deserializer);
 

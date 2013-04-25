@@ -1,5 +1,6 @@
 #include "Location.h"
 #include "Server.h"
+#include "QueryMessage.h"
 #include <rct/Serializer.h>
 
 Map<Path, uint32_t> Location::sPathsToIds;
@@ -19,5 +20,16 @@ String Location::context() const
         const int r = Rct::readLine(f, buf, sizeof(buf) - 1);
         ret.append(buf, r);
     }
+    return ret;
+}
+String Location::toString(unsigned flags, const char type) const
+{
+    String ret = encode();
+    if (type != '\0') {
+        ret += ' ';
+        ret += type;
+    }
+    if (!(flags & QueryMessage::NoContext))
+        ret += '\t' + context();
     return ret;
 }

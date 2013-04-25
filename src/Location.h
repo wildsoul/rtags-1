@@ -93,22 +93,7 @@ public:
     inline bool isValid() const { return mData; }
     inline void clear() { mData = 0; mCachedPath.clear(); }
 
-    enum KeyFlag {
-        NoFlag = 0x0,
-        ShowContext = 0x1
-    };
-    String toString(unsigned flags = NoFlag, const char type = '\0') const
-    {
-        String ret = encode();
-        if (type != '\0') {
-            ret += ' ';
-            ret += type;
-        }
-        if (flags & ShowContext)
-            ret += '\t' + context();
-        return ret;
-    }
-
+    String toString(unsigned flags = 0, const char type = '\0') const;
     String context() const;
 
     static Location fromKey(const char *data)

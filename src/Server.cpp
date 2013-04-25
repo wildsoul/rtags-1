@@ -390,7 +390,7 @@ void Server::followLocation(const QueryMessage &query, Connection *conn)
         cursor = project->cursor(cursor.target);
 
     if (cursor.location.isValid() && !isFiltered(cursor.location, query))
-        conn->write(cursor.target.toString(query.keyFlags()).constData());
+        conn->write(cursor.target.toString(query.flags()).constData());
     conn->finish();
 }
 
@@ -584,7 +584,7 @@ void Server::cursorInfo(const QueryMessage &query, Connection *conn)
 
     Project::Cursor cursor = project->cursor(loc);
     if (cursor.location.isValid())
-        conn->write(cursor.toString(query.keyFlags()));
+        conn->write(project->toString(cursor, query.flags()));
     conn->finish();
 }
 
@@ -698,9 +698,8 @@ void Server::findSymbols(const QueryMessage &query, Connection *conn)
         for (int i=0; i<cursors.size(); ++i)
             nodes[i] = Node(cursors.at(i).location, cursors.at(i).isDefinition());
         std::sort(nodes.begin(), nodes.end());
-        const unsigned keyFlags = query.keyFlags();
         for (int i=0; i<nodes.size(); ++i) {
-            conn->write(nodes.at(i).location.toString(keyFlags));
+            conn->write(nodes.at(i).location.toString(query.flags()));
         }
     }
 
@@ -772,7 +771,7 @@ void Server::status(const QueryMessage &query, Connection *conn)
         conn->finish();
         return;
     }
-    project->status(query.query(), conn);
+    project->status(query.query(), conn, query.flags());
     conn->finish();
 }
 

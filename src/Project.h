@@ -83,11 +83,6 @@ public:
 
         static char kindToChar(Kind kind);
         static const char *kindToString(Kind kind);
-        enum CursorInfoFlag { // these are combined with the keyflags from Location
-            IncludeTarget = 0x10,
-            IncludeReferences = 0x20
-        };
-        String toString(unsigned flags) const;
         bool isDefinition() const;
         bool isValid() const { return kind != Invalid; }
         bool isInvalid() const { return kind == Invalid; }
@@ -111,10 +106,11 @@ public:
         }
 
     };
+    String toString(const Cursor &cursor, unsigned flags) const;
     virtual Cursor cursor(const Location &location) const = 0;
     virtual void references(const Location& location, unsigned queryFlags,
                             const List<Path> &pathFilter, Connection *conn) const = 0;
-    virtual void status(const String &query, Connection *conn) const = 0;
+    virtual void status(const String &query, Connection *conn, unsigned queryFlags) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
     virtual int index(const SourceInformation &sourceInformation) = 0;
     virtual void remove(const Path &sourceFile) = 0;

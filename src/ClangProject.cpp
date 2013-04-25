@@ -1410,8 +1410,6 @@ void ClangProject::references(const Location& location, unsigned queryFlags,
     if (!pathFilter.isEmpty())
         makePathSet(pathFilter, pathSet);
 
-    const unsigned keyFlags = QueryMessage::keyFlags(queryFlags);
-
     const bool wantVirtuals = queryFlags & QueryMessage::FindVirtuals;
     const bool wantAll = queryFlags & QueryMessage::AllReferences;
 
@@ -1445,30 +1443,61 @@ void ClangProject::references(const Location& location, unsigned queryFlags,
     const uint32_t targetUsr = usr->second.usr;
 
     if (wantAll || !wantVirtuals) {
-        writeReferences(targetUsr, pathSet, conn, keyFlags);
+        writeReferences(targetUsr, pathSet, conn, queryFlags);
         if (wantAll)
-            writeDeclarations(targetUsr, pathSet, conn, keyFlags);
+            writeDeclarations(targetUsr, pathSet, conn, queryFlags);
     }
     if (wantVirtuals) {
         if (wantAll)
-            writeReferences(targetUsr, pathSet, conn, keyFlags);
-        writeDeclarations(targetUsr, pathSet, conn, keyFlags);
+            writeReferences(targetUsr, pathSet, conn, queryFlags);
+        writeDeclarations(targetUsr, pathSet, conn, queryFlags);
 
         const VirtualSet::const_iterator virt = virtuals.find(targetUsr);
         Set<uint32_t>::const_iterator vusr = virt->second.begin();
         const Set<uint32_t>::const_iterator vend = virt->second.end();
         while (vusr != vend) {
             if (wantAll)
-                writeReferences(*vusr, pathSet, conn, keyFlags);
-            writeDeclarations(*vusr, pathSet, conn, keyFlags);
+                writeReferences(*vusr, pathSet, conn, queryFlags);
+            writeDeclarations(*vusr, pathSet, conn, queryFlags);
             ++vusr;
         }
     }
     conn->write("`");
 }
 
-void ClangProject::status(const String &query, Connection *conn) const
+void ClangProject::status(const String &query, Connection *conn, unsigned queryFlags) const
 {
+    MutexLocker lock(&mutex);
+    if (query.isEmpty() || query.contains("symbolnames", String::CaseInsensitive)) {
+        conn->write("SymbolNames:");
+        for (Map<String, Set<uint32_t> >::const_iterator it = names.begin(); it != names.end(); ++it) {
+            conn->write("  " + it->first);
+            for (Set<uint32_t>::const_iterator usrIt = it->second.begin(); usrIt != it->second.end(); ++usrIt) {
+                if (usrIt != it->second.begin())
+                    conn->write(String());
+                const Set<Location> locations = decls.value(*usrIt) + defs.value(*usrIt);
+                for (Set<Location>::const_iterator lit = locations.begin(); lit != locations.end(); ++lit) {
+                    conn->write("    " + lit->toString(queryFlags));
+                }
+            }
+        }
+    }
+
+    if (query.isEmpty() || query.contains("symbols", String::CaseInsensitive)) {
+        const UsrSet *sets[] = { &defs, &decls };
+        for (int i=0; i<2; ++i) {
+            const UsrSet &set = *sets[i];
+            for (UsrSet::const_iterator  = set.begin();  != set.end(); ++) {
+
+            }
+        }
+    }
+    // DependSet depends, reverseDepends;
+    // Map<Location, CursorInfo> usrs;    // location->usr
+    // UsrSet decls, defs, refs;          // usr->locations
+    // VirtualSet virtuals;               // usr->usrs
+    // Map<Path, Set<FixIt> > fixIts;
+
 }
 
 void ClangProject::dump(const SourceInformation &sourceInformation, Connection *conn) const

@@ -70,7 +70,7 @@ public:
     virtual Cursor cursor(const Location &location) const;
     virtual void references(const Location& location, unsigned queryFlags,
                             const List<Path> &pathFilter, Connection *conn) const;
-    virtual void status(const String &query, Connection *conn) const;
+    virtual void status(const String &query, Connection *conn, unsigned queryFlags) const;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const;
     virtual int index(const SourceInformation &sourceInformation);
     virtual void remove(const Path &sourceFile);
