@@ -1,11 +1,11 @@
 #include "ClangProject.h"
+#include "ClangCompletionJob.h"
 #include "RTagsPlugin.h"
 #include "SourceInformation.h"
 #include "QueryMessage.h"
 #include "RTags.h"
 #include "Server.h"
 #include <rct/Connection.h>
-#include <rct/LinkedList.h>
 #include <rct/MutexLocker.h>
 #include <rct/RegExp.h>
 #include <rct/WaitCondition.h>
@@ -51,62 +51,6 @@ struct ClangIndexInfo
 
 Mutex ClangIndexInfo::seenMutex;
 Set<uint32_t> ClangIndexInfo::globalSeen;
-
-class UnitCache
-{
-public:
-    enum { MaxSize = 5 };
-
-    class Unit
-    {
-    public:
-        Unit(CXTranslationUnit u) : unit(u) { }
-        ~Unit() { clang_disposeTranslationUnit(unit); }
-
-        bool operator<(const Unit& other) const { return unit < other.unit; }
-
-        CXTranslationUnit unit;
-
-    private:
-        Unit(const Unit& other);
-        Unit& operator=(const Unit& other);
-    };
-
-    static void add(const Path& path, CXTranslationUnit unit)
-    {
-        shared_ptr<Unit> u(new Unit(unit));
-        put(path, u);
-    }
-
-    static shared_ptr<Unit> get(const Path& path)
-    {
-        MutexLocker locker(&mutex);
-        LinkedList<std::pair<Path, shared_ptr<Unit> > >::iterator it = units.begin();
-        const LinkedList<std::pair<Path, shared_ptr<Unit> > >::const_iterator end = units.end();
-        while (it != end) {
-            if (it->first == path) {
-                shared_ptr<Unit> copy = it->second;
-                units.erase(it);
-                return copy;
-            }
-            ++it;
-        }
-        return shared_ptr<Unit>();
-    }
-
-    static void put(const Path& path, const shared_ptr<Unit>& unit)
-    {
-        MutexLocker locker(&mutex);
-        assert(path.isAbsolute());
-        units.push_back(std::make_pair(path, unit));
-        if (units.size() > MaxSize)
-            units.pop_front();
-    }
-
-private:
-    static Mutex mutex;
-    static LinkedList<std::pair<Path, shared_ptr<Unit> > > units;
-};
 
 Mutex UnitCache::mutex;
 LinkedList<std::pair<Path, shared_ptr<UnitCache::Unit> > > UnitCache::units;
@@ -165,17 +109,6 @@ private:
     bool mDone;
     WaitCondition mWait;
     ClangIndexInfo mInfo;
-};
-
-class ClangCompletionJob : public ThreadPool::Job
-{
-public:
-    ClangCompletionJob(ClangUnit *unit, const Location &location, const String &unsaved);
-    virtual void run();
-private:
-    ClangUnit *mUnit;
-    const Location mLocation;
-    const String mUnsaved;
 };
 
 ClangUnit::ClangUnit(ClangProject* p)
@@ -1492,6 +1425,13 @@ void ClangProject::status(const String &query, Connection *conn, unsigned queryF
             }
         }
     }
+    if (query.isEmpty() || query.contains("unitcache")) {
+        const List<Path> paths = UnitCache::paths();
+        conn->write("UnitCache:");
+        for (int i=0; i<paths.size(); ++i) {
+            conn->write("  " + paths.at(i));
+        }
+    }
     // DependSet depends, reverseDepends;
     // Map<Location, CursorInfo> usrs;    // location->usr
     // UsrSet decls, defs, refs;          // usr->locations
@@ -1736,12 +1676,17 @@ Set<Project::Cursor> ClangProject::cursors(const Path &path) const
 
 bool ClangProject::codeCompleteAt(const Location &location, const String &source, Connection *conn)
 {
+    MutexLocker lock(&mutex);
     shared_ptr<UnitCache::Unit> unit = UnitCache::get(location.path());
-    // if (unit && unit->translationUnit) {
+    if (!unit || !unit->unit) {
+        error() << "No unit for" << location;
+        return false;
+    }
 
-    // }
+    shared_ptr<ClangCompletionJob> job(new ClangCompletionJob(unit, location, source, conn));
+    pool->start(job);
 
-    return false;
+    return true;
 }
 
 class ClangProjectPlugin : public RTagsPlugin

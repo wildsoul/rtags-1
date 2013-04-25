@@ -957,7 +957,7 @@ void Server::removeProject(const QueryMessage &query, Connection *conn)
     ProjectsMap::iterator it = mProjects.begin();
     while (it != mProjects.end()) {
         ProjectsMap::iterator cur = it++;
-        if (match.match(cur->first) || match.match(Path::resolved(cur->first))) {
+        if (match.match(cur->first)) {
             if (mCurrentProject.lock() == it->second) {
                 mCurrentProject.reset();
                 unlink((sOptions.dataDir + ".currentProject").constData());
@@ -1055,7 +1055,7 @@ void Server::project(const QueryMessage &query, Connection *conn)
                         --index;
                     }
                 }
-                if (it->second->match(match)) {
+                if (match.match(it->first)) {
                     if (error) {
                         conn->write(it->first);
                     } else if (!selected.isEmpty()) {

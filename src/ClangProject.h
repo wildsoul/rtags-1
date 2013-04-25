@@ -5,6 +5,7 @@
 #include "UsrMap.h"
 #include <clang-c/Index.h>
 #include <rct/EventReceiver.h>
+#include <rct/LinkedList.h>
 #include <rct/Map.h>
 #include <rct/Mutex.h>
 #include <rct/String.h>
@@ -114,4 +115,71 @@ private:
     friend class ClangUnit;
     friend class ClangParseJob;
 };
+
+class UnitCache
+{
+public:
+    enum { MaxSize = 5 };
+
+    class Unit
+    {
+    public:
+        Unit(CXTranslationUnit u) : unit(u) { }
+        ~Unit() { clang_disposeTranslationUnit(unit); }
+
+        bool operator<(const Unit& other) const { return unit < other.unit; }
+
+        CXTranslationUnit unit;
+
+    private:
+        Unit(const Unit& other);
+        Unit& operator=(const Unit& other);
+    };
+
+    static void add(const Path& path, CXTranslationUnit unit)
+    {
+        shared_ptr<Unit> u(new Unit(unit));
+        put(path, u);
+    }
+
+    static shared_ptr<Unit> get(const Path& path)
+    {
+        MutexLocker locker(&mutex);
+        LinkedList<std::pair<Path, shared_ptr<Unit> > >::iterator it = units.begin();
+        const LinkedList<std::pair<Path, shared_ptr<Unit> > >::const_iterator end = units.end();
+        while (it != end) {
+            if (it->first == path) {
+                shared_ptr<Unit> copy = it->second;
+                units.erase(it);
+                return copy;
+            }
+            ++it;
+        }
+        return shared_ptr<Unit>();
+    }
+
+    static void put(const Path& path, const shared_ptr<Unit>& unit)
+    {
+        MutexLocker locker(&mutex);
+        assert(path.isAbsolute());
+        units.push_back(std::make_pair(path, unit));
+        if (units.size() > MaxSize)
+            units.pop_front();
+    }
+    static List<Path> paths()
+    {
+        MutexLocker lock(&mutex);
+        List<Path> ret;
+        for (LinkedList<std::pair<Path, shared_ptr<Unit> > >::const_iterator it = units.begin(); it != units.end(); ++it) {
+            ret.append(it->first);
+        }
+
+        return ret;
+    }
+
+private:
+    static Mutex mutex;
+    static LinkedList<std::pair<Path, shared_ptr<Unit> > > units;
+};
+
 #endif
