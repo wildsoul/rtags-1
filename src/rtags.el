@@ -204,7 +204,7 @@
 (defun* rtags-call-rc (&rest arguments
                        &key (path (buffer-file-name))
                        unsaved
-                       async
+                       async ;; nil or a cons (process-filter . sentinel)
                        path-filter
                        path-filter-regex
                        range-filter
@@ -212,10 +212,10 @@
                        context
                        (range-min (1- (point-min)))
                        (range-max (1- (point-max)))
-                       no-process-filter
                        &allow-other-keys)
   (save-excursion
     (let ((rc (rtags-executable-find "rc")) proc)
+      (and async (not (consp async)) (error "Invalid argument. async must be a cons or nil"))
       (unless rc
         (error "Can't find rc"))
       (setq arguments (rtags-remove-keyword-params arguments))
@@ -245,9 +245,8 @@
                         (t (apply #'call-process rc nil output nil arguments) nil))))
         (if proc
             (progn
-              (if (and async (not no-process-filter))
-                  (set-process-filter proc (function rtags-async-rc-filter)))
-              (set-process-sentinel proc (function rtags-async-rc-sentinel)))
+              (set-process-filter proc (car async))
+              (set-process-sentinel proc (cdr async)))
           (progn
             (goto-char (point-min))
             (if (looking-at "Can't seem to connect to server")
@@ -544,6 +543,8 @@
     )
   )
 
+(defvar rtags-async-filter-and-sentinel (cons 'rtags-async-rc-filter 'rtags-async-rc-sentinel))
+
 (defun rtags-find-symbols-by-name-internal (prompt references filter)
   (rtags-save-location)
   (let ((tagname (if mark-active
@@ -560,6 +561,8 @@
     (if (not (equal "" input))
         (setq tagname input))
     (with-current-buffer (rtags-get-buffer)
+      (if references
+          (setq references rtags-async-filter-and-sentinel))
       (rtags-call-rc :path path switch tagname :async references :path-filter filter)
       (rtags-reset-bookmarks)
       (unless references
@@ -798,7 +801,7 @@ References to references will be treated as references to the referenced symbol"
         (fn (buffer-file-name))
         (context (rtags-current-symbol t)))
     (with-current-buffer (rtags-get-buffer)
-      (rtags-call-rc :path fn :context context :path-filter prefix "-r" arg :async t))
+      (rtags-call-rc :path fn :context context :path-filter prefix "-r" arg :async rtags-async-filter-and-sentinel))
     )
   )
 
@@ -811,7 +814,7 @@ References to references will be treated as references to the referenced symbol"
         (fn (buffer-file-name))
         (context (rtags-current-symbol t)))
     (with-current-buffer (rtags-get-buffer)
-      (rtags-call-rc :path fn :context context :path-filter prefix "-r" arg "-k" :async t))
+      (rtags-call-rc :path fn :context context :path-filter prefix "-r" arg "-k" :async rtags-async-filter-and-sentinel))
     )
   )
 
@@ -822,7 +825,7 @@ References to references will be treated as references to the referenced symbol"
         (fn (buffer-file-name))
         (context (rtags-current-symbol t)))
     (with-current-buffer (rtags-get-buffer)
-      (rtags-call-rc :path fn :context context :path-filter prefix "-r" arg "-e" :async t))
+      (rtags-call-rc :path fn :context context :path-filter prefix "-r" arg "-e" :async rtags-async-filter-and-sentine))
     )
   )
 
