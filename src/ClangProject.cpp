@@ -1358,21 +1358,24 @@ inline char ClangProject::locationType(const Location& location) const
     return Cursor::kindToChar(info->second.kind);
 }
 
-void ClangProject::writeReferences(const uint32_t usr, Connection* conn, unsigned int keyFlags) const
+void ClangProject::writeReferences(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned int keyFlags) const
 {
+    const bool pass = pathSet.isEmpty();
     const UsrSet::const_iterator ref = refs.find(usr);
     if (ref != refs.end()) {
         Set<Location>::const_iterator loc = ref->second.begin();
         const Set<Location>::const_iterator end = ref->second.end();
         while (loc != end) {
-            conn->write(loc->toString(keyFlags, locationType(*loc)));
+            if (pass || pathSet.contains(loc->fileId()))
+                conn->write(loc->toString(keyFlags, locationType(*loc)));
             ++loc;
         }
     }
 }
 
-void ClangProject::writeDeclarations(const uint32_t usr, Connection* conn, unsigned int keyFlags) const
+void ClangProject::writeDeclarations(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned int keyFlags) const
 {
+    const bool pass = pathSet.isEmpty();
     const UsrSet* usrs[] = { &decls, &defs, 0 };
     for (int i = 0; usrs[i]; ++i) {
         const UsrSet::const_iterator decl = usrs[i]->find(usr);
@@ -1380,17 +1383,33 @@ void ClangProject::writeDeclarations(const uint32_t usr, Connection* conn, unsig
             Set<Location>::const_iterator loc = decl->second.begin();
             const Set<Location>::const_iterator end = decl->second.end();
             while (loc != end) {
-                conn->write(loc->toString(keyFlags, locationType(*loc)));
+                if (pass || pathSet.contains(loc->fileId()))
+                    conn->write(loc->toString(keyFlags, locationType(*loc)));
                 ++loc;
             }
         }
     }
 }
 
+static inline void makePathSet(const List<Path>& pathFilter, Set<uint32_t>& result)
+{
+    List<Path>::const_iterator path = pathFilter.begin();
+    const List<Path>::const_iterator end = pathFilter.end();
+    while (path != end) {
+        const uint32_t fileId = Location::fileId(*path);
+        if (fileId)
+            result.insert(fileId);
+        ++path;
+    }
+}
+
 void ClangProject::references(const Location& location, unsigned queryFlags,
                                const List<Path> &pathFilter, Connection *conn) const
 {
-#warning need to respect pathFilter
+    Set<uint32_t> pathSet;
+    if (!pathFilter.isEmpty())
+        makePathSet(pathFilter, pathSet);
+
     const unsigned keyFlags = QueryMessage::keyFlags(queryFlags);
 
     const bool wantVirtuals = queryFlags & QueryMessage::FindVirtuals;
@@ -1426,22 +1445,22 @@ void ClangProject::references(const Location& location, unsigned queryFlags,
     const uint32_t targetUsr = usr->second.usr;
 
     if (wantAll || !wantVirtuals) {
-        writeReferences(targetUsr, conn, keyFlags);
+        writeReferences(targetUsr, pathSet, conn, keyFlags);
         if (wantAll)
-            writeDeclarations(targetUsr, conn, keyFlags);
+            writeDeclarations(targetUsr, pathSet, conn, keyFlags);
     }
     if (wantVirtuals) {
         if (wantAll)
-            writeReferences(targetUsr, conn, keyFlags);
-        writeDeclarations(targetUsr, conn, keyFlags);
+            writeReferences(targetUsr, pathSet, conn, keyFlags);
+        writeDeclarations(targetUsr, pathSet, conn, keyFlags);
 
         const VirtualSet::const_iterator virt = virtuals.find(targetUsr);
         Set<uint32_t>::const_iterator vusr = virt->second.begin();
         const Set<uint32_t>::const_iterator vend = virt->second.end();
         while (vusr != vend) {
             if (wantAll)
-                writeReferences(*vusr, conn, keyFlags);
-            writeDeclarations(*vusr, conn, keyFlags);
+                writeReferences(*vusr, pathSet, conn, keyFlags);
+            writeDeclarations(*vusr, pathSet, conn, keyFlags);
             ++vusr;
         }
     }
@@ -1538,14 +1557,37 @@ Set<Path> ClangProject::files(int mode) const
 
 Set<String> ClangProject::listSymbols(const String &string, const List<Path> &pathFilter) const
 {
-#warning need to respect pathFilter
+    // this is pretty awful
+    Set<uint32_t> allUsrs;
+    const bool pass = pathFilter.isEmpty();
+
+    if (!pass) {
+        List<Path>::const_iterator path = pathFilter.begin();
+        const List<Path>::const_iterator end = pathFilter.end();
+        while (path != end) {
+            const uint32_t fileId = Location::fileId(*path);
+            if (fileId) {
+                const Location start(fileId, 1, 1);
+                Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(start);
+                const Map<Location, CursorInfo>::const_iterator usrEnd = usrs.end();
+                while (usr != usrEnd && usr->first.fileId() == fileId) {
+                    allUsrs.insert(usr->second.usr);
+                    ++usr;
+                }
+            }
+            ++path;
+        }
+    }
+
+
     Set<String> result;
 
     MutexLocker locker(&mutex);
     Map<String, Set<uint32_t> >::const_iterator name = names.lower_bound(string);
     const Map<String, Set<uint32_t> >::const_iterator end = names.end();
     while (name != end && name->first.startsWith(string)) {
-        result.insert(name->first);
+        if (pass || allUsrs.intersects(name->second))
+            result.insert(name->first);
         ++name;
     }
 
@@ -1565,7 +1607,11 @@ static inline Location firstLocation(const uint32_t usr, const UsrSet& set)
 
 Set<Project::Cursor> ClangProject::findCursors(const String &string, const List<Path> &pathFilter) const
 {
-#warning need to respect pathFilter
+    Set<uint32_t> pathSet;
+    const bool pass = pathFilter.isEmpty();
+    if (!pass)
+        makePathSet(pathFilter, pathSet);
+
     MutexLocker locker(&mutex);
     Map<String, Set<uint32_t> >::const_iterator name = names.find(string);
     if (name == names.end())
@@ -1584,7 +1630,7 @@ Set<Project::Cursor> ClangProject::findCursors(const String &string, const List<
                 const Set<Location>::const_iterator end = decl->second.end();
                 while (loc != end) {
                     Map<Location, CursorInfo>::const_iterator info = ClangProject::usrs.find(*loc);
-                    if (info != ClangProject::usrs.end()) {
+                    if (info != ClangProject::usrs.end() && (pass || pathSet.contains(info->first.fileId()))) {
                         Cursor cursor;
                         cursor.symbolName = name->first;
                         cursor.location = *loc;

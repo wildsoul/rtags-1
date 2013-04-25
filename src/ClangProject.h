@@ -89,8 +89,8 @@ public:
 
 private:
     char locationType(const Location& location) const;
-    void writeReferences(const uint32_t usr, Connection* conn, unsigned keyFlags) const;
-    void writeDeclarations(const uint32_t usr, Connection* conn, unsigned keyFlags) const;
+    void writeReferences(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned keyFlags) const;
+    void writeDeclarations(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned keyFlags) const;
 
 private:
     Map<uint32_t, ClangUnit*> units;
