@@ -718,6 +718,7 @@ static CXChildVisitResult memberVisistor(CXCursor cursor, CXCursor /*parent*/, C
     //error() << "found" << clang_getCursorKind(cursor);
     switch (clang_getCursorKind(cursor)) {
     case CXCursor_FieldDecl:
+    case CXCursor_VarDecl:
     case CXCursor_CXXBaseSpecifier:
         return CXChildVisit_Recurse;
     case CXCursor_TypeRef:
@@ -969,6 +970,10 @@ void ClangParseJob::run()
                     mInfo.clear();
                     mReparse = false;
                 } else {
+                    // need to index the global members of the TU
+                    CXCursor tuCursor = clang_getTranslationUnitCursor(unit);
+                    indexMembers(&mInfo, tuCursor);
+
                     if (hasInclusions(unit) && mInfo.depends.isEmpty())
                         dirtyFlags |= ClangUnit::DontDirtyDeps;
                     parseTime = time(0);
@@ -1062,6 +1067,10 @@ void ClangParseJob::run()
                 }
 		mInfo.clear();
             } else {
+                // need to index the global members of the TU
+                CXCursor tuCursor = clang_getTranslationUnitCursor(unit);
+                indexMembers(&mInfo, tuCursor);
+
                 assert(!parseTime);
                 parseTime = time(0);
             }
