@@ -21,6 +21,8 @@ struct CursorInfo
     uint32_t usr;
     int start, end;
     Project::Cursor::Kind kind;
+
+    int length() const { return end - start; }
 };
 
 template <> inline Serializer &operator<<(Serializer &s, const CursorInfo &b)

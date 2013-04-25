@@ -304,12 +304,12 @@ ClangParseJob::~ClangParseJob()
 {
 }
 
-static inline Location makeLocation(const CXIdxLoc& cxloc)
+static inline Location makeLocation(const CXIdxLoc& cxloc, unsigned* offset = 0)
 {
     CXIdxClientFile file = 0;
     CXFile cxfile = 0;
     unsigned line, column;
-    clang_indexLoc_getFileLocation(cxloc, &file, &cxfile, &line, &column, 0);
+    clang_indexLoc_getFileLocation(cxloc, &file, &cxfile, &line, &column, offset);
 
     uint32_t fileId;
     if (file) {
@@ -330,14 +330,14 @@ static inline Location makeLocation(const CXIdxLoc& cxloc)
     return Location(fileId, line, column);
 }
 
-static inline Location makeLocation(const CXCursor& cursor)
+static inline Location makeLocation(const CXCursor& cursor, unsigned* offset = 0)
 {
     const CXSourceLocation cxloc = clang_getCursorLocation(cursor);
     if (clang_equalLocations(cxloc, clang_getNullLocation()))
         return Location();
     CXFile file;
     unsigned line, column;
-    clang_getSpellingLocation(cxloc, &file, &line, &column, 0);
+    clang_getSpellingLocation(cxloc, &file, &line, &column, offset);
     if (!file)
         return Location();
     CXString fileName = clang_getFileName(file);
@@ -725,10 +725,20 @@ static inline uint32_t makeUsr(const CXCursor& cursor)
     return usr;
 }
 
+static inline unsigned cursorLength(const CXCursor& cursor)
+{
+    CXString cxname = clang_getCursorSpelling(cursor);
+    const char* cstr = clang_getCString(cxname);
+    const unsigned len = cstr ? strlen(cstr) : 0;
+    clang_disposeString(cxname);
+    return len;
+}
+
 static inline void addReference(CXClientData client_data, CXCursor cursor)
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
-    const Location refLoc = makeLocation(cursor);
+    unsigned offset;
+    const Location refLoc = makeLocation(cursor, &offset);
     if (refLoc.isEmpty())
         return;
     const uint32_t usr = makeUsr(clang_getCursorReferenced(cursor));
@@ -736,6 +746,8 @@ static inline void addReference(CXClientData client_data, CXCursor cursor)
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
     cursorInfo.kind = Project::Cursor::Reference;
+    cursorInfo.start = offset;
+    cursorInfo.end = offset + cursorLength(cursor);
     info->usrs[refLoc] = cursorInfo;
 
     //error() << "indexing ref" << usr << refLoc;
@@ -823,13 +835,14 @@ static inline void addNamePermutations(CXCursor cursor, const uint32_t usr, Map<
 void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl)
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
-    const Location declLoc = makeLocation(decl->loc);
+    unsigned offset;
+    const Location declLoc = makeLocation(decl->loc, &offset);
     if (!decl->entityInfo->USR || declLoc.isEmpty())
         return;
 
     switch (decl->entityInfo->templateKind) {
     case CXIdxEntity_NonTemplate: {
-        // Hack, typedefs for templates are not actually template entities. Allow them all for now
+        // Hack, typedefs for templates are not actually template entities. Allow them all for now.
         // ### better/possible to get the referenced symbol here?
         if (decl->entityInfo->kind == CXIdxEntity_Typedef)
             break;
@@ -857,6 +870,8 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
     cursorInfo.kind = makeKind(decl->entityInfo->kind, def);
+    cursorInfo.start = offset;
+    cursorInfo.end = offset + cursorLength(decl->cursor);
     info->usrs[declLoc] = cursorInfo;
 
     //error() << "indexing" << (def ? "def" : "decl") << decl->entityInfo->kind << usr << declLoc;
@@ -904,7 +919,8 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
 void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEntityRefInfo* ref)
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
-    const Location refLoc = makeLocation(ref->loc);
+    unsigned offset;
+    const Location refLoc = makeLocation(ref->loc, &offset);
     if (!ref->referencedEntity->USR || refLoc.isEmpty())
         return;
 
@@ -929,6 +945,8 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
     cursorInfo.kind = Project::Cursor::Reference;
+    cursorInfo.start = offset;
+    cursorInfo.end = offset + cursorLength(ref->cursor);
     info->usrs[refLoc] = cursorInfo;
 
     //error() << "indexing ref" << usr << refLoc;
@@ -1268,6 +1286,12 @@ Project::Cursor ClangProject::cursor(const Location &location) const
             // we've iterated past the beginning of the file
             return Project::Cursor();
         }
+        if ((usr->first.line() < location.line())
+            || (usr->first.column() + usr->second.length() <= location.column())) {
+            // our location is after the start of the the previous location
+            return Project::Cursor();
+        }
+        assert(usr->first.line() == location.line());
     }
     assert(!(usr->first > location));
 
@@ -1366,6 +1390,13 @@ void ClangProject::references(const Location& location, unsigned queryFlags,
             conn->write("`");
             return;
         }
+        if ((usr->first.line() < location.line())
+            || (usr->first.column() + usr->second.length() <= location.column())) {
+            // our location is after the start of the the previous location
+            conn->write("`");
+            return;
+        }
+        assert(usr->first.line() == location.line());
     }
     assert(!(usr->first > location));
 
@@ -1536,6 +1567,8 @@ Set<Project::Cursor> ClangProject::findCursors(const String &string, const List<
                         cursor.location = *loc;
                         cursor.target = firstLocation(*usr, usrs[i] == &decls ? defs : decls);
                         cursor.kind = info->second.kind;
+                        cursor.start = info->second.start;
+                        cursor.end = info->second.end;
                         cursors.insert(cursor);
                     }
                     ++loc;
@@ -1570,6 +1603,7 @@ String ClangProject::fixits(const Path &path) const
 
 Set<Project::Cursor> ClangProject::cursors(const Path &path) const
 {
+#warning implement me
     return Set<Cursor>();
 }
 
