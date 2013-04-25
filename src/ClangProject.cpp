@@ -1487,7 +1487,7 @@ void ClangProject::status(const String &query, Connection *conn, unsigned queryF
         const UsrSet *sets[] = { &defs, &decls };
         for (int i=0; i<2; ++i) {
             const UsrSet &set = *sets[i];
-            for (UsrSet::const_iterator  = set.begin();  != set.end(); ++) {
+            for (UsrSet::const_iterator it = set.begin(); it != set.end(); ++it) {
 
             }
         }
