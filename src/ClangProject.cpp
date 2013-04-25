@@ -167,6 +167,17 @@ private:
     ClangIndexInfo mInfo;
 };
 
+class ClangCompletionJob : public ThreadPool::Job
+{
+public:
+    ClangCompletionJob(ClangUnit *unit, const Location &location, const String &unsaved);
+    virtual void run();
+private:
+    ClangUnit *mUnit;
+    const Location mLocation;
+    const String mUnsaved;
+};
+
 ClangUnit::ClangUnit(ClangProject* p)
     : project(p), indexed(0)
 {
@@ -1211,33 +1222,33 @@ ClangProject::~ClangProject()
 bool ClangProject::save() // mutex held
 {
     return false;
-    if (!Server::saveFileIds())
-        return false;
-    Path p = path();
-    Server::encodePath(p);
-    p.prepend(Server::options().dataDir);
-    Path::mkdir(Server::options().dataDir);
+    // if (!Server::saveFileIds())
+    //     return false;
+    // Path p = path();
+    // Server::encodePath(p);
+    // p.prepend(Server::options().dataDir);
+    // Path::mkdir(Server::options().dataDir);
 
-    FILE *f = fopen(p.constData(), "w");
-    if (!f) {
-        error("Couldn't open %s for writing", p.constData());
-        return false;
-    }
-    Serializer serializer(f);
-    serializer << static_cast<uint32_t>(0) << static_cast<uint32_t>(Server::DatabaseVersion)
-               << incs << depends << reverseDepends << names << usrs << decls << defs << refs << virtuals << umap
-               << static_cast<uint32_t>(units.size());
-    for (Map<uint32_t, ClangUnit*>::const_iterator it = units.begin(); it != units.end(); ++it) {
-        // probably don't need a mutex here since all threads have finished and
-        // I hold the project mutex so nothing new should be able to happen
-        serializer << it->first << it->second->indexed;
-    }
+    // FILE *f = fopen(p.constData(), "w");
+    // if (!f) {
+    //     error("Couldn't open %s for writing", p.constData());
+    //     return false;
+    // }
+    // Serializer serializer(f);
+    // serializer << static_cast<uint32_t>(0) << static_cast<uint32_t>(Server::DatabaseVersion)
+    //            << incs << depends << reverseDepends << names << usrs << decls << defs << refs << virtuals << umap
+    //            << static_cast<uint32_t>(units.size());
+    // for (Map<uint32_t, ClangUnit*>::const_iterator it = units.begin(); it != units.end(); ++it) {
+    //     // probably don't need a mutex here since all threads have finished and
+    //     // I hold the project mutex so nothing new should be able to happen
+    //     serializer << it->first << it->second->indexed;
+    // }
 
-    const uint32_t size = ftell(f);
-    fseek(f, sizeof(uint32_t), SEEK_SET);
-    serializer << size;
-    fclose(f);
-    return true;
+    // const uint32_t size = ftell(f);
+    // fseek(f, sizeof(uint32_t), SEEK_SET);
+    // serializer << size;
+    // fclose(f);
+    // return true;
 }
 
 bool ClangProject::load()
@@ -1609,6 +1620,11 @@ Set<Project::Cursor> ClangProject::cursors(const Path &path) const
 
 bool ClangProject::codeCompleteAt(const Location &location, const String &source, Connection *conn)
 {
+    shared_ptr<UnitCache::Unit> unit = UnitCache::get(location.path());
+    // if (unit && unit->translationUnit) {
+
+    // }
+
     return false;
 }
 

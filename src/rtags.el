@@ -216,14 +216,19 @@
   (save-excursion
     (let ((rc (rtags-executable-find "rc")) proc)
       (and async (not (consp async)) (error "Invalid argument. async must be a cons or nil"))
-      (unless rc
-        (error "Can't find rc"))
+      (unless rc (error "Can't find rc"))
+      (and unsaved (not async) (error "Synchronous rc with --unsaved-file not supported"))
       (setq arguments (rtags-remove-keyword-params arguments))
       (setq arguments (remove-if '(lambda (arg) (not arg)) arguments))
       (when path-filter
         (push (concat "--path-filter=" path-filter) arguments)
         (if rtags-path-filter-regex
             (push "-Z" arguments)))
+      (if unsaved
+          (push (format "--unsaved-file=%s:%d"
+                        (buffer-file-name unsaved)
+                        (with-current-buffer unsaved (- (point-max) (point-min))))
+                arguments))
       (if range-filter
           (push (format "--range-filter=%d-%d" range-min range-max) arguments))
       (if rtags-timeout
@@ -238,13 +243,15 @@
       (rtags-log (concat rc " " (combine-and-quote-strings arguments)))
       (let ((proc (cond ((and unsaved async)
                          (let ((proc (apply #'start-process "rc" (current-buffer) rc arguments)))
-                           (process-send-region (point-min) (point-max))
+                           (with-current-buffer unsaved
+                             (process-send-region proc (point-min) (point-max)))
                            proc))
                         (async (apply #'start-process "rc" (current-buffer) rc arguments))
-                        (unsaved (apply #'call-process-region (point-min) (point-max) rc nil output nil arguments) nil)
+                        ;; (unsaved (apply #'call-process-region (point-min) (point-max) rc nil output nil arguments) nil)
                         (t (apply #'call-process rc nil output nil arguments) nil))))
         (if proc
             (progn
+              (set-process-query-on-exit-flag proc nil)
               (set-process-filter proc (car async))
               (set-process-sentinel proc (cdr async)))
           (progn
@@ -264,6 +271,8 @@
 (define-derived-mode rtags-preprocess-mode c++-mode
   (setq mode-name "rtags-preprocess")
   (use-local-map rtags-diagnostics-mode-map)
+  (if (buffer-file-name)
+      (error "Set buffer with file %s read only " (buffer-file-name)))
   (setq buffer-read-only t)
   )
 
@@ -1370,6 +1379,8 @@ References to references will be treated as references to the referenced symbol"
         (setq buffer-read-only nil)
         (goto-char (point-min))
         (delete-char (- (point-max) (point-min)))
+        (if (buffer-file-name)
+            (error "Set buffer with file %s read only " (buffer-file-name)))
         (setq buffer-read-only t))
       )
     )
@@ -1400,6 +1411,8 @@ References to references will be treated as references to the referenced symbol"
           (setq endpos (string-match "</checkstyle>" output))
           (rtags-reset-bookmarks)
           (rtags-overlays-parse (rtags-trim-whitespace current))))
+      (if (buffer-file-name)
+          (error "Set buffer with file %s read only " (buffer-file-name)))
       (setq buffer-read-only t)
       (when (> (length output) 0)
         (setq rtags-pending-diagnostics output)))
@@ -1414,6 +1427,8 @@ References to references will be treated as references to the referenced symbol"
 (define-derived-mode rtags-diagnostics-mode compilation-mode
   (setq mode-name "rtags-diagnostics")
   (use-local-map rtags-diagnostics-mode-map)
+  (if (buffer-file-name)
+      (error "Set buffer with file %s read only " (buffer-file-name)))
   (setq buffer-read-only t)
   )
 
@@ -1570,6 +1585,8 @@ References to references will be treated as references to the referenced symbol"
             (atend (goto-char (point-max)))
             (t nil))
       (when done
+        (if (buffer-file-name)
+            (error "Set buffer with file %s read only " (buffer-file-name)))
         (setq buffer-read-only t)
         (rtags-handle-completion-buffer)))
     )
@@ -1970,5 +1987,31 @@ References to references will be treated as references to the referenced symbol"
       (cancel-timer rtags-local-references-timer)
       (setq rtags-local-references-timer nil))
     (remove-hook 'post-command-hook 'rtags-restart-update-local-references-timer)))
+
+(defun rtags-code-complete-filter (process output)
+  (let ((buf (process-buffer process))
+        (deactivate-mark))
+    (with-current-buffer buf
+      (setq buffer-read-only nil)
+      (insert output))
+    )
+  )
+
+(defun rtags-code-complete-sentinel (process state)
+  )
+
+(defun rtags-code-complete ()
+  (interactive)
+  (let ((location (rtags-current-location))
+        (path (buffer-file-name))
+        (unsaved (if (buffer-modified-p) (current-buffer))))
+    (with-current-buffer (rtags-get-buffer "*RTags Completions*")
+      (rtags-call-rc :path path
+                     :async (cons 'rtags-code-complete-filter 'rtags-code-complete-sentinel)
+                     "--code-complete-at" location
+                     :unsaved unsaved))
+    )
+  )
+
 
 (provide 'rtags)

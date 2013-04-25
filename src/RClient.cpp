@@ -639,6 +639,9 @@ bool RClient::parse(int &argc, char **argv)
                         errno, strerror(errno), r, bytes);
                 return false;
             }
+            FILE *f = fopen("/tmp/fisk", "w");
+            fwrite(contents.constData(), contents.size(), 1, f);
+            fclose(f);
             mUnsavedFiles[path] = contents;
             break; }
         case FollowLocation:
