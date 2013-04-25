@@ -93,7 +93,7 @@ private:
 
 private:
     Map<uint32_t, ClangUnit*> units;
-    ThreadPool pool;
+    ThreadPool *pool;
     CXIndex cidx;
     CXIndexAction caction;
 

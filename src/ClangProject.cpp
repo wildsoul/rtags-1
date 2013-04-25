@@ -1187,7 +1187,7 @@ void ClangUnit::reindex(const SourceInformation& info)
     MutexLocker locker(&mutex);
     if (job) {
         while (!job->done()) {
-            if (!project->pool.remove(job)) {
+            if (!project->pool->remove(job)) {
                 job->stop();
                 job->wait();
             } else {
@@ -1200,21 +1200,22 @@ void ClangUnit::reindex(const SourceInformation& info)
     if (!reparse)
         sourceInformation = info;
     job.reset(new ClangParseJob(this, reparse));
-    project->pool.start(job);
+    project->pool->start(job);
 }
 
 LockingUsrMap ClangProject::umap;
 
 ClangProject::ClangProject(const Path &path)
-    : Project(path), pool(Server::options().threadPoolSize, Server::options().threadPoolStackSize),
-      pendingJobs(0), jobsProcessed(0)
+    : Project(path), pendingJobs(0), jobsProcessed(0)
 {
+    pool = new ThreadPool(Server::options().threadPoolSize, Server::options().threadPoolStackSize);
     cidx = clang_createIndex(0, 1);
     caction = clang_IndexAction_create(cidx);
 }
 
 ClangProject::~ClangProject()
 {
+    delete pool;
     clang_IndexAction_dispose(caction);
     clang_disposeIndex(cidx);
 }
