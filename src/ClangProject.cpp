@@ -705,6 +705,7 @@ static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor /*parent*/,
     case CXCursor_ParmDecl:
         return CXChildVisit_Recurse;
     case CXCursor_TypeRef:
+    case CXCursor_TemplateRef:
         addReference(client_data, cursor);
         return CXChildVisit_Continue;
     default:
@@ -722,6 +723,7 @@ static CXChildVisitResult memberVisistor(CXCursor cursor, CXCursor /*parent*/, C
     case CXCursor_CXXBaseSpecifier:
         return CXChildVisit_Recurse;
     case CXCursor_TypeRef:
+    case CXCursor_TemplateRef:
         addReference(client_data, cursor);
         break;
     default:
