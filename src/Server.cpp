@@ -306,8 +306,6 @@ void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
         dependencies(*message, conn);
         break;
     case QueryMessage::DeleteProject:
-        removeProject(*message, conn);
-        break;
     case QueryMessage::UnloadProject:
         removeProject(*message, conn);
         break;
@@ -960,7 +958,7 @@ void Server::removeProject(const QueryMessage &query, Connection *conn)
     ProjectsMap::iterator it = mProjects.begin();
     while (it != mProjects.end()) {
         ProjectsMap::iterator cur = it++;
-        if (cur->second->match(match)) {
+        if (match.match(cur->first) || match.match(Path::resolved(cur->first))) {
             if (mCurrentProject.lock() == it->second) {
                 mCurrentProject.reset();
                 unlink((sOptions.dataDir + ".currentProject").constData());

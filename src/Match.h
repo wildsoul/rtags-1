@@ -31,18 +31,20 @@ public:
 
     inline bool match(const String &text) const
     {
-        if (indexIn(text) != -1)
-            return true;
-        if (mFlags & Flag_StringMatch)
-            return mPattern.indexOf(text, 0, mFlags & Flag_CaseInsensitive ? String::CaseInsensitive : String::CaseSensitive) != -1;
-        return false;
+        return indexIn(text) != -1;
     }
 
     inline int indexIn(const String &text) const
     {
         int index = -1;
-        if (mFlags & Flag_StringMatch)
+        if (mFlags & Flag_StringMatch) {
             index = text.indexOf(mPattern, 0, mFlags & Flag_CaseInsensitive ? String::CaseInsensitive : String::CaseSensitive);
+            if (index == -1) {
+                const Path p = Path::resolved(mPattern);
+                const Path p2 = Path::resolved(text);
+                index = p2.indexOf(p, 0, mFlags & Flag_CaseInsensitive ? String::CaseInsensitive : String::CaseSensitive);
+            }
+        }
         if (index == -1 && mFlags & Flag_RegExp)
             index = mRegExp.indexIn(text);
         return index;
