@@ -1021,6 +1021,10 @@ bool Server::updateProject(const List<String> &projects)
 {
     for (int i=0; i<projects.size(); ++i) {
         if (selectProject(projects.at(i), 0)) {
+            const Path p = Path::resolved(projects.at(i));
+            if (p.isFile() && p != mCurrentSourceFile)
+                mCurrentSourceFile = p;
+
             return true;
         }
     }

@@ -48,6 +48,7 @@ public:
         List<String> defaultArguments, excludeFilters;
     };
     bool init(const Options &options);
+    Path currentSourceFile() const { return mCurrentSourceFile; }
     static const Options &options() { return sOptions; }
     static RTagsPluginFactory &factory() { return sPluginFactory; }
     static bool encodePath(Path &path);
@@ -115,6 +116,8 @@ private:
     static Options sOptions;
     SocketServer *mServer;
     bool mVerbose;
+
+    Path mCurrentSourceFile;
 
     signalslot::Signal2<int, const List<String> &> mComplete;
 
