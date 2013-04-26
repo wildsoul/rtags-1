@@ -1013,32 +1013,11 @@ void ClangParseJob::run()
         List<SourceInformation::Build>::const_iterator build = builds.begin();
         const List<SourceInformation::Build>::const_iterator end = builds.end();
         while (build != end) {
-            List<String> args;
+            List<String> args = build->args;
 #ifdef CLANG_INCLUDEPATH
-            args.append(String("-I") + CLANG_INCLUDEPATH);
+            args.append("-I" CLANG_INCLUDEPATH);
 #endif
-
-            List<String>::const_iterator define = build->defines.begin();
-            const List<String>::const_iterator defineEnd = build->defines.end();
-            while (define != defineEnd) {
-                args.append("-D" + *define);
-                ++define;
-            }
-
-            List<Path>::const_iterator include = build->includePaths.begin();
-            List<Path>::const_iterator includeEnd = build->includePaths.end();
-            while (include != includeEnd) {
-                args.append("-I" + *include);
-                ++include;
-            }
-
-            include = build->includes.begin();
-            includeEnd = build->includes.end();
-            while (include != includeEnd) {
-                args.append("-include " + *include);
-                ++include;
-            }
-
+            // don't really need to copy all of these
             const char* clangArgs[args.size()];
             int clangOffset = 0;
             List<String>::const_iterator arg = args.begin();
