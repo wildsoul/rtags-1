@@ -1216,7 +1216,8 @@ static inline Project::Cursor cursorForInclude(const Location& location, const M
         if (inc == incs.begin())
             return Project::Cursor();
         --inc;
-        if (inc->first.path() != location.path())
+        if (inc->first.path() != location.path()
+            || inc->first.line() != location.line())
             return Project::Cursor();
     }
     assert(inc->first.line() == location.line());
