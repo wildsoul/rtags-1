@@ -78,6 +78,22 @@ include_directories(${CMAKE_CURRENT_LIST_DIR}
                     rct
                     ${CMAKE_CURRENT_BINARY_DIR}/rct/include/rct)
 
+set(CMAKE_REQUIRED_INCLUDES ${CLANG_INCLUDE})
+include(CheckCSourceCompiles)
+check_c_source_compiles("
+#include <clang-c/Index.h>
+#if defined(CINDEX_VERSION_MAJOR) && CINDEX_VERSION_MAJOR > 0
+// all ok
+#elif !defined(CINDEX_VERSION_MINOR) || CINDEX_VERSION_MINOR < 16
+#error No reparse
+#endif
+int main(int argc, char** argv) { }
+" CLANG_CAN_REPARSE)
+
+if (CLANG_CAN_REPARSE)
+  add_definitions(-DCLANG_CAN_REPARSE)
+endif ()
+
 add_executable(rc rc.cpp RClient.cpp)
 add_dependencies(rc rct shared)
 target_link_libraries(rc shared rct ${SYSTEM_LIBS})

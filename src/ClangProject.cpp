@@ -52,8 +52,10 @@ struct ClangIndexInfo
 Mutex ClangIndexInfo::seenMutex;
 Set<uint32_t> ClangIndexInfo::globalSeen;
 
+#ifdef CLANG_CAN_REPARSE
 Mutex UnitCache::mutex;
 LinkedList<std::pair<Path, shared_ptr<UnitCache::Unit> > > UnitCache::units;
+#endif
 
 class ClangUnit
 {
@@ -1045,6 +1047,7 @@ void ClangParseJob::run()
 
     // clang parse
     time_t parseTime = 0;
+#ifdef CLANG_CAN_REPARSE
     if (mReparse) {
         // ### should handle multiple builds here
         shared_ptr<UnitCache::Unit> unitptr = UnitCache::get(sourceFile);
@@ -1107,6 +1110,7 @@ void ClangParseJob::run()
             UnitCache::put(sourceFile, unitptr);
         }
     }
+#endif
     if (!mReparse) {
         const List<SourceInformation::Build>& builds = mUnit->sourceInformation.builds;
         List<SourceInformation::Build>::const_iterator build = builds.begin();
@@ -1166,7 +1170,9 @@ void ClangParseJob::run()
 
             if (unit) {
                 assert(parseTime);
+#ifdef CLANG_CAN_REPARSE
                 UnitCache::add(sourceFile, unit);
+#endif
 
                 if (!mInfo.hasDiags)
                     sendEmptyDiags(&mInfo);
@@ -1217,7 +1223,11 @@ void ClangUnit::reindex(const SourceInformation& info)
         }
     }
 
+#ifdef CLANG_CAN_REPARSE
     const bool reparse = (sourceInformation == info);
+#else
+    const bool reparse = false;
+#endif
     if (!reparse)
         sourceInformation = info;
     job.reset(new ClangParseJob(this, reparse));
@@ -1536,6 +1546,7 @@ void ClangProject::status(const String &query, Connection *conn, unsigned queryF
             }
         }
     }
+#ifdef CLANG_CAN_REPARSE
     if (query.isEmpty() || query.contains("unitcache")) {
         const List<Path> paths = UnitCache::paths();
         conn->write("UnitCache:");
@@ -1543,6 +1554,7 @@ void ClangProject::status(const String &query, Connection *conn, unsigned queryF
             conn->write("  " + paths.at(i));
         }
     }
+#endif
     // DependSet depends, reverseDepends;
     // Map<Location, CursorInfo> usrs;    // location->usr
     // UsrSet decls, defs, refs;          // usr->locations
@@ -1787,6 +1799,7 @@ Set<Project::Cursor> ClangProject::cursors(const Path &path) const
 
 bool ClangProject::codeCompleteAt(const Location &location, const String &source, Connection *conn)
 {
+#ifdef CLANG_CAN_REPARSE
     MutexLocker lock(&mutex);
     shared_ptr<UnitCache::Unit> unit = UnitCache::get(location.path());
     if (!unit || !unit->unit) {
@@ -1802,6 +1815,10 @@ bool ClangProject::codeCompleteAt(const Location &location, const String &source
     pool->start(job);
 
     return true;
+#else
+    error() << "clang is too old, can't safely do reparsing";
+    return false;
+#endif
 }
 
 void ClangProject::onConnectionDestroyed(Connection *conn)

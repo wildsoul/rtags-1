@@ -121,6 +121,7 @@ private:
     friend class ClangParseJob;
 };
 
+#ifdef CLANG_CAN_REPARSE
 class UnitCache
 {
 public:
@@ -186,5 +187,6 @@ private:
     static Mutex mutex;
     static LinkedList<std::pair<Path, shared_ptr<Unit> > > units;
 };
+#endif // CLANG_CAN_REPARSE
 
 #endif

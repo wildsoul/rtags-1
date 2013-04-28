@@ -1,4 +1,6 @@
 #include "ClangCompletionJob.h"
+
+#ifdef CLANG_CAN_REPARSE
 #include <rct/Connection.h>
 
 static inline String eatString(CXString string)
@@ -189,3 +191,5 @@ void ClangCompletionJob::run()
     UnitCache::put(path, mUnit);
     mFinished(this);
 }
+
+#endif // CLANG_CAN_REPARSE

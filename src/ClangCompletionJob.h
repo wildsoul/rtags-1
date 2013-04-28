@@ -1,6 +1,7 @@
 #ifndef ClangCompletionJob_h
 #define ClangCompletionJob_h
 
+#ifdef CLANG_CAN_REPARSE
 #include "ClangProject.h"
 #include "Location.h"
 #include <clang-c/Index.h>
@@ -23,5 +24,6 @@ private:
     signalslot::Signal3<ClangCompletionJob*, String, String> mCompletion;
     signalslot::Signal1<ClangCompletionJob*> mFinished;
 };
+#endif
 
 #endif
