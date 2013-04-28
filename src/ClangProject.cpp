@@ -100,6 +100,7 @@ private:
     static void indexEntityReference(CXClientData client_data, const CXIdxEntityRefInfo* ref);
     static void indexArguments(ClangIndexInfo* info, const CXCursor& cursor);
     static void indexMembers(ClangIndexInfo* info, const CXCursor& cursor);
+    static void indexTranslationUnit(ClangIndexInfo* info, const CXTranslationUnit& unit);
 
     static void sendEmptyDiags(ClangIndexInfo* info);
 
@@ -291,7 +292,45 @@ static inline Location makeLocation(const CXCursor& cursor, unsigned* offset = 0
     return loc;
 }
 
-static inline Project::Cursor::Kind makeKind(CXIdxEntityKind cxkind, bool def)
+static inline Project::Cursor::Kind makeCursorKind(CXCursorKind cxkind, bool def)
+{
+    switch (cxkind) {
+    case CXCursor_ClassDecl:
+        if (def)
+            return Project::Cursor::Class;
+        return Project::Cursor::ClassForwardDeclaration;
+    case CXCursor_Namespace:
+        return Project::Cursor::Namespace;
+    case CXCursor_CXXMethod:
+        if (def)
+            return Project::Cursor::MemberFunctionDefinition;
+        return Project::Cursor::MemberFunctionDeclaration;
+    case CXCursor_FunctionDecl:
+        if (def)
+            return Project::Cursor::MethodDefinition;
+        return Project::Cursor::MethodDeclaration;
+    case CXCursor_StructDecl:
+        if (def)
+            return Project::Cursor::Struct;
+        return Project::Cursor::StructForwardDeclaration;
+    case CXCursor_EnumDecl:
+        return Project::Cursor::Enum;
+    case CXCursor_EnumConstantDecl:
+        return Project::Cursor::EnumValue;
+    case CXCursor_VarDecl:
+    case CXCursor_VariableRef:
+        return Project::Cursor::Variable;
+    case CXCursor_FieldDecl:
+        return Project::Cursor::Field;
+    case CXCursor_UnionDecl:
+        return Project::Cursor::Union;
+    default:
+        break;
+    }
+    return Project::Cursor::Invalid;
+}
+
+static inline Project::Cursor::Kind makeIdxKind(CXIdxEntityKind cxkind, bool def)
 {
     switch (cxkind) {
     case CXIdxEntity_CXXClass:
@@ -678,6 +717,74 @@ static inline unsigned cursorLength(const CXCursor& cursor)
     return len;
 }
 
+static inline void addNamePermutations(CXCursor cursor, const uint32_t usr, Map<String, Set<uint32_t> >& names)
+{
+    List<String> subnames;
+    unsigned res = 0;
+    for (;;) {
+        if (clang_isDeclaration(clang_getCursorKind(cursor))) {
+            CXString cxname = clang_getCursorSpelling(cursor);
+            String name(clang_getCString(cxname));
+            clang_disposeString(cxname);
+            if (!name.isEmpty()) {
+                subnames.append(name);
+                res += name.size();
+            } else if (subnames.isEmpty()) {
+                break;
+            }
+        }
+        cursor = clang_getCursorSemanticParent(cursor);
+        if (clang_equalCursors(cursor, clang_getNullCursor()))
+            break;
+    }
+
+    if (subnames.isEmpty())
+        return;
+
+    String current;
+    current.reserve(res + ((subnames.size() - 1) * 2));
+    List<String>::const_iterator n = subnames.begin();
+    const List<String>::const_iterator end = subnames.end();
+    while (n != end) {
+        if (!current.isEmpty())
+            current.prepend("::");
+        current.prepend(*n);
+        names[current].insert(usr);
+        ++n;
+    }
+}
+
+static inline void addDeclaration(CXClientData client_data, CXCursor cursor)
+{
+    ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
+    const bool def = clang_isCursorDefinition(cursor);
+    const uint32_t usr = makeUsr(cursor);
+    if (def && info->defs.contains(usr))
+        return;
+    else if (!def && info->decls.contains(usr))
+        return;
+
+    unsigned offset;
+    const Location declLoc = makeLocation(cursor, &offset);
+    if (declLoc.isEmpty())
+        return;
+
+    CursorInfo cursorInfo;
+    cursorInfo.usr = usr;
+    cursorInfo.kind = makeCursorKind(clang_getCursorKind(cursor), def);
+    cursorInfo.start = offset;
+    cursorInfo.end = offset + cursorLength(cursor);
+
+    info->usrs[declLoc] = cursorInfo;
+
+    addNamePermutations(cursor, usr, info->names);
+
+    if (def)
+        info->defs[usr].insert(declLoc);
+    else
+        info->decls[usr].insert(declLoc);
+}
+
 static inline void addReference(CXClientData client_data, CXCursor cursor)
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
@@ -716,15 +823,40 @@ static CXChildVisitResult argumentVisistor(CXCursor cursor, CXCursor /*parent*/,
 
 static CXChildVisitResult memberVisistor(CXCursor cursor, CXCursor /*parent*/, CXClientData client_data)
 {
-    //error() << "found" << clang_getCursorKind(cursor);
     switch (clang_getCursorKind(cursor)) {
     case CXCursor_FieldDecl:
-    case CXCursor_VarDecl:
     case CXCursor_CXXBaseSpecifier:
         return CXChildVisit_Recurse;
     case CXCursor_TypeRef:
     case CXCursor_TemplateRef:
         addReference(client_data, cursor);
+        break;
+    case CXCursor_CXXMethod:
+        addDeclaration(client_data, cursor);
+        break;
+    default:
+        break;
+    }
+    return CXChildVisit_Continue;
+}
+
+static CXChildVisitResult unitVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    //const bool isTranslationUnit = clang_isTranslationUnit(clang_getCursorKind(parent));
+
+    switch (clang_getCursorKind(cursor)) {
+    case CXCursor_VarDecl:
+        addDeclaration(client_data, cursor);
+        return CXChildVisit_Recurse;
+    case CXCursor_TypeRef:
+    case CXCursor_TemplateRef:
+        addReference(client_data, cursor);
+        break;
+    case CXCursor_ClassDecl:
+    case CXCursor_StructDecl:
+    case CXCursor_UnionDecl:
+        addDeclaration(client_data, cursor);
+        clang_visitChildren(cursor, memberVisistor, client_data);
         break;
     default:
         break;
@@ -742,41 +874,9 @@ void ClangParseJob::indexMembers(ClangIndexInfo* info, const CXCursor& cursor)
     clang_visitChildren(cursor, memberVisistor, info);
 }
 
-static inline void addNamePermutations(CXCursor cursor, const uint32_t usr, Map<String, Set<uint32_t> >& names)
+void ClangParseJob::indexTranslationUnit(ClangIndexInfo* info, const CXTranslationUnit& unit)
 {
-    List<String> subnames;
-    unsigned res = 0;
-    for (;;) {
-        if (clang_isDeclaration(clang_getCursorKind(cursor))) {
-            CXString cxname = clang_getCursorSpelling(cursor);
-            String name(clang_getCString(cxname));
-            clang_disposeString(cxname);
-            if (!name.isEmpty()) {
-                subnames.append(name);
-                res += name.size();
-            } else if (subnames.isEmpty()) {
-                break;
-            }
-        }
-        cursor = clang_getCursorSemanticParent(cursor);
-        if (clang_equalCursors(cursor, clang_getNullCursor()))
-            break;
-    }
-
-    if (subnames.isEmpty())
-        return;
-
-    String current;
-    current.reserve(res + ((subnames.size() - 1) * 2));
-    List<String>::const_iterator n = subnames.begin();
-    const List<String>::const_iterator end = subnames.end();
-    while (n != end) {
-        if (!current.isEmpty())
-            current.prepend("::");
-        current.prepend(*n);
-        names[current].insert(usr);
-        ++n;
-    }
+    clang_visitChildren(clang_getTranslationUnitCursor(unit), unitVisitor, info);
 }
 
 void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl)
@@ -816,7 +916,7 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
 
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
-    cursorInfo.kind = makeKind(decl->entityInfo->kind, def);
+    cursorInfo.kind = makeIdxKind(decl->entityInfo->kind, def);
     cursorInfo.start = offset;
     cursorInfo.end = offset + cursorLength(decl->cursor);
     info->usrs[declLoc] = cursorInfo;
@@ -973,8 +1073,7 @@ void ClangParseJob::run()
                     mReparse = false;
                 } else {
                     // need to index the global members of the TU
-                    CXCursor tuCursor = clang_getTranslationUnitCursor(unit);
-                    indexMembers(&mInfo, tuCursor);
+                    indexTranslationUnit(&mInfo, unit);
 
                     if (hasInclusions(unit) && mInfo.depends.isEmpty())
                         dirtyFlags |= ClangUnit::DontDirtyDeps;
@@ -1049,8 +1148,7 @@ void ClangParseJob::run()
 		mInfo.clear();
             } else {
                 // need to index the global members of the TU
-                CXCursor tuCursor = clang_getTranslationUnitCursor(unit);
-                indexMembers(&mInfo, tuCursor);
+                indexTranslationUnit(&mInfo, unit);
 
                 assert(!parseTime);
                 parseTime = time(0);
