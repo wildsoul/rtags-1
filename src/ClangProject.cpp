@@ -1112,11 +1112,14 @@ void ClangParseJob::run()
     }
 #endif
     if (!mReparse) {
+        const List<String> defaultArgs = Server::options().defaultArguments;
+
         const List<SourceInformation::Build>& builds = mUnit->sourceInformation.builds;
         List<SourceInformation::Build>::const_iterator build = builds.begin();
         const List<SourceInformation::Build>::const_iterator end = builds.end();
         while (build != end) {
             List<String> args = build->args;
+            args.append(defaultArgs);
 #ifdef CLANG_INCLUDEPATH
             args.append("-I" CLANG_INCLUDEPATH);
 #endif
