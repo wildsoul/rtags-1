@@ -210,6 +210,8 @@ bool GccArguments::parse(String args, const Path &base)
                         mArgs.append(inc);
                     }
                 }
+            } else if (arg.startsWith("-std") || arg == "-m32") {
+                mArgs.append(arg);
             }
         } else {
             if (!seenCompiler) {
