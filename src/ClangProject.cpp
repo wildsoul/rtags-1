@@ -1207,24 +1207,46 @@ bool ClangProject::load()
     return true;
 }
 
+static inline Project::Cursor cursorForInclude(const Location& location, const Map<Location, uint32_t>& incs)
+{
+    Map<Location, uint32_t>::const_iterator inc = incs.lower_bound(location);
+    if (inc == incs.end())
+        return Project::Cursor();
+    if (inc->first > location) {
+        if (inc == incs.begin())
+            return Project::Cursor();
+        --inc;
+        if (inc->first.path() != location.path())
+            return Project::Cursor();
+    }
+    assert(inc->first.line() == location.line());
+
+    Project::Cursor cursor;
+    cursor.location = inc->first;
+    cursor.target = Location(inc->second, 1, 1);
+    cursor.kind = Project::Cursor::File;
+
+    return cursor;
+}
+
 Project::Cursor ClangProject::cursor(const Location &location) const
 {
     MutexLocker locker(&mutex);
     Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(location);
     if (usr == usrs.end())
-        return Project::Cursor();
+        return cursorForInclude(location, incs);
     if (usr->first > location) { // we're looking for the previous one
         if (usr == usrs.begin())
-            return Project::Cursor();
+            return cursorForInclude(location, incs);
         --usr;
         if (usr->first.path() != location.path()) {
             // we've iterated past the beginning of the file
-            return Project::Cursor();
+            return cursorForInclude(location, incs);
         }
         if ((usr->first.line() < location.line())
             || (usr->first.column() + usr->second.length() <= location.column())) {
             // our location is after the end of the the previous location
-            return Project::Cursor();
+            return cursorForInclude(location, incs);
         }
         assert(usr->first.line() == location.line());
     }
@@ -1233,13 +1255,13 @@ Project::Cursor ClangProject::cursor(const Location &location) const
     //error() << "found loc, asked for" << location << "resolved to" << usr->first
     //        << "refers to" << usr->second.loc << "and kind" << usr->second.kind;
 
-    Project::Cursor cursor;
+    Cursor cursor;
     cursor.location = usr->first;
     cursor.kind = usr->second.kind;
 
     const uint32_t targetUsr = usr->second.usr;
 
-    if (cursor.kind == Project::Cursor::Reference) {
+    if (cursor.kind == Cursor::Reference) {
         // reference, target should be definition (if possible)
         UsrSet::const_iterator target = defs.find(targetUsr);
         if (target == defs.end()) {
