@@ -1172,6 +1172,8 @@ void ClangParseJob::run()
                 assert(parseTime);
 #ifdef CLANG_CAN_REPARSE
                 UnitCache::add(sourceFile, unit);
+#else
+                clang_disposeTranslationUnit(unit);
 #endif
 
                 if (!mInfo.hasDiags)
