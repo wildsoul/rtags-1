@@ -1733,7 +1733,7 @@ References to references will be treated as references to the referenced symbol"
     (if (> (length alternatives) 1)
         (setq match (ido-completing-read "Symbol: " alternatives)))
     (if match
-        (rtags-goto-location (with-temp-buffer (rtags-call-rc :path fn "-F" match) (buffer-string)))
+        (rtags-goto-location (with-temp-buffer (rtags-call-rc :path fn "-F" match :path-filter fn) (buffer-string)))
       (message "RTags: No symbols"))))
 
 (defvar rtags-find-file-history nil)

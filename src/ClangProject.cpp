@@ -44,6 +44,7 @@ struct ClangIndexInfo
     bool stopped;
 
     Map<uint32_t, bool> localSeen;
+    int indexed;
 
     static Mutex seenMutex;
     static Set<uint32_t> globalSeen;
@@ -231,11 +232,6 @@ void ClangUnit::merge(const ClangIndexInfo& info, int mode)
         project->virtuals[virt->first].unite(virt->second);
         ++virt;
     }
-    if (!project->pendingJobs) {
-        error() << "Parsed" << project->jobsProcessed << "files in" << project->timer.elapsed() << "ms";
-        project->jobsProcessed = 0;
-        project->save(); // should I release the mutex first?
-    }
 }
 
 ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
@@ -244,6 +240,7 @@ ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
     mInfo.stopped = false;
     mInfo.project = mUnit->project;
     mInfo.fileId = mUnit->sourceInformation.sourceFileId();
+    mInfo.indexed = 0;
     mInfo.hasDiags = false;
 }
 
@@ -907,6 +904,7 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
                 return;
             }
             info->localSeen[fileId] = true;
+            ++info->indexed;
         }
         break; }
     default:
@@ -986,6 +984,7 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
                 return;
             }
             info->localSeen[fileId] = true;
+            ++info->indexed;
         }
     }
 
@@ -1055,6 +1054,7 @@ void ClangParseJob::run()
             CXTranslationUnit unit = unitptr->unit;
 
             String fileData;
+            parseTime = time(0);
             if (!Rct::readFile(sourceFile, fileData)) {
                 error() << "unable to read file, fall back to indexSourceFile";
                 mInfo.clear();
@@ -1098,7 +1098,6 @@ void ClangParseJob::run()
                     }
 
                     if (indexFailed) {
-                        parseTime = time(0);
                         mInfo.clear();
                         mReparse = false;
                     } else {
@@ -1107,7 +1106,6 @@ void ClangParseJob::run()
 
                         if (hasInclusions(unit) && mInfo.depends.isEmpty())
                             dirtyFlags |= ClangUnit::DontDirtyDeps;
-                        parseTime = time(0);
                     }
 
                     if (mReparse) {
@@ -1164,6 +1162,7 @@ void ClangParseJob::run()
                 CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
 
             CXTranslationUnit unit = 0;
+            parseTime = time(0);
             const int indexFailed = clang_indexSourceFile(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts,
                                                           sourceFile.nullTerminated(), clangArgs, args.size(), 0, 0, &unit, tuOpts);
 
@@ -1186,13 +1185,10 @@ void ClangParseJob::run()
                     clang_disposeTranslationUnit(unit);
                     unit = 0;
                 }
-		mInfo.clear();
+                mInfo.clear();
             } else {
                 // need to index the global members of the TU
                 indexTranslationUnit(&mInfo, unit);
-
-                assert(!parseTime);
-                parseTime = time(0);
             }
 
             if (unit) {
@@ -1213,7 +1209,9 @@ void ClangParseJob::run()
         }
     }
 
-    error() << "done parsing" << mUnit->sourceInformation.sourceFile << "reparse" << mReparse;
+    mUnit->project->jobFinished(mInfo);
+
+    // error() << "done parsing" << mUnit->sourceInformation.sourceFile << "reparse" << mReparse;
 
     MutexLocker locker(&mUnit->mutex);
     mUnit->indexed = parseTime;
@@ -1607,7 +1605,6 @@ int ClangProject::index(const SourceInformation &sourceInformation)
         MutexLocker locker(&mutex);
         if (!pendingJobs++)
             timer.restart();
-        ++jobsProcessed;
     }
     unit->reindex(sourceInformation);
     return -1;
@@ -1824,6 +1821,23 @@ Set<Project::Cursor> ClangProject::cursors(const Path &path) const
     }
 
     return cursors;
+}
+
+void ClangProject::jobFinished(const ClangIndexInfo &info)
+{
+    MutexLocker lock(&mutex);
+    ++jobsProcessed;
+    error("[%3d%%] %d/%d %s %s, Symbols: %d References: %d Files: %d",
+          static_cast<int>(round(jobsProcessed / static_cast<double>(pendingJobs + jobsProcessed) * 100.0)),
+          jobsProcessed, pendingJobs + jobsProcessed, Location::path(info.fileId).constData(),
+          String::formatTime(time(0), String::Time).constData(),
+          info.decls.size() + info.defs.size(), info.refs.size(),
+          info.indexed);
+    if (!pendingJobs) {
+        error() << "Parsed" << jobsProcessed << "files in" << timer.elapsed() << "ms";
+        jobsProcessed = 0;
+        save(); // should I release the mutex first?
+    }
 }
 
 bool ClangProject::codeCompleteAt(const Location &location, const String &source, Connection *conn)

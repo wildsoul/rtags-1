@@ -60,6 +60,7 @@ struct FixIt
 };
 
 class ClangCompletionJob;
+class ClangIndexInfo;
 class ClangProject : public Project
 {
 public:
@@ -89,6 +90,7 @@ public:
 
     static LockingUsrMap& usrMap() { return umap; }
 
+    void jobFinished(const ClangIndexInfo &info);
 private:
     char locationType(const Location& location) const;
     void writeReferences(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned keyFlags) const;
