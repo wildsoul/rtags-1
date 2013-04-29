@@ -1053,50 +1053,68 @@ void ClangParseJob::run()
         shared_ptr<UnitCache::Unit> unitptr = UnitCache::get(sourceFile);
         if (unitptr) {
             CXTranslationUnit unit = unitptr->unit;
-            if (clang_reparseTranslationUnit(unit, 0, 0, clang_defaultReparseOptions(unit)) != 0) {
-                // bad
+
+            String fileData;
+            if (!Rct::readFile(sourceFile, fileData)) {
+                error() << "unable to read file, fall back to indexSourceFile";
                 mInfo.clear();
                 mReparse = false;
             } else {
-                IndexerCallbacks callbacks;
-                memset(&callbacks, 0, sizeof(IndexerCallbacks));
-                callbacks.abortQuery = abortQuery;
-                callbacks.diagnostic = diagnostic;
-                callbacks.enteredMainFile = enteredMainFile;
-                callbacks.ppIncludedFile = includedFile;
-                callbacks.indexDeclaration = indexDeclaration;
-                callbacks.indexEntityReference = indexEntityReference;
-                const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
+                CXUnsavedFile unsaved;
+                unsaved.Filename = sourceFile.nullTerminated();
+                unsaved.Contents = fileData.constData();
+                unsaved.Length = fileData.size();
 
-                int dirtyFlags = ClangUnit::Dirty;
-
-                if (clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit)) {
-                    parseTime = time(0);
+                if (clang_reparseTranslationUnit(unit, 1, &unsaved, clang_defaultReparseOptions(unit)) != 0) {
+                    // bad
                     mInfo.clear();
                     mReparse = false;
                 } else {
-                    // need to index the global members of the TU
-                    indexTranslationUnit(&mInfo, unit);
+                    IndexerCallbacks callbacks;
+                    memset(&callbacks, 0, sizeof(IndexerCallbacks));
+                    callbacks.abortQuery = abortQuery;
+                    callbacks.diagnostic = diagnostic;
+                    callbacks.enteredMainFile = enteredMainFile;
+                    callbacks.ppIncludedFile = includedFile;
+                    callbacks.indexDeclaration = indexDeclaration;
+                    callbacks.indexEntityReference = indexEntityReference;
+                    const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
 
-                    if (hasInclusions(unit) && mInfo.depends.isEmpty())
-                        dirtyFlags |= ClangUnit::DontDirtyDeps;
-                    parseTime = time(0);
-                }
+                    int dirtyFlags = ClangUnit::Dirty;
 
-                {
-                    MutexLocker locker(&mInfo.mutex);
-                    if (mInfo.stopped) {
-                        MutexLocker locker(&mUnit->mutex);
-                        mDone = true;
-                        mWait.wakeOne();
-                        return;
+                    const int indexFailed = clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit);
+
+                    {
+                        MutexLocker locker(&mInfo.mutex);
+                        if (mInfo.stopped) {
+                            MutexLocker locker(&mUnit->mutex);
+                            mDone = true;
+                            mInfo.clear();
+                            // unit is bad, we need to throw it away
+                            unitptr.reset();
+                            mWait.wakeOne();
+                            return;
+                        }
                     }
-                }
 
-                if (mReparse) {
-                    if (!mInfo.hasDiags)
-                        sendEmptyDiags(&mInfo);
-                    mUnit->merge(mInfo, dirtyFlags);
+                    if (indexFailed) {
+                        parseTime = time(0);
+                        mInfo.clear();
+                        mReparse = false;
+                    } else {
+                        // need to index the global members of the TU
+                        indexTranslationUnit(&mInfo, unit);
+
+                        if (hasInclusions(unit) && mInfo.depends.isEmpty())
+                            dirtyFlags |= ClangUnit::DontDirtyDeps;
+                        parseTime = time(0);
+                    }
+
+                    if (mReparse) {
+                        if (!mInfo.hasDiags)
+                            sendEmptyDiags(&mInfo);
+                        mUnit->merge(mInfo, dirtyFlags);
+                    }
                 }
             }
         } else {
@@ -1146,8 +1164,24 @@ void ClangParseJob::run()
                 CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
 
             CXTranslationUnit unit = 0;
-            if (clang_indexSourceFile(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts,
-				      sourceFile.nullTerminated(), clangArgs, args.size(), 0, 0, &unit, tuOpts)) {
+            const int indexFailed = clang_indexSourceFile(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts,
+                                                          sourceFile.nullTerminated(), clangArgs, args.size(), 0, 0, &unit, tuOpts);
+
+            {
+                MutexLocker locker(&mInfo.mutex);
+                if (mInfo.stopped) {
+                    MutexLocker locker(&mUnit->mutex);
+                    mDone = true;
+                    mInfo.clear();
+                    // unit is bad, we need to throw it away
+                    if (unit)
+                        clang_disposeTranslationUnit(unit);
+                    mWait.wakeOne();
+                    return;
+                }
+            }
+
+            if (indexFailed) {
                 if (unit) {
                     clang_disposeTranslationUnit(unit);
                     unit = 0;
@@ -1159,16 +1193,6 @@ void ClangParseJob::run()
 
                 assert(!parseTime);
                 parseTime = time(0);
-            }
-
-            {
-                MutexLocker locker(&mInfo.mutex);
-                if (mInfo.stopped) {
-                    MutexLocker locker(&mUnit->mutex);
-                    mDone = true;
-                    mWait.wakeOne();
-                    return;
-                }
             }
 
             if (unit) {

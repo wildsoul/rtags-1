@@ -172,6 +172,7 @@ public:
         if (units.size() > MaxSize)
             units.pop_front();
     }
+
     static List<Path> paths()
     {
         MutexLocker lock(&mutex);
