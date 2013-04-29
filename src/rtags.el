@@ -1154,7 +1154,10 @@ References to references will be treated as references to the referenced symbol"
                       (setq endoffset (+ startoffset (length rsym))))))))
 
             (if (and startoffset endoffset filebuffer)
-                (let ((overlay (make-overlay (+ startoffset 1) (+ endoffset 1) filebuffer t)))
+                (let ((overlay (make-overlay (1+ startoffset)
+                                             (cond ((= startoffset endoffset) (+ startoffset 2))
+                                                   (t (1+ endoffset)))
+                                             filebuffer)))
                   (overlay-put overlay 'rtags-error-message message)
                   (overlay-put overlay 'rtags-error-severity severity)
                   (overlay-put overlay 'rtags-error-start startoffset)
@@ -1242,8 +1245,11 @@ References to references will be treated as references to the referenced symbol"
 
 (defun rtags-is-rtags-overlay (overlay) (and overlay (overlay-get overlay 'rtags-error-message)))
 
+(defun rtags-overlay-comparator (l r)
+  (< (overlay-start l) (overlay-start r)))
+
 (defun rtags-overlays-on-screen ()
-  (remove-if-not 'rtags-is-rtags-overlay (overlays-in (window-start) (window-end))))
+  (sort (remove-if-not 'rtags-is-rtags-overlay (overlays-in (window-start) (window-end))) #'rtags-overlay-comparator))
 
 (defvar rtags-highlighted-overlay nil)
 
