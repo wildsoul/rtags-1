@@ -104,6 +104,7 @@ private:
     static void indexArguments(ClangIndexInfo* info, const CXCursor& cursor);
     static void indexMembers(ClangIndexInfo* info, const CXCursor& cursor);
     static void indexTranslationUnit(ClangIndexInfo* info, const CXTranslationUnit& unit);
+    static void indexMacros(ClangIndexInfo* info, const CXTranslationUnit& unit);
 
     static void sendEmptyDiags(ClangIndexInfo* info);
 
@@ -863,6 +864,25 @@ static CXChildVisitResult unitVisitor(CXCursor cursor, CXCursor parent, CXClient
     return CXChildVisit_Continue;
 }
 
+#warning Merge all these visitors into one
+static CXChildVisitResult macroVisitor(CXCursor cursor, CXCursor /*parent*/, CXClientData client_data)
+{
+    switch (clang_getCursorKind(cursor)) {
+    case CXCursor_MacroExpansion:
+        addReference(client_data, cursor);
+        return CXChildVisit_Continue;
+    case CXCursor_MacroDefinition:
+        addDeclaration(client_data, cursor);
+        return CXChildVisit_Continue;
+    default:
+        break;
+    }
+
+    if (clang_isCursorDefinition(cursor))
+        return CXChildVisit_Recurse;
+    return CXChildVisit_Continue;
+}
+
 void ClangParseJob::indexArguments(ClangIndexInfo* info, const CXCursor& cursor)
 {
     clang_visitChildren(cursor, argumentVisistor, info);
@@ -876,6 +896,11 @@ void ClangParseJob::indexMembers(ClangIndexInfo* info, const CXCursor& cursor)
 void ClangParseJob::indexTranslationUnit(ClangIndexInfo* info, const CXTranslationUnit& unit)
 {
     clang_visitChildren(clang_getTranslationUnitCursor(unit), unitVisitor, info);
+}
+
+void ClangParseJob::indexMacros(ClangIndexInfo* info, const CXTranslationUnit& unit)
+{
+    clang_visitChildren(clang_getTranslationUnitCursor(unit), macroVisitor, info);
 }
 
 void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl)
@@ -1133,6 +1158,7 @@ void ClangParseJob::run()
                         } else {
                             // need to index the global members of the TU
                             indexTranslationUnit(&mInfo, unit);
+                            indexMacros(&mInfo, unit);
 
                             if (hasInclusions(unit) && mInfo.depends.isEmpty())
                                 dirtyFlags |= ClangUnit::DontDirtyDeps;
@@ -1222,6 +1248,7 @@ void ClangParseJob::run()
                 } else {
                     // need to index the global members of the TU
                     indexTranslationUnit(&mInfo, unit);
+                    indexMacros(&mInfo, unit);
                 }
 
                 if (unit) {
