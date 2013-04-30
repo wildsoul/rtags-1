@@ -136,6 +136,7 @@ public:
 private:
     void onFileModified(const Path &path);
     void onFileRemoved(const Path &path);
+    void onFileAdded(const Path &path);
 
     shared_ptr<FileManager> mFileManager;
 
@@ -146,8 +147,8 @@ private:
     SourceInformationMap mSources;
 
     FileSystemWatcher mWatcher;
-    Set<Path> mWatchedPaths, mModifiedFiles;
-    Timer mModifiedFilesTimer, mSaveTimer;
+    Set<Path> mWatchedPaths, mModifiedFiles, mFilesToRemove;
+    Timer mModifiedFilesTimer, mSaveTimer, mRemoveTimer;
     signalslot::Signal2<const shared_ptr<Project> &, const SourceInformation &> mSourceIndexed;
 };
 

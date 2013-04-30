@@ -13,13 +13,16 @@
 
 static void *ModifiedFiles = &ModifiedFiles;
 static void *Save = &Save;
-enum { ModifiedFilesTimeout = 50, SaveTimeout = 1000 };
+static void *Remove = &Remove;
+
+enum { ModifiedFilesTimeout = 50, SaveTimeout = 1000, RemoveTimeout = 500 };
 
 Project::Project(const Path &path)
     : mPath(path)
 {
     mWatcher.modified().connect(this, &Project::onFileModified);
     mWatcher.removed().connect(this, &Project::onFileRemoved);
+    mWatcher.added().connect(this, &Project::onFileAdded);
 }
 
 void Project::init()
@@ -276,10 +279,15 @@ void Project::onFileModified(const Path &file)
     }
 }
 
+void Project::onFileAdded(const Path &path)
+{
+    mFilesToRemove.remove(path);
+}
+
 void Project::onFileRemoved(const Path &path)
 {
-    if (mSources.remove(path))
-        remove(path);
+    mFilesToRemove.insert(path);
+    mRemoveTimer.start(shared_from_this(), RemoveTimeout, SingleShot, Remove);
 }
 
 SourceInformationMap Project::sourceInfos() const
@@ -370,6 +378,14 @@ void Project::timerEvent(TimerEvent *e)
         mModifiedFiles.clear();
     } else if (e->userData() == Save) {
         save();
+    } else if (e->userData() == Remove) {
+        Set<Path>::const_iterator rem = mFilesToRemove.begin();
+        const Set<Path>::const_iterator end = mFilesToRemove.end();
+        while (rem != end) {
+            if (mSources.remove(*rem))
+                remove(*rem);
+            ++rem;
+        }
     }
 }
 
