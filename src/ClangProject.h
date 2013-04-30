@@ -9,7 +9,6 @@
 #include <rct/Map.h>
 #include <rct/Mutex.h>
 #include <rct/String.h>
-#include <rct/ThreadPool.h>
 
 class ClangUnit;
 
@@ -75,7 +74,7 @@ public:
                             const List<Path> &pathFilter, Connection *conn) const;
     virtual void status(const String &query, Connection *conn, unsigned queryFlags) const;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const;
-    virtual int index(const SourceInformation &sourceInformation);
+    virtual void index(const SourceInformation &sourceInformation, Type type);
     virtual void remove(const Path &sourceFile);
     virtual bool isIndexing() const;
 
@@ -100,7 +99,6 @@ private:
     void onCompletion(ClangCompletionJob *job, String completion, String signature);
 private:
     Map<uint32_t, ClangUnit*> units;
-    ThreadPool *pool;
     CXIndex cidx;
     CXIndexAction caction;
 

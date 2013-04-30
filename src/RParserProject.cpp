@@ -951,7 +951,7 @@ int RParserProject::symbolCount(const Path& file)
     return doc->globalSymbolCount();
 }
 
-int RParserProject::index(const SourceInformation &sourceInformation)
+void RParserProject::index(const SourceInformation &sourceInformation, Type)
 {
     QMutexLocker locker(&mutex);
     jobs.enqueue(new RParserJob(sourceInformation));
@@ -959,7 +959,6 @@ int RParserProject::index(const SourceInformation &sourceInformation)
     jobsAvailable.wakeOne();
     //waitForState(GreaterOrEqual, CollectingNames);
     //return symbolCount(sourceInformation.sourceFile);
-    return 0;
 }
 
 Project::Cursor RParserProject::cursor(const Location &location) const

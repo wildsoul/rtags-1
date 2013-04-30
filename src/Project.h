@@ -41,8 +41,8 @@ public:
         Restore
     };
 
-    void index(const SourceInformation &args, Type type);
-    bool index(const Path &sourceFile, const GccArguments &args);
+    void indexFile(const SourceInformation &args, Type type);
+    bool indexFile(const Path &sourceFile, const GccArguments &args);
     SourceInformationMap sourceInfos() const;
     SourceInformation sourceInfo(const Path &path) const;
     int reindex(const Match &match);
@@ -112,7 +112,7 @@ public:
                             const List<Path> &pathFilter, Connection *conn) const = 0;
     virtual void status(const String &query, Connection *conn, unsigned queryFlags) const = 0;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
-    virtual int index(const SourceInformation &sourceInformation) = 0;
+    virtual void index(const SourceInformation &sourceInformation, Type type) = 0;
     virtual void remove(const Path &sourceFile) = 0;
     virtual bool isIndexing() const = 0;
     enum DependencyMode {

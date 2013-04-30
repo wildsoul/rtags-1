@@ -62,6 +62,7 @@ class ClangUnit
 {
 public:
     ClangUnit(ClangProject* project);
+    ~ClangUnit();
 
     void reindex(const SourceInformation& info);
 
@@ -74,9 +75,10 @@ public:
 
     ClangProject* project;
     mutable Mutex mutex;
+    WaitCondition condition;
     SourceInformation sourceInformation;
-    time_t indexed;
-    shared_ptr<ClangParseJob> job;
+    uint64_t indexed;
+    weak_ptr<ClangParseJob> job;
 };
 
 class ClangParseJob : public ThreadPool::Job
@@ -118,6 +120,16 @@ private:
 ClangUnit::ClangUnit(ClangProject* p)
     : project(p), indexed(0)
 {
+}
+
+ClangUnit::~ClangUnit()
+{
+    MutexLocker lock(&mutex);
+    if (shared_ptr<ClangParseJob> j = job.lock()) {
+        j->stop();
+        while (!j->done())
+            condition.wait(&mutex);
+    }
 }
 
 static inline void dirtyUsr(const Location& start, uint32_t usr, UsrSet& usrs)
@@ -1050,6 +1062,7 @@ void ClangParseJob::run()
             } else {
                 MutexLocker locker(&mUnit->mutex);
                 mDone = true;
+                mUnit->condition.wakeAll();
                 return;
             }
         }
@@ -1075,7 +1088,7 @@ void ClangParseJob::run()
         }
 
         // clang parse
-        time_t parseTime = 0;
+        uint64_t parseTime = 0;
 #ifdef CLANG_CAN_REPARSE
         if (mReparse) {
             // ### should handle multiple builds here
@@ -1084,7 +1097,7 @@ void ClangParseJob::run()
                 CXTranslationUnit unit = unitptr->unit;
 
                 String fileData;
-                parseTime = time(0);
+                parseTime = Rct::currenTimeMs();
                 if (!Rct::readFile(sourceFile, fileData)) {
                     error() << "unable to read file, fall back to indexSourceFile";
                     mInfo.clear();
@@ -1127,6 +1140,7 @@ void ClangParseJob::run()
                                     continue;
                                 }
                                 mDone = true;
+                                mUnit->condition.wakeAll();
                                 return;
                             }
                         }
@@ -1196,7 +1210,7 @@ void ClangParseJob::run()
                     CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
 
                 CXTranslationUnit unit = 0;
-                parseTime = time(0);
+                parseTime = Rct::currenTimeMs();
                 const int indexFailed = clang_indexSourceFile(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts,
                                                               sourceFile.nullTerminated(), clangArgs, args.size(), 0, 0, &unit, tuOpts);
 
@@ -1213,6 +1227,7 @@ void ClangParseJob::run()
                             break;
                         }
                         mDone = true;
+                        mUnit->condition.wakeAll();
                         return;
                     }
                 }
@@ -1265,6 +1280,7 @@ void ClangParseJob::run()
         mUnit->project->jobFinished(mInfo);
         mUnit->indexed = parseTime;
         mDone = true;
+        mUnit->condition.wakeAll();
         break;
     }
 }
@@ -1279,17 +1295,19 @@ void ClangUnit::reindex(const SourceInformation& info)
     const bool reparse = false;
 #endif
 
-    if (job && !job->done()) {
+    shared_ptr<ClangParseJob> j = job.lock();
+    if (j && !j->done()) {
         if (!reparse)
             sourceInformation = info;
-        job->restart(reparse);
+        j->restart(reparse);
         return;
     }
 
     if (!reparse)
         sourceInformation = info;
-    job.reset(new ClangParseJob(this, reparse));
-    project->pool->start(job);
+    j.reset(new ClangParseJob(this, reparse));
+    job = j;
+    ThreadPool::instance()->start(j);
 }
 
 LockingUsrMap ClangProject::umap;
@@ -1297,16 +1315,17 @@ LockingUsrMap ClangProject::umap;
 ClangProject::ClangProject(const Path &path)
     : Project(path), pendingJobs(0), jobsProcessed(0)
 {
-    pool = new ThreadPool(Server::options().threadPoolSize, Server::options().threadPoolStackSize);
     cidx = clang_createIndex(0, 1);
     caction = clang_IndexAction_create(cidx);
 }
 
 ClangProject::~ClangProject()
 {
-    delete pool;
     clang_IndexAction_dispose(caction);
     clang_disposeIndex(cidx);
+    for (Map<uint32_t, ClangUnit*>::const_iterator it = units.begin(); it != units.end(); ++it) {
+        delete it->second;
+    }
 }
 
 bool ClangProject::save() // mutex held
@@ -1625,20 +1644,21 @@ void ClangProject::dump(const SourceInformation &sourceInformation, Connection *
 {
 }
 
-int ClangProject::index(const SourceInformation &sourceInformation)
+void ClangProject::index(const SourceInformation &sourceInformation, Type type)
 {
     const uint32_t fileId = Location::insertFile(sourceInformation.sourceFile);
     ClangUnit *&unit = units[fileId];
-    if (!unit)
+    if (!unit) {
         unit = new ClangUnit(this);
-    assert(unit);
+    } else if (type != Dirty && unit->indexed < sourceInformation.sourceFile.lastModifiedMs()) {
+        return;
+    }
     {
         MutexLocker locker(&mutex);
         if (!pendingJobs++)
             timer.restart();
     }
     unit->reindex(sourceInformation);
-    return -1;
 }
 
 void ClangProject::remove(const Path &sourceFile)
@@ -1886,7 +1906,7 @@ bool ClangProject::codeCompleteAt(const Location &location, const String &source
     job->completion().connectAsync(this, &ClangProject::onCompletion);
     conn->destroyed().connect(this, &ClangProject::onConnectionDestroyed);
     mCompletions[job.get()] = conn;
-    pool->start(job);
+    ThreadPool::instance()->start(job);
 
     return true;
 #else

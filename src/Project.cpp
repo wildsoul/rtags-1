@@ -94,7 +94,7 @@ bool Project::restore()
             Deserializer s(contents);
             s >> mSources;
             for (SourceInformationMap::const_iterator it = mSources.begin(); it != mSources.end(); ++it) {
-                index(it->second, Restore);
+                indexFile(it->second, Restore);
             }
             mSaveTimer.stop();
         }
@@ -142,7 +142,7 @@ bool Project::match(const Match &p, bool *indexed) const
     return ret || p.match(mPath);
 }
 
-void Project::index(const SourceInformation &sourceInformation, Type type)
+void Project::indexFile(const SourceInformation &sourceInformation, Type type)
 {
     static const char *fileFilter = getenv("RTAGS_FILE_FILTER");
     if ((fileFilter && !strstr(sourceInformation.sourceFile.constData(), fileFilter))
@@ -159,7 +159,7 @@ void Project::index(const SourceInformation &sourceInformation, Type type)
     if (mWatchedPaths.insert(dir))
         mWatcher.watch(dir);
 
-    index(sourceInformation);
+    index(sourceInformation, type);
     mSourceIndexed(static_pointer_cast<Project>(shared_from_this()), sourceInformation);
 
     static const char *names[] = { "index", "dirty", "dump", "restore" };
@@ -229,7 +229,7 @@ static inline Path resolveCompiler(const Path &compiler)
     return resolved;
 }
 
-bool Project::index(const Path &sourceFile, const GccArguments &args)
+bool Project::indexFile(const Path &sourceFile, const GccArguments &args)
 {
     const Path compiler = resolveCompiler(args.compiler().canonicalized());
     SourceInformation sourceInformation = sourceInfo(sourceFile);
@@ -259,7 +259,7 @@ bool Project::index(const Path &sourceFile, const GccArguments &args)
     }
     if (!added)
         sourceInformation.builds.append(build);
-    index(sourceInformation, Index);
+    indexFile(sourceInformation, Index);
     return true;
 }
 
@@ -315,7 +315,7 @@ int Project::reindex(const Match &match)
                 continue;
             }
 
-            index(info->second, Dirty);
+            indexFile(info->second, Dirty);
             ++ret;
 
             const Set<Path> subfiles = dependencies(*file, DependsOnArg);
@@ -327,7 +327,7 @@ int Project::reindex(const Match &match)
                     ++subfile;
                     continue;
                 }
-                index(info->second, Dirty);
+                indexFile(info->second, Dirty);
                 ++ret;
                 ++subfile;
             }
@@ -364,7 +364,7 @@ int Project::dirty(const Set<Path> &dirty)
     for (Set<Path>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
         const SourceInformationMap::const_iterator found = mSources.find(*it);
         if (found != mSources.end()) {
-            index(found->second, Dirty);
+            indexFile(found->second, Dirty);
             ++ret;
         }
     }

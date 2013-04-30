@@ -48,7 +48,7 @@ public:
     virtual Cursor cursor(const Location &location) const;
     virtual void status(const String &query, Connection *conn, unsigned queryFlags) const;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const;
-    virtual int index(const SourceInformation &sourceInformation);
+    virtual void index(const SourceInformation &sourceInformation, Type type);
     virtual void references(const Location& location, unsigned flags, const List<Path> &pathFilters, Connection *conn) const;
     virtual Set<Path> dependencies(const Path &path, DependencyMode mode) const;
     virtual Set<Path> files(int mode) const;

@@ -23,6 +23,7 @@
 #include <rct/SHA256.h>
 #include <rct/SocketClient.h>
 #include <rct/SocketServer.h>
+#include <rct/ThreadPool.h>
 #include <stdio.h>
 
 void *UnloadTimer = &UnloadTimer;
@@ -36,6 +37,7 @@ Server::Server()
 Server::~Server()
 {
     clear();
+    delete ThreadPool::instance();
     Messages::cleanup();
 }
 
@@ -62,6 +64,9 @@ bool Server::init(const Options &options)
         }
     }
     RTags::initMessages();
+
+    if (!ThreadPool::instance())
+        new ThreadPool(sOptions.threadPoolSize, sOptions.threadPoolStackSize);
 
     sOptions = options;
     if (options.options & NoBuiltinIncludes) {
@@ -251,7 +256,7 @@ void Server::handleCompileMessage(CompileMessage *message, Connection *conn)
     }
 
     for (int i=0; i<count; ++i) {
-        project->index(inputFiles.at(i), args);
+        project->indexFile(inputFiles.at(i), args);
     }
 }
 
