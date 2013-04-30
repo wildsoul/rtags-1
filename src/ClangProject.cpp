@@ -761,8 +761,6 @@ static inline void addDeclaration(CXClientData client_data, CXCursor cursor)
     const uint32_t usr = makeUsr(cursor);
     if (def && info->defs.contains(usr))
         return;
-    else if (!def && info->decls.contains(usr))
-        return;
 
     unsigned offset;
     const Location declLoc = makeLocation(cursor, &offset);
