@@ -857,10 +857,10 @@ static CXChildVisitResult unitVisitor(CXCursor cursor, CXCursor parent, CXClient
         break;
     case CXCursor_MacroExpansion:
         addReference(client_data, cursor);
-        return CXChildVisit_Continue;
+        break;
     case CXCursor_MacroDefinition:
         addDeclaration(client_data, cursor);
-        return CXChildVisit_Continue;
+        break;
     default:
         break;
     }
