@@ -1224,6 +1224,7 @@ bool Server::saveFileIds()
     Serializer s(f);
     s << static_cast<uint32_t>(0);
     s << static_cast<uint32_t>(Server::DatabaseVersion);
+    s << static_cast<uint32_t>(Location::sPathsToIds.size());
     for (Map<Path, uint32_t>::const_iterator it = Location::sPathsToIds.begin();
          it != Location::sPathsToIds.end(); ++it) {
         s << it->first << it->second;

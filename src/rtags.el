@@ -212,6 +212,7 @@
                        context
                        (range-min (1- (point-min)))
                        (range-max (1- (point-max)))
+                       noerror
                        &allow-other-keys)
   (save-excursion
     (let ((rc (rtags-executable-find "rc")) proc)
@@ -256,7 +257,7 @@
               (set-process-sentinel proc (cdr async)))
           (progn
             (goto-char (point-min))
-            (if (looking-at "Can't seem to connect to server")
+            (if (and (not noerror) (looking-at "Can't seem to connect to server"))
                 (error "Can't seem to connect to server. Is rdm running?")))))))
   (or async (> (point-max) (point-min))))
 
@@ -792,11 +793,12 @@ return t if rtags is allowed to modify this file"
         (location (rtags-current-location))
         (context (rtags-current-symbol t)))
     (with-temp-buffer
-      (rtags-call-rc :path path "-N" "-f" location :context context :path-filter filter)
+      (rtags-call-rc :path path "-N" "-f" location :context context :path-filter filter :noerror t)
       (setq rtags-last-request-not-indexed nil)
       (cond ((= (point-min) (point-max))
              (message "RTags: No target") nil)
-            ((string= (buffer-string) "Not indexed\n")
+            ((or (string= (buffer-string) "Not indexed\n")
+                 (string= (buffer-string) "Can't seem to connect to server\n"))
              (setq rtags-last-request-not-indexed t) nil)
             (t (buffer-substring-no-properties (point-min) (- (point-max) 1))))
       )
@@ -1521,7 +1523,7 @@ References to references will be treated as references to the referenced symbol"
 (defun rtags-buffer-status (&optional buffer)
   (let ((path (buffer-file-name buffer)))
     (with-temp-buffer
-      (rtags-call-rc :path path "-T" path)
+      (rtags-call-rc :path path "-T" path :noerror t)
       (goto-char (point-min))
       (cond ((looking-at "1") 'rtags-indexed)
             ((looking-at "2") 'rtags-file-managed)

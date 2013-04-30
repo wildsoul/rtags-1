@@ -15,7 +15,7 @@ static void *ModifiedFiles = &ModifiedFiles;
 static void *Save = &Save;
 static void *Remove = &Remove;
 
-enum { ModifiedFilesTimeout = 50, SaveTimeout = 1000, RemoveTimeout = 500 };
+enum { ModifiedFilesTimeout = 50, SaveTimeout = 500, RemoveTimeout = 500 };
 
 Project::Project(const Path &path)
     : mPath(path)
@@ -34,6 +34,7 @@ void Project::init()
 
 bool Project::save()
 {
+    StopWatch sw;
     Path srcPath = mPath;
     Server::encodePath(srcPath);
     const Server::Options &options = Server::options();
@@ -53,17 +54,21 @@ bool Project::save()
         error("Can't open file %s", p.constData());
         return false;
     }
-    String out;
-    {
-        Serializer o(out);
-        o << mSources;
-    }
-    {
-        Serializer o(f);
-        o << static_cast<int>(Server::DatabaseVersion) << SHA256::hash(out) << out;
-    }
+
+    Serializer o(f, p.constData());
+    o << static_cast<uint32_t>(0) << static_cast<uint32_t>(Server::DatabaseVersion);
+    save(o);
+    const uint32_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    o << size;
     fclose(f);
+    error() << "Saved project" << path() << "in" << sw.elapsed() << "ms";
     return true;
+}
+
+void Project::startSaveTimer()
+{
+    mSaveTimer.start(shared_from_this(), SaveTimeout, SingleShot, Save);
 }
 
 bool Project::restore()
@@ -77,32 +82,33 @@ bool Project::restore()
     if (!f)
         return false;
 
-    Deserializer in(f);
-    int version;
+    Deserializer in(f, p.constData());
+    uint32_t size, version;
+    in >> size;
+    if (size != static_cast<uint32_t>(Rct::fileSize(f))) {
+        error("%s seems to be corrupted, refusing to restore %s",
+              p.constData(), mPath.constData());
+        restoreError = true;
+        goto end;
+    }
     in >> version;
     if (version != Server::DatabaseVersion) {
         error("Wrong database version. Expected %d, got %d for %s. Removing.", Server::DatabaseVersion, version, p.constData());
         restoreError = true;
-    } else {
-        String sha, contents;
-        in >> sha >> contents;
-        if (sha != SHA256::hash(contents)) {
-            error("%s seems to be corrupted, refusing to restore %s",
-                  p.constData(), mPath.constData());
-            restoreError = true;
-        } else {
-            Deserializer s(contents);
-            s >> mSources;
-            for (SourceInformationMap::const_iterator it = mSources.begin(); it != mSources.end(); ++it) {
-                index(it->second, Restore);
-            }
-            mSaveTimer.stop();
-        }
+        goto end;
     }
+
+    if (!restore(in)) {
+        restoreError = true;
+    }
+
+end:
     fclose(f);
     if (restoreError) {
         Path::rm(p);
         return false;
+    } else {
+        error() << "Restored project" << mPath << "in" << timer.elapsed() << "ms";
     }
 
     return true;
@@ -151,10 +157,8 @@ void Project::index(const SourceInformation &sourceInformation, Type type)
     }
 
     shared_ptr<Project> project = static_pointer_cast<Project>(shared_from_this());
-    if (type != Restore) {
+    if (type != Restore)
         mSources[sourceInformation.sourceFile] = sourceInformation;
-        mSaveTimer.start(shared_from_this(), SaveTimeout, SingleShot, Save);
-    }
     const Path dir = sourceInformation.sourceFile.parentDir();
     if (mWatchedPaths.insert(dir))
         mWatcher.watch(dir);
@@ -293,6 +297,11 @@ void Project::onFileRemoved(const Path &path)
 SourceInformationMap Project::sourceInfos() const
 {
     return mSources;
+}
+
+void Project::setSourceInfos(const SourceInformationMap &map)
+{
+    mSources = map;
 }
 
 SourceInformation Project::sourceInfo(const Path &path) const

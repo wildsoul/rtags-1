@@ -185,8 +185,6 @@ void ClangUnit::merge(const ClangIndexInfo& info, int mode)
 {
     MutexLocker locker(&project->mutex);
 
-    --project->pendingJobs;
-
     if (mode & Dirty)
         dirty(sourceInformation.sourceFileId(), mode);
 
@@ -233,6 +231,8 @@ void ClangUnit::merge(const ClangIndexInfo& info, int mode)
         project->virtuals[virt->first].unite(virt->second);
         ++virt;
     }
+    if (!--project->pendingJobs)
+        project->startSaveTimer();
 }
 
 ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
@@ -1330,67 +1330,50 @@ ClangProject::~ClangProject()
     clang_disposeIndex(cidx);
 }
 
-bool ClangProject::save() // mutex held
+bool ClangProject::save(Serializer &serializer)
 {
-    return false;
-    // if (!Server::saveFileIds())
-    //     return false;
-    // Path p = path();
-    // Server::encodePath(p);
-    // p.prepend(Server::options().dataDir);
-    // Path::mkdir(Server::options().dataDir);
+    if (!Server::saveFileIds())
+        return false;
+    MutexLocker lock(&mutex);
 
-    // FILE *f = fopen(p.constData(), "w");
-    // if (!f) {
-    //     error("Couldn't open %s for writing", p.constData());
-    //     return false;
-    // }
-    // Serializer serializer(f);
-    // serializer << static_cast<uint32_t>(0) << static_cast<uint32_t>(Server::DatabaseVersion)
-    //            << incs << depends << reverseDepends << names << usrs << decls << defs << refs << virtuals << umap
-    //            << static_cast<uint32_t>(units.size());
-    // for (Map<uint32_t, ClangUnit*>::const_iterator it = units.begin(); it != units.end(); ++it) {
-    //     // probably don't need a mutex here since all threads have finished and
-    //     // I hold the project mutex so nothing new should be able to happen
-    //     serializer << it->first << it->second->indexed;
-    // }
+    serializer << sourceInfos() << incs << depends << reverseDepends << names
+               << usrs << decls << defs << refs << virtuals << umap
+               << static_cast<uint32_t>(units.size());
+    for (Map<uint32_t, ClangUnit*>::const_iterator it = units.begin(); it != units.end(); ++it) {
+        serializer << it->first << it->second->indexed;
+    }
 
-    // const uint32_t size = ftell(f);
-    // fseek(f, sizeof(uint32_t), SEEK_SET);
-    // serializer << size;
-    // fclose(f);
-    // return true;
+    return true;
 }
 
-bool ClangProject::load()
+bool ClangProject::restore(Deserializer &deserializer)
 {
-    return false;
-    Path p = path();
-    Server::encodePath(p);
-    p.prepend(Server::options().dataDir);
-    FILE *f = fopen(p.constData(), "r");
-    if (!f)
+    if (!Server::loadFileIds())
         return false;
 
-    Deserializer deserializer(f);
-    uint32_t size;
-    deserializer >> size;
-    if (size != static_cast<uint32_t>(Rct::fileSize(f))) {
-        fclose(f);
-        error() << p << "seems to be corrupted. Refusing to load";
-        return false;
-    }
-    uint32_t version;
-    deserializer >> version;
-    if (version != Server::DatabaseVersion) {
-        fclose(f);
-        return false;
-    }
     uint32_t unitCount;
-    deserializer >> incs >> depends >> reverseDepends >> names >> usrs >> decls >> defs
-                 >> refs >> virtuals >> umap >> unitCount;
+    SourceInformationMap sources;
+    deserializer >> sources >> incs >> depends >> reverseDepends >> names
+                 >> usrs >> decls >> defs >> refs >> virtuals >> umap >> unitCount;
+    setSourceInfos(sources);
+    for (uint32_t i=0; i<unitCount; ++i) {
+        uint32_t fileId;
+        time_t parsed;
+        deserializer >> fileId >> parsed;
+        const Path source = Location::path(fileId);
+        const Set<Path> deps = dependencies(source, ArgDependsOn);
+        assert(deps.contains(source));
+        for (Set<Path>::const_iterator it = deps.begin(); it != deps.end(); ++it) {
+            // error() << "Checking" << *it << "for" << source
+            //         << static_cast<uint32_t>(it->lastModified()) << "vs" << static_cast<uint32_t>(parsed);
+            if (it->lastModified() > parsed) { // should this be >= ???
+                // error() << "reparsing" << source << "because" << it->lastModified() << ">" << parsed;
+                index(sources.value(source), Restore);
+                break;
+            }
+        }
+    }
 
-    fclose(f);
     return true;
 }
 
@@ -1881,14 +1864,13 @@ void ClangProject::jobFinished(const ClangIndexInfo &info)
     ++jobsProcessed;
     error("[%3d%%] %d/%d %s %s, Symbols: %d References: %d Files: %d",
           static_cast<int>(round(jobsProcessed / static_cast<double>(pendingJobs + jobsProcessed) * 100.0)),
-          jobsProcessed, pendingJobs + jobsProcessed, Location::path(info.fileId).constData(),
-          String::formatTime(time(0), String::Time).constData(),
+          jobsProcessed, pendingJobs + jobsProcessed, String::formatTime(time(0), String::Time).constData(),
+          Location::path(info.fileId).toTilde().constData(),
           info.decls.size() + info.defs.size(), info.refs.size(),
           info.indexed);
     if (!pendingJobs) {
         error() << "Parsed" << jobsProcessed << "files in" << timer.elapsed() << "ms";
         jobsProcessed = 0;
-        save(); // should I release the mutex first?
     }
 }
 
