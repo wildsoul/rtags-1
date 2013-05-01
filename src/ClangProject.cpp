@@ -8,6 +8,7 @@
 #include <rct/Connection.h>
 #include <rct/MutexLocker.h>
 #include <rct/RegExp.h>
+#include <rct/ThreadPool.h>
 #include <rct/WaitCondition.h>
 
 class ClangParseJob;
