@@ -1260,8 +1260,11 @@ void ClangParseJob::run()
 
                 ++build;
             }
+            MutexLocker locker(&mUnit->mutex);
             if (mRestarted) {
-                assert(mInfo.decls.isEmpty() && mInfo.defs.isEmpty() && mInfo.refs.isEmpty());
+                MutexLocker locker(&mInfo.mutex);
+                mInfo.clear();
+                mInfo.stopped = false;
                 mRestarted = false;
                 continue;
             }
@@ -1271,6 +1274,7 @@ void ClangParseJob::run()
 
         MutexLocker locker(&mUnit->mutex);
         if (mRestarted) {
+            MutexLocker locker(&mInfo.mutex);
             assert(mInfo.stopped);
             mInfo.clear();
             mInfo.stopped = false;
