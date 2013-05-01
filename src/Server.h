@@ -27,7 +27,7 @@ class Project;
 class Server : public EventReceiver
 {
 public:
-    enum { DatabaseVersion = 31 };
+    enum { DatabaseVersion = 32 };
 
     Server();
     ~Server();

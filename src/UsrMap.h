@@ -105,7 +105,8 @@ public:
         for (UsrMap::MapType::const_iterator it = map.usrs.begin(); it != map.usrs.end(); ++it) {
             const uint16_t len = strlen(it->first);
             s << len;
-            s.write(it->first, len);
+            if (len)
+                s.write(it->first, len);
             s << it->second;
         }
     }
@@ -118,7 +119,8 @@ public:
             uint16_t len;
             s >> len;
             char *string = new char[len + 1];
-            s.read(string, len);
+            if (len)
+                s.read(string, len);
             string[len] = '\0';
             uint32_t val;
             s >> val;

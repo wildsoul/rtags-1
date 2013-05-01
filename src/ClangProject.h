@@ -25,9 +25,15 @@ struct CursorInfo
     int length() const { return end - start; }
 };
 
+inline Log operator<<(Log log, const CursorInfo &c)
+{
+    log << String::format<64>("Usr: %d Range: %d-%d kind: %s", c.usr, c.start, c.end, Project::Cursor::kindToString(c.kind));
+    return log;
+}
+
 template <> inline Serializer &operator<<(Serializer &s, const CursorInfo &b)
 {
-    s << b.usr << b.start << static_cast<uint32_t>(b.kind);
+    s << b.usr << b.start << b.end << static_cast<uint32_t>(b.kind);
     return s;
 }
 
@@ -59,21 +65,23 @@ struct FixIt
 };
 
 class ClangCompletionJob;
-class ClangIndexInfo;
+struct ClangIndexInfo;
 class ClangProject : public Project
 {
 public:
     ClangProject(const Path &path);
     virtual ~ClangProject();
 
-    bool save();
-    bool load();
+    using Project::save;
+    virtual bool save(Serializer &serializer);
+    virtual bool restore(Deserializer &deserializer);
 
     virtual Cursor cursor(const Location &location) const;
     virtual void references(const Location& location, unsigned queryFlags,
                             const List<Path> &pathFilter, Connection *conn) const;
     virtual void status(const String &query, Connection *conn, unsigned queryFlags) const;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const;
+    using Project::index;
     virtual void index(const SourceInformation &sourceInformation, Type type);
     virtual void remove(const Path &sourceFile);
     virtual bool isIndexing() const;

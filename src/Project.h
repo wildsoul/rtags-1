@@ -22,6 +22,7 @@ public:
     void init();
     bool restore();
     bool save();
+    void startSaveTimer();
     void unload();
 
     shared_ptr<FileManager> fileManager() const { return mFileManager; }
@@ -44,6 +45,7 @@ public:
     void indexFile(const SourceInformation &args, Type type);
     bool indexFile(const Path &sourceFile, const GccArguments &args);
     SourceInformationMap sourceInfos() const;
+    void setSourceInfos(const SourceInformationMap &map);
     SourceInformation sourceInfo(const Path &path) const;
     int reindex(const Match &match);
     int remove(const Match &match);
@@ -115,6 +117,8 @@ public:
     virtual void index(const SourceInformation &sourceInformation, Type type) = 0;
     virtual void remove(const Path &sourceFile) = 0;
     virtual bool isIndexing() const = 0;
+    virtual bool restore(Deserializer &/* deserializer */) { return true; }
+    virtual bool save(Serializer &/* serializer */) { return true; }
     enum DependencyMode {
         DependsOnArg,
         ArgDependsOn
