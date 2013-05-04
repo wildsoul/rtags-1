@@ -46,6 +46,7 @@ struct ClangIndexInfo
 
     Map<uint32_t, bool> localSeen;
     int indexed;
+    bool hasInclusions;
 
     static Mutex seenMutex;
     static Set<uint32_t> globalSeen;
@@ -70,16 +71,12 @@ public:
     CXIndex index() { return project->cidx; }
     CXIndexAction action() { return project->caction; }
 
-    enum MergeMode { Add = 0x1, Dirty = 0x2, DontDirtyDeps = 0x4 };
-    void merge(const ClangIndexInfo& info, int mode);
-    void dirty(uint32_t fileId, int mode);
-
     ClangProject* project;
     mutable Mutex mutex;
     WaitCondition condition;
     SourceInformation sourceInformation;
     uint64_t indexed;
-    weak_ptr<ClangParseJob> job;
+    shared_ptr<ClangParseJob> job;
 };
 
 class ClangParseJob : public ThreadPool::Job
@@ -116,6 +113,8 @@ private:
     bool mDone;
     bool mRestarted;
     ClangIndexInfo mInfo;
+
+    friend class ClangProject;
 };
 
 ClangUnit::ClangUnit(ClangProject* p)
@@ -126,131 +125,18 @@ ClangUnit::ClangUnit(ClangProject* p)
 ClangUnit::~ClangUnit()
 {
     MutexLocker lock(&mutex);
-    if (shared_ptr<ClangParseJob> j = job.lock()) {
-        j->stop();
-        while (!j->done())
+    if (job) {
+        job->stop();
+        while (!job->done())
             condition.wait(&mutex);
     }
-}
-
-static inline void dirtyUsr(const Location& start, uint32_t usr, UsrSet& usrs)
-{
-    UsrSet::iterator entry = usrs.find(usr);
-    if (entry == usrs.end())
-        return;
-    const uint32_t startFileId = start.fileId();
-    Set<Location>::iterator locs = entry->second.lower_bound(start);
-    while (locs != entry->second.end() && locs->fileId() == startFileId) {
-        entry->second.erase(locs++);
-    }
-}
-
-// should only be called with project->mutex locked
-void ClangUnit::dirty(uint32_t fileId, int mode)
-{
-    assert(mode & ClangUnit::Dirty);
-
-    const Location start(fileId, 1, 1);
-    {
-        Map<Location, CursorInfo>::iterator usr = project->usrs.lower_bound(start);
-        while (usr != project->usrs.end() && usr->first.fileId() == fileId) {
-            dirtyUsr(start, usr->second.usr, project->decls);
-            dirtyUsr(start, usr->second.usr, project->defs);
-            dirtyUsr(start, usr->second.usr, project->refs);
-            project->usrs.erase(usr++);
-        }
-    }
-
-    if (!(mode & ClangUnit::DontDirtyDeps)) {
-        {
-            Map<Location, uint32_t>::iterator inc = project->incs.lower_bound(start);
-            const Map<Location, uint32_t>::const_iterator end = project->incs.end();
-            while (inc != end && inc->first.fileId() == fileId) {
-                project->incs.erase(inc++);
-            }
-        }
-        {
-            // remove headers?
-            DependSet::iterator dep = project->depends.find(fileId);
-            if (dep != project->depends.end()) {
-                project->depends.erase(dep);
-            }
-        }
-        {
-            DependSet::iterator dep = project->reverseDepends.begin();
-            while (dep != project->reverseDepends.end()) {
-                Set<uint32_t>& set = dep->second;
-                if (set.remove(fileId)) {
-                    if (set.isEmpty()) {
-                        project->reverseDepends.erase(dep++);
-                    } else
-                        ++dep;
-                } else {
-                    ++dep;
-                }
-            }
-        }
-    }
-}
-
-void ClangUnit::merge(const ClangIndexInfo& info, int mode)
-{
-    MutexLocker locker(&project->mutex);
-
-    if (mode & Dirty)
-        dirty(sourceInformation.sourceFileId(), mode);
-
-    project->incs.unite(info.incs);
-    project->usrs.unite(info.usrs);
-    project->fixIts.unite(info.fixIts);
-
-    {
-        Map<String, Set<uint32_t> >::const_iterator name = info.names.begin();
-        const Map<String, Set<uint32_t> >::const_iterator end = info.names.end();
-        while (name != end) {
-            project->names[name->first].unite(name->second);
-            ++name;
-        }
-    }
-    {
-        const UsrSet* src[] = { &info.decls, &info.defs, &info.refs, 0 };
-        UsrSet* dst[] = { &project->decls, &project->defs, &project->refs, 0 };
-        for (unsigned i = 0; src[i]; ++i) {
-            UsrSet::const_iterator usr = src[i]->begin();
-            const UsrSet::const_iterator end = src[i]->end();
-            while (usr != end) {
-                (*dst[i])[usr->first].unite(usr->second);
-                ++usr;
-            }
-        }
-    }
-    {
-        const DependSet* src[] = { &info.depends, &info.reverseDepends, 0 };
-        DependSet* dst[] = { &project->depends, &project->reverseDepends, 0 };
-        for (unsigned i = 0; src[i]; ++i) {
-            DependSet::const_iterator usr = src[i]->begin();
-            const DependSet::const_iterator end = src[i]->end();
-            while (usr != end) {
-                (*dst[i])[usr->first].unite(usr->second);
-                ++usr;
-            }
-        }
-    }
-
-    VirtualSet::const_iterator virt = info.virtuals.begin();
-    const VirtualSet::const_iterator end = info.virtuals.end();
-    while (virt != end) {
-        project->virtuals[virt->first].unite(virt->second);
-        ++virt;
-    }
-    if (!--project->pendingJobs)
-        project->startSaveTimer();
 }
 
 ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
     : mUnit(unit), mReparse(reparse), mDone(false), mRestarted(false)
 {
     mInfo.stopped = false;
+    mInfo.hasInclusions = false;
     mInfo.project = mUnit->project;
     mInfo.fileId = mUnit->sourceInformation.sourceFileId();
     mInfo.indexed = 0;
@@ -1124,8 +1010,6 @@ void ClangParseJob::run()
                         callbacks.indexEntityReference = indexEntityReference;
                         const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
 
-                        int dirtyFlags = ClangUnit::Dirty;
-
                         const int indexFailed = clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit);
 
                         {
@@ -1153,14 +1037,12 @@ void ClangParseJob::run()
                             // need to index the global members of the TU
                             indexTranslationUnit(&mInfo, unit);
 
-                            if (hasInclusions(unit) && mInfo.depends.isEmpty())
-                                dirtyFlags |= ClangUnit::DontDirtyDeps;
+                            mInfo.hasInclusions = hasInclusions(unit);
                         }
 
                         if (mReparse) {
                             if (!mInfo.hasDiags)
                                 sendEmptyDiags(&mInfo);
-                            mUnit->merge(mInfo, dirtyFlags);
                         }
                     }
                 }
@@ -1256,8 +1138,6 @@ void ClangParseJob::run()
                         sendEmptyDiags(&mInfo);
                 }
 
-                mUnit->merge(mInfo, build == builds.begin() ? ClangUnit::Dirty : ClangUnit::Add);
-
                 ++build;
             }
             MutexLocker locker(&mUnit->mutex);
@@ -1282,9 +1162,10 @@ void ClangParseJob::run()
             continue;
         }
 
-        mUnit->project->jobFinished(mInfo);
         mUnit->indexed = parseTime;
         mDone = true;
+        mUnit->project->jobFinished(mUnit->job);
+        mUnit->job.reset(); // remove myself
         mUnit->condition.wakeAll();
         break;
     }
@@ -1300,19 +1181,17 @@ void ClangUnit::reindex(const SourceInformation& info)
     const bool reparse = false;
 #endif
 
-    shared_ptr<ClangParseJob> j = job.lock();
-    if (j && !j->done()) {
+    if (job && !job->done()) {
         if (!reparse)
             sourceInformation = info;
-        j->restart(reparse);
+        job->restart(reparse);
         return;
     }
 
     if (!reparse)
         sourceInformation = info;
-    j.reset(new ClangParseJob(this, reparse));
-    job = j;
-    ThreadPool::instance()->start(j);
+    job.reset(new ClangParseJob(this, reparse));
+    ThreadPool::instance()->start(job);
 }
 
 LockingUsrMap ClangProject::umap;
@@ -1862,10 +1741,13 @@ Set<Project::Cursor> ClangProject::cursors(const Path &path) const
     return cursors;
 }
 
-void ClangProject::jobFinished(const ClangIndexInfo &info)
+void ClangProject::jobFinished(const shared_ptr<ClangParseJob> &job)
 {
+    const ClangIndexInfo& info = job->mInfo;
+
     MutexLocker lock(&mutex);
     ++jobsProcessed;
+    --pendingJobs;
     error("[%3d%%] %d/%d %s %s, Symbols: %d References: %d Files: %d",
           static_cast<int>(round(jobsProcessed / static_cast<double>(pendingJobs + jobsProcessed) * 100.0)),
           jobsProcessed, pendingJobs + jobsProcessed, String::formatTime(time(0), String::Time).constData(),
@@ -1874,8 +1756,170 @@ void ClangProject::jobFinished(const ClangIndexInfo &info)
           info.indexed);
     if (!pendingJobs) {
         error() << "Parsed" << jobsProcessed << "files in" << timer.elapsed() << "ms";
+        sync(job);
         jobsProcessed = 0;
+    } else {
+        syncJobs.append(job);
     }
+}
+
+void ClangProject::dirty(const Set<Path>& files)
+{
+    dirtyFiles = files;
+}
+
+static inline void dirtyUsr(const Location& start, uint32_t usr, UsrSet& usrs)
+{
+    UsrSet::iterator entry = usrs.find(usr);
+    if (entry == usrs.end())
+        return;
+    const uint32_t startFileId = start.fileId();
+    Set<Location>::iterator locs = entry->second.lower_bound(start);
+    while (locs != entry->second.end() && locs->fileId() == startFileId) {
+        entry->second.erase(locs++);
+    }
+}
+
+// should only be called with project->mutex locked
+void ClangProject::dirtyUsrs()
+{
+    if (dirtyFiles.isEmpty())
+        return;
+
+    Set<uint32_t> filesToDirty;
+    {
+        // collect all fileids to dirty
+        Set<Path>::const_iterator file = dirtyFiles.begin();
+        const Set<Path>::const_iterator end = dirtyFiles.end();
+        while (file != end) {
+            const uint32_t fileId = Location::fileId(*file);
+            if (fileId) {
+                // add all the files that depend on me and then myself
+                addDeps(fileId, reverseDepends, filesToDirty);
+                filesToDirty.insert(fileId);
+            }
+            ++file;
+        }
+    }
+
+    dirtyFiles.clear();
+
+    Set<uint32_t>::const_iterator dirty = filesToDirty.begin();
+    const Set<uint32_t>::const_iterator dirtyEnd = filesToDirty.end();
+    while (dirty != dirtyEnd) {
+        const uint32_t fileId = *dirty;
+        const Location start(fileId, 1, 1);
+        {
+            Map<Location, CursorInfo>::iterator usr = usrs.lower_bound(start);
+            while (usr != usrs.end() && usr->first.fileId() == fileId) {
+                dirtyUsr(start, usr->second.usr, decls);
+                dirtyUsr(start, usr->second.usr, defs);
+                dirtyUsr(start, usr->second.usr, refs);
+                usrs.erase(usr++);
+            }
+        }
+        ++dirty;
+    }
+}
+
+void ClangProject::dirtyDeps(uint32_t fileId)
+{
+    {
+        const Location start(fileId, 1, 1);
+        Map<Location, uint32_t>::iterator inc = incs.lower_bound(start);
+        const Map<Location, uint32_t>::const_iterator end = incs.end();
+        while (inc != end && inc->first.fileId() == fileId) {
+            incs.erase(inc++);
+        }
+    }
+    {
+        // remove headers?
+        DependSet::iterator dep = depends.find(fileId);
+        if (dep != depends.end()) {
+            depends.erase(dep);
+        }
+    }
+    {
+        DependSet::iterator dep = reverseDepends.begin();
+        while (dep != reverseDepends.end()) {
+            Set<uint32_t>& set = dep->second;
+            if (set.remove(fileId)) {
+                if (set.isEmpty()) {
+                    reverseDepends.erase(dep++);
+                } else
+                    ++dep;
+            } else {
+                ++dep;
+            }
+        }
+    }
+}
+
+void ClangProject::syncJob(const shared_ptr<ClangParseJob>& job)
+{
+    const ClangIndexInfo& info = job->mInfo;
+
+    if (!info.hasInclusions || !info.depends.isEmpty())
+        dirtyDeps(info.fileId);
+
+    incs.unite(info.incs);
+    usrs.unite(info.usrs);
+    fixIts.unite(info.fixIts);
+
+    {
+        Map<String, Set<uint32_t> >::const_iterator name = info.names.begin();
+        const Map<String, Set<uint32_t> >::const_iterator end = info.names.end();
+        while (name != end) {
+            names[name->first].unite(name->second);
+            ++name;
+        }
+    }
+    {
+        const UsrSet* src[] = { &info.decls, &info.defs, &info.refs, 0 };
+        UsrSet* dst[] = { &decls, &defs, &refs, 0 };
+        for (unsigned i = 0; src[i]; ++i) {
+            UsrSet::const_iterator usr = src[i]->begin();
+            const UsrSet::const_iterator end = src[i]->end();
+            while (usr != end) {
+                (*dst[i])[usr->first].unite(usr->second);
+                ++usr;
+            }
+        }
+    }
+    {
+        const DependSet* src[] = { &info.depends, &info.reverseDepends, 0 };
+        DependSet* dst[] = { &depends, &reverseDepends, 0 };
+        for (unsigned i = 0; src[i]; ++i) {
+            DependSet::const_iterator usr = src[i]->begin();
+            const DependSet::const_iterator end = src[i]->end();
+            while (usr != end) {
+                (*dst[i])[usr->first].unite(usr->second);
+                ++usr;
+            }
+        }
+    }
+
+    VirtualSet::const_iterator virt = info.virtuals.begin();
+    const VirtualSet::const_iterator end = info.virtuals.end();
+    while (virt != end) {
+        virtuals[virt->first].unite(virt->second);
+        ++virt;
+    }
+}
+
+void ClangProject::sync(const shared_ptr<ClangParseJob>& currentJob)
+{
+    dirtyUsrs();
+    syncJob(currentJob);
+
+    // this is intentional, pop the synced job for
+    // each iteration to free the synced data
+    while (!syncJobs.isEmpty()) {
+        syncJob(syncJobs.back());
+        syncJobs.pop_back();
+    }
+
+    startSaveTimer();
 }
 
 bool ClangProject::codeCompleteAt(const Location &location, const String &source, Connection *conn)

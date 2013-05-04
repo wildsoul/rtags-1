@@ -275,7 +275,7 @@ void Project::onFileModified(const Path &file)
     }
 
     if (mModifiedFiles.size() == 1 && file.isSource()) {
-        dirty(mModifiedFiles);
+        dirtyFiles(mModifiedFiles);
         mModifiedFiles.clear();
     } else {
         mModifiedFilesTimer.start(shared_from_this(), ModifiedFilesTimeout,
@@ -363,16 +363,22 @@ int Project::remove(const Match &match)
 }
 
 
-int Project::dirty(const Set<Path> &dirty)
+int Project::dirtyFiles(const Set<Path> &files)
 {
     int ret = 0;
-    Set<Path> dirtyFiles = dirty;
+    Set<Path> dirtyFiles = files;
     Map<Path, List<String> > toIndex;
-    for (Set<Path>::const_iterator it = dirty.begin(); it != dirty.end(); ++it)
+    for (Set<Path>::const_iterator it = files.begin(); it != files.end(); ++it) {
         dirtyFiles += dependencies(*it, DependsOnArg);
+    }
+    bool dirtied = false;
     for (Set<Path>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
         const SourceInformationMap::const_iterator found = mSources.find(*it);
         if (found != mSources.end()) {
+            if (!dirtied) {
+                dirtied = true;
+                dirty(files);
+            }
             indexFile(found->second, Dirty);
             ++ret;
         }
@@ -383,7 +389,7 @@ int Project::dirty(const Set<Path> &dirty)
 void Project::timerEvent(TimerEvent *e)
 {
     if (e->userData() == ModifiedFiles) {
-        dirty(mModifiedFiles);
+        dirtyFiles(mModifiedFiles);
         mModifiedFiles.clear();
     } else if (e->userData() == Save) {
         save();

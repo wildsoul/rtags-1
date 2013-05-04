@@ -65,7 +65,9 @@ struct FixIt
 };
 
 class ClangCompletionJob;
+class ClangParseJob;
 struct ClangIndexInfo;
+
 class ClangProject : public Project
 {
 public:
@@ -94,10 +96,10 @@ public:
     virtual Set<Cursor> cursors(const Path &path) const;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
     virtual String fixits(const Path &path) const;
+    virtual void dirty(const Set<Path> &files);
 
     static LockingUsrMap& usrMap() { return umap; }
 
-    void jobFinished(const ClangIndexInfo &info);
 private:
     char locationType(const Location& location) const;
     void writeReferences(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned keyFlags) const;
@@ -105,6 +107,14 @@ private:
     void onConnectionDestroyed(Connection *conn);
     void onCompletionFinished(ClangCompletionJob *job);
     void onCompletion(ClangCompletionJob *job, String completion, String signature);
+
+    void dirtyUsrs();
+    void dirtyDeps(uint32_t fileId);
+
+    void jobFinished(const shared_ptr<ClangParseJob>& job);
+    void sync(const shared_ptr<ClangParseJob>& currentJob);
+    void syncJob(const shared_ptr<ClangParseJob>& job);
+
 private:
     Map<uint32_t, ClangUnit*> units;
     CXIndex cidx;
@@ -120,6 +130,9 @@ private:
     UsrSet decls, defs, refs;          // usr->locations
     VirtualSet virtuals;               // usr->usrs
     Map<Path, Set<FixIt> > fixIts;
+    Set<Path> dirtyFiles;
+
+    List<shared_ptr<ClangParseJob> > syncJobs;
 
     static LockingUsrMap umap;
 

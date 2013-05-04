@@ -51,7 +51,7 @@ public:
     int remove(const Match &match);
     SourceInformationMap sources() const;
     Set<Path> watchedPaths() const { return mWatchedPaths; }
-    int dirty(const Set<Path> &files);
+    int dirtyFiles(const Set<Path> &files);
     virtual void timerEvent(TimerEvent *e);
     signalslot::Signal2<const shared_ptr<Project> &, const SourceInformation &> &sourceIndexed() { return mSourceIndexed; }
 
@@ -136,6 +136,7 @@ public:
     virtual Set<Cursor> cursors(const Path &path) const = 0;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn) = 0;
     virtual String fixits(const Path &path) const = 0;
+    virtual void dirty(const Set<Path> &files) = 0;
 
 private:
     void onFileModified(const Path &path);

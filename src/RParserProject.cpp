@@ -890,7 +890,12 @@ void RParserProject::processJob(RParserJob* job)
     unit->reindex(manager);
 }
 
-inline void RParserProject::dirty(const Set<Path>& files)
+void RParserProject::dirty(const Set<Path>& files)
+{
+#warning implement me
+}
+
+inline void RParserProject::dirtyFiles(const Set<Path>& files)
 {
     Map<String, RParserName>::iterator name = names.begin();
     while (name != names.end()) {
@@ -913,7 +918,7 @@ void RParserProject::mergeNames(const Map<String, RParserName>& lnames)
 
 void RParserProject::collectNames(const Set<Path>& files)
 {
-    dirty(files);
+    dirtyFiles(files);
 
     Set<Path>::const_iterator file = files.begin();
     const Set<Path>::const_iterator end = files.end();

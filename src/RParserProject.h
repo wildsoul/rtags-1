@@ -59,6 +59,7 @@ public:
     virtual String fixits(const Path &path) const;
     virtual bool isIndexing() const;
     virtual void remove(const Path &sourceFile);
+    virtual void dirty(const Set<Path>& files);
 
     enum State { Starting,
                  Indexing,
@@ -82,7 +83,7 @@ private:
     CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& srcLoc,
                                   FindSymbolMode mode, const QByteArray& src,
                                   CPlusPlus::LookupContext& ctx, Location& loc) const;
-    void dirty(const Set<Path>& files);
+    void dirtyFiles(const Set<Path>& files);
 
     mutable QMutex mutex;
     mutable QWaitCondition wait;
