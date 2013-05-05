@@ -1194,7 +1194,7 @@ void ClangUnit::reindex(const SourceInformation& info)
     ThreadPool::instance()->start(job);
 }
 
-LockingUsrMap ClangProject::umap;
+LockingStringMap ClangProject::umap;
 
 ClangProject::ClangProject(const Path &path)
     : Project(path), pendingJobs(0), jobsProcessed(0)

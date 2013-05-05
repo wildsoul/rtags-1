@@ -2,7 +2,7 @@
 #define ProjectClang_h
 
 #include "Project.h"
-#include "UsrMap.h"
+#include "StringMap.h"
 #include <clang-c/Index.h>
 #include <rct/EventReceiver.h>
 #include <rct/LinkedList.h>
@@ -98,7 +98,7 @@ public:
     virtual String fixits(const Path &path) const;
     virtual void dirty(const Set<Path> &files);
 
-    static LockingUsrMap& usrMap() { return umap; }
+    static LockingStringMap& usrMap() { return umap; }
 
 private:
     char locationType(const Location& location) const;
@@ -134,7 +134,7 @@ private:
 
     List<shared_ptr<ClangParseJob> > syncJobs;
 
-    static LockingUsrMap umap;
+    static LockingStringMap umap;
 
     Map<ClangCompletionJob *, Connection*> mCompletions;
 

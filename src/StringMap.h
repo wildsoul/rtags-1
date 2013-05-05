@@ -1,9 +1,9 @@
-#ifndef UsrMap_h
-#define UsrMap_h
+#ifndef STRINGMAP_H
+#define STRINGMAP_H
 
-#define USRMAP_UNORDERED
+#define STRINGMAP_UNORDERED
 
-#ifdef USRMAP_UNORDERED // using an unordered_map or a map?
+#ifdef STRINGMAP_UNORDERED // using an unordered_map or a map?
 #  include <rct/Tr1.h>
 #else
 #  include <map>
@@ -13,9 +13,9 @@
 #include <string.h>
 #include <stdlib.h>
 
-class UsrMap
+class StringMap
 {
-#ifdef USRMAP_UNORDERED
+#ifdef STRINGMAP_UNORDERED
     struct Hasher
     {
         size_t operator()(const char* str) const
@@ -59,12 +59,12 @@ class UsrMap
 #endif
 
 public:
-    UsrMap()
+    StringMap()
         : nextId(0)
     {
     }
 
-    ~UsrMap()
+    ~StringMap()
     {
         MapType::const_iterator it = usrs.begin();
         MapType::const_iterator end = usrs.end();
@@ -97,16 +97,16 @@ private:
 
 private:
     // non-copyable
-    UsrMap(const UsrMap& usr);
-    UsrMap& operator=(const UsrMap& usr);
+    StringMap(const StringMap& usr);
+    StringMap& operator=(const StringMap& usr);
 
-    friend class LockingUsrMap;
+    friend class LockingStringMap;
 };
 
-class LockingUsrMap
+class LockingStringMap
 {
 public:
-    LockingUsrMap() { }
+    LockingStringMap() { }
 
     uint32_t insert(const char* str)
     {
@@ -123,7 +123,7 @@ public:
     void serialize(Serializer &s) const
     {
         s << map.nextId << static_cast<uint32_t>(map.usrs.size());
-        for (UsrMap::MapType::const_iterator it = map.usrs.begin(); it != map.usrs.end(); ++it) {
+        for (StringMap::MapType::const_iterator it = map.usrs.begin(); it != map.usrs.end(); ++it) {
             const uint16_t len = strlen(it->first);
             s << len;
             if (len)
@@ -150,21 +150,21 @@ public:
     }
 private:
     mutable Mutex mutex;
-    UsrMap map;
+    StringMap map;
 
 private:
-    LockingUsrMap(const LockingUsrMap& usr);
-    LockingUsrMap& operator=(const LockingUsrMap& usr);
+    LockingStringMap(const LockingStringMap& usr);
+    LockingStringMap& operator=(const LockingStringMap& usr);
 };
 
 
-template <> inline Serializer &operator<<(Serializer &s, const LockingUsrMap &u)
+template <> inline Serializer &operator<<(Serializer &s, const LockingStringMap &u)
 {
     u.serialize(s);
     return s;
 }
 
-template <> inline Deserializer &operator>>(Deserializer &s, LockingUsrMap &u)
+template <> inline Deserializer &operator>>(Deserializer &s, LockingStringMap &u)
 {
     u.deserialize(s);
     return s;
