@@ -1,7 +1,13 @@
 #ifndef UsrMap_h
 #define UsrMap_h
 
-#include <rct/Tr1.h>
+#define USRMAP_UNORDERED
+
+#ifdef USRMAP_UNORDERED // using an unordered_map or a map?
+#  include <rct/Tr1.h>
+#else
+#  include <map>
+#endif
 #include <rct/Mutex.h>
 #include <rct/MutexLocker.h>
 #include <string.h>
@@ -9,6 +15,7 @@
 
 class UsrMap
 {
+#ifdef USRMAP_UNORDERED
     struct Hasher
     {
         size_t operator()(const char* str) const
@@ -28,6 +35,7 @@ class UsrMap
     };
     struct Comparator
     {
+        // equals
         bool operator()(const char* str1, const char* str2) const
         {
             if (!str1 || !str2)
@@ -36,6 +44,19 @@ class UsrMap
         }
     };
     typedef unordered_map<const char*, uint32_t, Hasher, Comparator> MapType;
+#else
+    struct Comparator
+    {
+        // less-than
+        bool operator()(const char* str1, const char* str2) const
+        {
+            if (!str1 || !str2)
+                return (!str1 && str2);
+            return (strcmp(str1, str2) < 0);
+        }
+    };
+    typedef std::map<const char*, uint32_t, Comparator> MapType;
+#endif
 
 public:
     UsrMap()
