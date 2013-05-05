@@ -39,6 +39,7 @@ Server::~Server()
     clear();
     delete ThreadPool::instance();
     Messages::cleanup();
+    sPluginFactory.cleanup();
 }
 
 void Server::clear()

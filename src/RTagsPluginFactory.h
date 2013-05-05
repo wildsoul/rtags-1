@@ -12,9 +12,14 @@ class RTagsPluginFactory
 public:
     ~RTagsPluginFactory()
     {
+        cleanup();
+    }
+    void cleanup()
+    {
         for (int i=0; i<mPlugins.size(); ++i) {
             delete mPlugins.at(i);
         }
+        mPlugins.clear();
     }
     bool addPlugin(const Path &plugin)
     {
