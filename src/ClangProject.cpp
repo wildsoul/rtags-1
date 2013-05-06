@@ -69,7 +69,7 @@ public:
     ClangUnit(ClangProject* project);
     ~ClangUnit();
 
-    void reindex(const SourceInformation& info);
+    bool reindex(const SourceInformation& info);
 
     CXIndex index() { return project->cidx; }
     CXIndexAction action() { return project->caction; }
@@ -1187,7 +1187,7 @@ void ClangParseJob::run()
     }
 }
 
-void ClangUnit::reindex(const SourceInformation& info)
+bool ClangUnit::reindex(const SourceInformation& info)
 {
     MutexLocker locker(&mutex);
 
@@ -1201,13 +1201,14 @@ void ClangUnit::reindex(const SourceInformation& info)
         if (!reparse)
             sourceInformation = info;
         job->restart(reparse);
-        return;
+        return false;
     }
 
     if (!reparse)
         sourceInformation = info;
     job.reset(new ClangParseJob(this, reparse));
     ThreadPool::instance()->start(job);
+    return true;
 }
 
 LockingStringMap ClangProject::umap;
@@ -1536,12 +1537,11 @@ void ClangProject::index(const SourceInformation &sourceInformation, Type type)
     } else if (type != Dirty && unit->indexed < sourceInformation.sourceFile.lastModifiedMs()) {
         return;
     }
-    {
+    if (unit->reindex(sourceInformation)) {
         MutexLocker locker(&mutex);
         if (!pendingJobs++)
             timer.restart();
     }
-    unit->reindex(sourceInformation);
 }
 
 void ClangProject::remove(const Path &sourceFile)
