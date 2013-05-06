@@ -1537,8 +1537,9 @@ void ClangProject::index(const SourceInformation &sourceInformation, Type type)
     } else if (type != Dirty && unit->indexed < sourceInformation.sourceFile.lastModifiedMs()) {
         return;
     }
+
+    MutexLocker locker(&mutex);
     if (unit->reindex(sourceInformation)) {
-        MutexLocker locker(&mutex);
         if (!pendingJobs++)
             timer.restart();
     }
