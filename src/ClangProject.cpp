@@ -1774,6 +1774,10 @@ void ClangProject::jobFinished(const shared_ptr<ClangParseJob> &job)
         error() << "Parsed" << jobsProcessed << "files in" << timer.elapsed() << "ms";
         sync(job);
         jobsProcessed = 0;
+
+        MutexLocker locker(&ClangIndexInfo::seenMutex);
+        ClangIndexInfo::seenDecls.clear();
+        ClangIndexInfo::seenDefs.clear();
     } else {
         syncJobs.append(job);
     }
