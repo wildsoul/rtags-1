@@ -8,6 +8,7 @@
 #include <rct/Connection.h>
 #include <rct/MutexLocker.h>
 #include <rct/RegExp.h>
+#include <rct/SignalSlot.h>
 #include <rct/ThreadPool.h>
 #include <rct/WaitCondition.h>
 
@@ -80,6 +81,8 @@ public:
     SourceInformation sourceInformation;
     uint64_t indexed;
     shared_ptr<ClangParseJob> job;
+
+    signalslot::Signal1<shared_ptr<ClangParseJob> > jobFinished;
 };
 
 class ClangParseJob : public ThreadPool::Job
@@ -1180,7 +1183,7 @@ void ClangParseJob::run()
 
         mUnit->indexed = parseTime;
         mDone = true;
-        mUnit->project->jobFinished(mUnit->job);
+        mUnit->jobFinished(mUnit->job);
         mUnit->job.reset(); // remove myself
         mUnit->condition.wakeAll();
         break;
@@ -1534,6 +1537,7 @@ void ClangProject::index(const SourceInformation &sourceInformation, Type type)
     ClangUnit *&unit = units[fileId];
     if (!unit) {
         unit = new ClangUnit(this);
+        unit->jobFinished.connectAsync(this, &ClangProject::onJobFinished);
     } else if (type != Dirty && unit->indexed < sourceInformation.sourceFile.lastModifiedMs()) {
         return;
     }
@@ -1758,7 +1762,7 @@ Set<Project::Cursor> ClangProject::cursors(const Path &path) const
     return cursors;
 }
 
-void ClangProject::jobFinished(const shared_ptr<ClangParseJob> &job)
+void ClangProject::onJobFinished(shared_ptr<ClangParseJob> job)
 {
     const ClangIndexInfo& info = job->mInfo;
 

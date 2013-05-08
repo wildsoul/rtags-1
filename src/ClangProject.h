@@ -111,7 +111,8 @@ private:
     void dirtyUsrs();
     void dirtyDeps(uint32_t fileId);
 
-    void jobFinished(const shared_ptr<ClangParseJob>& job);
+    void onJobFinished(shared_ptr<ClangParseJob> job);
+
     void sync(const shared_ptr<ClangParseJob>& currentJob);
     void syncJob(const shared_ptr<ClangParseJob>& job);
 
