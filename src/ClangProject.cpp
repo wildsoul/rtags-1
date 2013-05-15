@@ -1260,15 +1260,15 @@ bool ClangProject::restore(Deserializer &deserializer)
     setSourceInfos(sources);
     for (uint32_t i=0; i<unitCount; ++i) {
         uint32_t fileId;
-        time_t parsed;
+        uint64_t parsed;
         deserializer >> fileId >> parsed;
         const Path source = Location::path(fileId);
         const Set<Path> deps = dependencies(source, ArgDependsOn);
         assert(deps.contains(source));
         for (Set<Path>::const_iterator it = deps.begin(); it != deps.end(); ++it) {
             // error() << "Checking" << *it << "for" << source
-            //         << static_cast<uint32_t>(it->lastModified()) << "vs" << static_cast<uint32_t>(parsed);
-            if (it->lastModified() > parsed) { // should this be >= ???
+            //         << static_cast<uint64_t>(it->lastModifiedMs()) << "vs" << static_cast<uint64_t>(parsed);
+            if (it->lastModifiedMs() > parsed) { // should this be >= ???
                 // error() << "reparsing" << source << "because" << it->lastModified() << ">" << parsed;
                 index(sources.value(source), Restore);
                 break;
