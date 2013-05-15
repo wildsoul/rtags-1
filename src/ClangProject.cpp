@@ -1272,6 +1272,15 @@ bool ClangProject::restore(Deserializer &deserializer)
                 // error() << "reparsing" << source << "because" << it->lastModified() << ">" << parsed;
                 index(sources.value(source), Restore);
                 break;
+            } else {
+                // create the unit and set parsed
+                ClangUnit *&unit = units[fileId];
+                if (!unit) {
+                    unit = new ClangUnit(this);
+                    unit->jobFinished.connectAsync(this, &ClangProject::onJobFinished);
+                }
+                if (!unit->indexed)
+                    unit->indexed = parsed;
             }
         }
     }
@@ -1538,7 +1547,7 @@ void ClangProject::index(const SourceInformation &sourceInformation, Type type)
     if (!unit) {
         unit = new ClangUnit(this);
         unit->jobFinished.connectAsync(this, &ClangProject::onJobFinished);
-    } else if (type != Dirty && unit->indexed < sourceInformation.sourceFile.lastModifiedMs()) {
+    } else if (type != Dirty && unit->indexed > sourceInformation.sourceFile.lastModifiedMs()) {
         return;
     }
 
@@ -1609,7 +1618,24 @@ Set<Path> ClangProject::dependencies(const Path &path, DependencyMode mode) cons
 
 Set<Path> ClangProject::files(int mode) const
 {
-    return Set<Path>();
+    MutexLocker locker(&mutex);
+
+    Path f;
+    Set<Path> files;
+    DependSet::const_iterator file = depends.begin();
+    const DependSet::const_iterator end = depends.end();
+    while (file != end) {
+        f = Location::path(file->first);
+        if (mode == AllFiles)
+            files.insert(f);
+        else if (mode & HeaderFiles && f.isHeader())
+            files.insert(f);
+        else if (mode & SourceFiles && f.isSource())
+            files.insert(f);
+        ++file;
+    }
+
+    return files;
 }
 
 Set<String> ClangProject::listSymbols(const String &string, const List<Path> &pathFilter) const

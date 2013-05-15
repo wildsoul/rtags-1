@@ -109,6 +109,20 @@ end:
         return false;
     } else {
         error() << "Restored project" << mPath << "in" << timer.elapsed() << "ms";
+
+        const Set<Path> f = files(SourceFiles);
+        Set<Path>::const_iterator file = f.begin();
+        const Set<Path>::const_iterator end = f.end();
+        while (file != end) {
+            SourceInformationMap::const_iterator info = mSources.find(*file);
+            if (info == mSources.end()) {
+                ++file;
+                continue;
+            }
+
+            indexFile(info->second, Restore);
+            ++file;
+        }
     }
 
     return true;
