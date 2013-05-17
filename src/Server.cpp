@@ -288,6 +288,9 @@ void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
     case QueryMessage::Invalid:
         assert(0);
         break;
+    case QueryMessage::JobCount:
+        jobCount(*message, conn);
+        break;
     case QueryMessage::FixIts:
         fixIts(*message, conn);
         break;
@@ -851,6 +854,23 @@ void Server::preprocessFile(const QueryMessage &query, Connection *conn)
 
     Preprocessor* pre = new Preprocessor(c, query.buildIndex(), conn);
     pre->preprocess();
+}
+
+void Server::jobCount(const QueryMessage &query, Connection *conn)
+{
+    if (query.query().isEmpty()) {
+        conn->write<128>("Running with %d jobs", sOptions.threadPoolSize);
+    } else {
+        const int jobCount = query.query().toLongLong();
+        if (jobCount <= 0 || jobCount > 100) {
+            conn->write<128>("Invalid job count %s (%d)", query.query().constData(), jobCount);
+        } else {
+            sOptions.threadPoolSize = jobCount;
+            ThreadPool::instance()->setConcurrentJobs(jobCount);
+            conn->write<128>("Changed jobs to %d", jobCount);
+        }
+    }
+    conn->finish();
 }
 
 void Server::clearProjects()

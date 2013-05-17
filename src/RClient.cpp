@@ -35,10 +35,11 @@ enum OptionType {
     FollowLocation,
     HasFileManager,
     Help,
-    LocalSymbols,
     IsIndexed,
     IsIndexing,
+    JobCount,
     ListSymbols,
+    LocalSymbols,
     LogFile,
     Man,
     MatchCaseInsensitive,
@@ -59,9 +60,9 @@ enum OptionType {
     RemoveFile,
     ReverseSort,
     Silent,
-    StripParen,
     SocketFile,
     Status,
+    StripParen,
     Timeout,
     UnloadProject,
     UnsavedFile,
@@ -100,7 +101,7 @@ struct Option opts[] = {
     { DeleteProject, "delete-project", 'W', required_argument, "Delete all projects matching regexp." },
     { UnloadProject, "unload", 'u', required_argument, "Unload project(s) matching argument." },
     { ReloadProjects, "reload-projects", 'z', no_argument, "Reload projects from projects file." },
-
+    { JobCount, "jobcount", 'j', optional_argument, "Set or query current job count." },
     { None, 0, 0, 0, "" },
     { None, 0, 0, 0, "Commands:" },
     { FollowLocation, "follow-location", 'f', required_argument, "Follow this location." },
@@ -699,6 +700,7 @@ bool RClient::parse(int &argc, char **argv)
         case FindFile:
         case ListSymbols:
         case Builds:
+        case JobCount:
         case Status: {
             QueryMessage::Type type = QueryMessage::Invalid;
             switch (opt->option) {
@@ -708,6 +710,7 @@ bool RClient::parse(int &argc, char **argv)
             case Builds: type = QueryMessage::Builds; break;
             case Status: type = QueryMessage::Status; break;
             case ListSymbols: type = QueryMessage::ListSymbols; break;
+            case JobCount: type = QueryMessage::JobCount; break;
             default: assert(0); break;
             }
 

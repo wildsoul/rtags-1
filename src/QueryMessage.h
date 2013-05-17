@@ -27,6 +27,7 @@ public:
         Invalid,
         IsIndexed,
         IsIndexing,
+        JobCount,
         ListSymbols,
         LocalSymbols,
         LogOutput,

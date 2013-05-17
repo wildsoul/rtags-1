@@ -82,6 +82,7 @@ private:
     void referencesForLocation(const QueryMessage &query, Connection *conn);
     void referencesForName(const QueryMessage &query, Connection *conn);
     void findSymbols(const QueryMessage &query, Connection *conn);
+    void jobCount(const QueryMessage &query, Connection *conn);
     void listSymbols(const QueryMessage &query, Connection *conn);
     void status(const QueryMessage &query, Connection *conn);
     void isIndexed(const QueryMessage &query, Connection *conn);
