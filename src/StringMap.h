@@ -1,7 +1,7 @@
 #ifndef STRINGMAP_H
 #define STRINGMAP_H
 
-#define STRINGMAP_UNORDERED
+//#define STRINGMAP_UNORDERED
 
 #ifdef STRINGMAP_UNORDERED // using an unordered_map or a map?
 #  include <rct/Tr1.h>
