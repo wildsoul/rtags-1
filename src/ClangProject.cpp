@@ -51,13 +51,14 @@ struct ClangIndexInfo
 
     static Mutex seenMutex;
     static Set<uint32_t> globalSeen;
-    static Set<uint32_t> seenDecls, seenDefs;
+    static Set<uint32_t> seenDecls, seenDefs, seenRefs;
 };
 
 Mutex ClangIndexInfo::seenMutex;
 Set<uint32_t> ClangIndexInfo::globalSeen;
 Set<uint32_t> ClangIndexInfo::seenDecls;
 Set<uint32_t> ClangIndexInfo::seenDefs;
+Set<uint32_t> ClangIndexInfo::seenRefs;
 
 #ifdef CLANG_CAN_REPARSE
 Mutex UnitCache::mutex;
@@ -676,6 +677,17 @@ static inline bool allowFile(uint32_t fileId, ClangIndexInfo* info)
     return true;
 }
 
+static inline bool isTemplateCursor(CXCursor cursor)
+{
+    const CXCursor nullCursor = clang_getNullCursor();
+    while (!clang_equalCursors(cursor, nullCursor)) {
+        if (!clang_equalCursors(clang_getSpecializedCursorTemplate(cursor), nullCursor))
+            return true;
+        cursor = clang_getCursorSemanticParent(cursor);
+    }
+    return false;
+}
+
 static inline void addDeclaration(CXClientData client_data, CXCursor cursor)
 {
     ClangIndexInfo* info = static_cast<ClangIndexInfo*>(client_data);
@@ -684,13 +696,25 @@ static inline void addDeclaration(CXClientData client_data, CXCursor cursor)
     const Location declLoc = makeLocation(cursor, &offset);
     if (declLoc.isEmpty())
         return;
-    if (!allowFile(declLoc.fileId(), info))
+
+    const bool allowed = allowFile(declLoc.fileId(), info);
+    if (!allowed && !isTemplateCursor(cursor))
         return;
 
-    const bool def = clang_isCursorDefinition(cursor);
     const uint32_t usr = makeUsr(cursor);
+    const bool def = clang_isCursorDefinition(cursor);
     if (def && info->defs.contains(usr))
         return;
+
+    if (!allowed) {
+        // we're let through, check if we've seen our definition or declaration before
+        MutexLocker locker(&ClangIndexInfo::seenMutex);
+        if (def && !ClangIndexInfo::seenDefs.insert(usr))
+            return;
+        else if (!def && !ClangIndexInfo::seenDecls.insert(usr))
+            return;
+        // no? continue.
+    }
 
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
@@ -717,10 +741,21 @@ static inline void addReference(CXClientData client_data, CXCursor cursor)
     if (refLoc.isEmpty())
         return;
 
-    if (!allowFile(refLoc.fileId(), info))
+    const CXCursor refCursor = clang_getCursorReferenced(cursor);
+
+    const bool allowed = allowFile(refLoc.fileId(), info);
+    if (!allowed && !isTemplateCursor(cursor) && !isTemplateCursor(refCursor))
         return;
 
-    const uint32_t usr = makeUsr(clang_getCursorReferenced(cursor));
+    const uint32_t usr = makeUsr(refCursor);
+
+    if (!allowed) {
+        // we're let through, check if we've seen our reference before
+        MutexLocker locker(&ClangIndexInfo::seenMutex);
+        if (!ClangIndexInfo::seenRefs.insert(usr))
+            return;
+        // no? continue.
+    }
 
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
@@ -822,18 +857,15 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
         return;
 
     const bool allowed = allowFile(declLoc.fileId(), info);
-
-    switch (decl->entityInfo->templateKind) {
-    case CXIdxEntity_NonTemplate:
-        // Hack, typedefs for templates are not actually template entities. Allow them all for now.
-        // ### better/possible to get the referenced symbol here?
-        if (decl->entityInfo->kind == CXIdxEntity_Typedef)
-            break;
-        if (!allowed)
+    if (!allowed) {
+        // allow template cursors
+        if (isTemplateCursor(decl->entityInfo->cursor)) {
+            // but only if we haven't seen them before
+            if (ClangProject::usrMap().value(decl->entityInfo->USR) != 0)
+                return;
+        } else {
             return;
-        break;
-    default:
-        break;
+        }
     }
 
     const uint32_t usr = ClangProject::usrMap().insert(decl->entityInfo->USR);
@@ -844,7 +876,7 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
         MutexLocker locker(&ClangIndexInfo::seenMutex);
         if (def && !ClangIndexInfo::seenDefs.insert(usr))
             return;
-        else if (decl && !ClangIndexInfo::seenDecls.insert(usr))
+        else if (!def && !ClangIndexInfo::seenDecls.insert(usr))
             return;
         // no? continue.
     }
@@ -907,10 +939,19 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
     if (!ref->referencedEntity->USR || refLoc.isEmpty())
         return;
 
-    if (!allowFile(refLoc.fileId(), info))
+    const bool allowed = allowFile(refLoc.fileId(), info);
+    if (!allowed && !isTemplateCursor(ref->cursor) && !isTemplateCursor(ref->referencedEntity->cursor))
         return;
 
     const uint32_t usr = ClangProject::usrMap().insert(ref->referencedEntity->USR);
+
+    if (!allowed) {
+        // we're let through, check if we've seen our reference before
+        MutexLocker locker(&ClangIndexInfo::seenMutex);
+        if (!ClangIndexInfo::seenRefs.insert(usr))
+            return;
+        // no? continue.
+    }
 
     CursorInfo cursorInfo;
     cursorInfo.usr = usr;
