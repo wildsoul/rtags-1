@@ -36,6 +36,7 @@ Server::Server()
 
 Server::~Server()
 {
+    mCurrentProject.reset();
     clear();
     delete ThreadPool::instance();
     Messages::cleanup();

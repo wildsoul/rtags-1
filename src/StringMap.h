@@ -139,7 +139,7 @@ public:
         while (size--) {
             uint16_t len;
             s >> len;
-            char *string = new char[len + 1];
+            char *string = reinterpret_cast<char*>(malloc(len + 1));
             if (len)
                 s.read(string, len);
             string[len] = '\0';
