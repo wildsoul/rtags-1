@@ -8,6 +8,7 @@
 
 #include <QMutexLocker>
 
+#include <cpppreprocessor.h>
 #include <searchsymbols.h>
 #include <symbolfinder.h>
 #include <ASTPath.h>
@@ -702,7 +703,7 @@ CPlusPlus::Symbol* RParserProject::findSymbol(CPlusPlus::Document::Ptr doc,
 }
 
 RParserProject::RParserProject(const Path &path)
-    : Project(path), state(Starting), parser(0)
+    : Project(path), state(Starting), parser(0), appargc(0), app(new QApplication(appargc, 0))
 {
     start();
     moveToThread(this);
@@ -717,6 +718,7 @@ RParserProject::~RParserProject()
         ++unit;
     }
     delete parser;
+    delete app;
 }
 
 void RParserProject::run()

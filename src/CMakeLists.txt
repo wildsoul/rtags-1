@@ -9,7 +9,7 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fpic")
 endif ()
 
-find_package(Qt4 REQUIRED)
+find_package(Qt4 REQUIRED QtCore QtGui QtNetwork)
 find_package(V8 REQUIRED)
 find_package(LibClang REQUIRED)
 
@@ -134,6 +134,7 @@ add_definitions(${QT_DEFINITIONS})
 
 set(RPARSER_INCLUDES
     CPlusPlus/src/plugins/cpptools
+    CPlusPlus/src/plugins
     CPlusPlus/src/libs
     CPlusPlus/src/libs/3rdparty
     CPlusPlus/src/libs/cplusplus)

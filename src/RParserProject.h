@@ -7,6 +7,7 @@
 #include <FindUsages.h>
 #include <rct/Path.h>
 #include <LookupContext.h>
+#include <QApplication>
 #include <QObject>
 #include <QPointer>
 #include <QThread>
@@ -104,6 +105,9 @@ private:
     Map<QString, QString> headerToSource;
     DocumentParser* parser;
     QPointer<CppTools::Internal::CppModelManager> manager;
+
+    int appargc;
+    QApplication* app;
 
     friend class DocumentParser;
     friend class RParserUnit;
