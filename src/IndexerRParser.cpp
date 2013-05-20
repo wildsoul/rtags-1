@@ -468,7 +468,11 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
     static QStringList incs = QStringList()
         << QLatin1String("/usr/include")
         << QLatin1String("/usr/include/c++/4.6")
+        << QLatin1String("/usr/include/c++/4.7")
+        << QLatin1String("/usr/include/c++/4.8")
         << QLatin1String("/usr/lib/gcc/i686-linux-gnu/4.6/include")
+        << QLatin1String("/usr/lib/gcc/i686-linux-gnu/4.7/include")
+        << QLatin1String("/usr/lib/gcc/i686-linux-gnu/4.8/include")
         << QLatin1String("/usr/include/i386-linux-gnu")
         << srcPath;
     List<SourceInformation::Build>::const_iterator build = info.builds.begin();
