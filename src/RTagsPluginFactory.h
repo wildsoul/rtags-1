@@ -45,13 +45,13 @@ public:
 
     String error() const { return mError; }
 
-    shared_ptr<Project> createProject(const Path &path, const String& pluginName)
+    shared_ptr<Indexer> createIndexer(const String& pluginName, shared_ptr<Project> project)
     {
         Map<String, Plugin<RTagsPlugin> *>::const_iterator plugin = mPlugins.find(pluginName);
         if (plugin == mPlugins.end())
-            return shared_ptr<Project>();
+            return shared_ptr<Indexer>();
         assert(plugin->second->instance());
-        return plugin->second->instance()->createProject(path);
+        return plugin->second->instance()->init(project);
     }
 
     RTagsPlugin* plugin(const String& pluginName) const

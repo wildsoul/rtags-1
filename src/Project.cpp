@@ -1,5 +1,6 @@
 #include "Project.h"
 #include "FileManager.h"
+#include "Indexer.h"
 #include "Server.h"
 #include <math.h>
 #include <rct/Log.h>
@@ -57,7 +58,7 @@ bool Project::save()
 
     Serializer o(f, p.constData());
     o << static_cast<uint32_t>(0) << static_cast<uint32_t>(Server::DatabaseVersion);
-    save(o);
+    mIndexer->save(o);
     const uint32_t size = ftell(f);
     fseek(f, 0, SEEK_SET);
     o << size;
@@ -98,7 +99,7 @@ bool Project::restore()
         goto end;
     }
 
-    if (!restore(in)) {
+    if (!mIndexer->restore(in)) {
         restoreError = true;
     }
 
@@ -110,7 +111,7 @@ end:
     } else {
         error() << "Restored project" << mPath << "in" << timer.elapsed() << "ms";
 
-        const Set<Path> f = files(SourceFiles);
+        const Set<Path> f = mIndexer->files(Indexer::SourceFiles);
         Set<Path>::const_iterator file = f.begin();
         const Set<Path>::const_iterator end = f.end();
         while (file != end) {
@@ -177,7 +178,7 @@ void Project::indexFile(const SourceInformation &sourceInformation, Type type)
     if (mWatchedPaths.insert(dir))
         mWatcher.watch(dir);
 
-    index(sourceInformation, type);
+    mIndexer->index(sourceInformation, type);
     /*
     if (Server::options().indexPlugin != Server::options().diagnosticPlugin) {
         const RTagsPluginFactory& factory = Server::factory();
@@ -335,7 +336,7 @@ int Project::reindex(const Match &match)
 {
     int ret = 0;
 
-    const Set<Path> f = files(AllFiles);
+    const Set<Path> f = mIndexer->files(Indexer::AllFiles);
     Set<Path>::const_iterator file = f.begin();
     const Set<Path>::const_iterator end = f.end();
     while (file != end) {
@@ -349,7 +350,7 @@ int Project::reindex(const Match &match)
             indexFile(info->second, Dirty);
             ++ret;
 
-            const Set<Path> subfiles = dependencies(*file, DependsOnArg);
+            const Set<Path> subfiles = mIndexer->dependencies(*file, Indexer::DependsOnArg);
             Set<Path>::const_iterator subfile = subfiles.begin();
             const Set<Path>::const_iterator subend = subfiles.end();
             while (subfile != subend) {
@@ -391,7 +392,7 @@ int Project::dirtyFiles(const Set<Path> &files)
     Set<Path> dirtyFiles = files;
     Map<Path, List<String> > toIndex;
     for (Set<Path>::const_iterator it = files.begin(); it != files.end(); ++it) {
-        dirtyFiles += dependencies(*it, DependsOnArg);
+        dirtyFiles += mIndexer->dependencies(*it, Indexer::DependsOnArg);
     }
     bool dirtied = false;
     for (Set<Path>::const_iterator it = dirtyFiles.begin(); it != dirtyFiles.end(); ++it) {
@@ -399,7 +400,7 @@ int Project::dirtyFiles(const Set<Path> &files)
         if (found != mSources.end()) {
             if (!dirtied) {
                 dirtied = true;
-                dirty(files);
+                mIndexer->dirty(files);
             }
             indexFile(found->second, Dirty);
             ++ret;
@@ -430,7 +431,7 @@ void Project::timerEvent(TimerEvent *e)
 bool Project::isIndexed(const Path &file) const
 {
     // error() << mPath << "isIndexed" << file << mSources.contains(file) << dependencies(file, DependsOnArg).size();
-    return mSources.contains(file) || dependencies(file, DependsOnArg).size() > 1;
+    return mSources.contains(file) || mIndexer->dependencies(file, Indexer::DependsOnArg).size() > 1;
 }
 
 SourceInformationMap Project::sources() const

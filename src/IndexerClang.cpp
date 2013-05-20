@@ -1,4 +1,4 @@
-#include "ClangProject.h"
+#include "IndexerClang.h"
 #include "ClangCompletionJob.h"
 #include "RTagsPlugin.h"
 #include "SourceInformation.h"
@@ -18,7 +18,7 @@ struct ClangIndexInfo
 {
     enum IndexType { Index, Diagnose };
 
-    ClangProject* project;
+    IndexerClang* project;
     uint32_t fileId;
     IndexType indexType;
 
@@ -71,7 +71,7 @@ LinkedList<std::pair<Path, shared_ptr<UnitCache::Unit> > > UnitCache::units;
 class ClangUnit
 {
 public:
-    ClangUnit(ClangProject* project);
+    ClangUnit(IndexerClang* project);
     ~ClangUnit();
 
     bool reindex(const SourceInformation& info, ClangIndexInfo::IndexType type);
@@ -80,7 +80,7 @@ public:
     CXIndex index() { return project->cidx; }
     CXIndexAction action() { return project->caction; }
 
-    ClangProject* project;
+    IndexerClang* project;
     mutable Mutex mutex;
     WaitCondition condition;
     SourceInformation sourceInformation;
@@ -125,10 +125,10 @@ private:
     bool mRestarted;
     ClangIndexInfo mInfo;
 
-    friend class ClangProject;
+    friend class IndexerClang;
 };
 
-ClangUnit::ClangUnit(ClangProject* p)
+ClangUnit::ClangUnit(IndexerClang* p)
     : project(p), indexed(0)
 {
 }
@@ -613,7 +613,7 @@ CXIdxClientFile ClangParseJob::includedFile(CXClientData client_data, const CXId
 static inline uint32_t makeUsr(const CXCursor& cursor)
 {
     CXString str = clang_getCursorUSR(cursor);
-    const uint32_t usr = ClangProject::usrMap().insert(clang_getCString(str));
+    const uint32_t usr = IndexerClang::usrMap().insert(clang_getCString(str));
     clang_disposeString(str);
     return usr;
 }
@@ -866,14 +866,14 @@ void ClangParseJob::indexDeclaration(CXClientData client_data, const CXIdxDeclIn
         // allow template cursors
         if (isTemplateCursor(decl->entityInfo->cursor)) {
             // but only if we haven't seen them before
-            if (ClangProject::usrMap().value(decl->entityInfo->USR) != 0)
+            if (IndexerClang::usrMap().value(decl->entityInfo->USR) != 0)
                 return;
         } else {
             return;
         }
     }
 
-    const uint32_t usr = ClangProject::usrMap().insert(decl->entityInfo->USR);
+    const uint32_t usr = IndexerClang::usrMap().insert(decl->entityInfo->USR);
     const bool def = decl->isDefinition;
 
     if (!allowed) {
@@ -948,7 +948,7 @@ void ClangParseJob::indexEntityReference(CXClientData client_data, const CXIdxEn
     if (!allowed && !isTemplateCursor(ref->cursor) && !isTemplateCursor(ref->referencedEntity->cursor))
         return;
 
-    const uint32_t usr = ClangProject::usrMap().insert(ref->referencedEntity->USR);
+    const uint32_t usr = IndexerClang::usrMap().insert(ref->referencedEntity->USR);
 
     if (!allowed) {
         // we're let through, check if we've seen our reference before
@@ -1271,16 +1271,16 @@ void ClangUnit::diagnose(const SourceInformation& info)
     reindex(info, ClangIndexInfo::Diagnose);
 }
 
-LockingStringMap ClangProject::umap;
+LockingStringMap IndexerClang::umap;
 
-ClangProject::ClangProject(const Path &path)
-    : Project(path), pendingJobs(0), jobsProcessed(0)
+IndexerClang::IndexerClang(shared_ptr<Project> project)
+    : Indexer(project), pendingJobs(0), jobsProcessed(0)
 {
     cidx = clang_createIndex(0, 1);
     caction = clang_IndexAction_create(cidx);
 }
 
-ClangProject::~ClangProject()
+IndexerClang::~IndexerClang()
 {
     clang_IndexAction_dispose(caction);
     clang_disposeIndex(cidx);
@@ -1289,13 +1289,13 @@ ClangProject::~ClangProject()
     }
 }
 
-bool ClangProject::save(Serializer &serializer)
+bool IndexerClang::save(Serializer &serializer)
 {
     if (!Server::saveFileIds())
         return false;
     MutexLocker lock(&mutex);
 
-    serializer << sourceInfos() << incs << depends << reverseDepends << names
+    serializer << mProject->sourceInfos() << incs << depends << reverseDepends << names
                << usrs << decls << defs << refs << virtuals << umap
                << static_cast<uint32_t>(units.size());
     for (Map<uint32_t, ClangUnit*>::const_iterator it = units.begin(); it != units.end(); ++it) {
@@ -1305,7 +1305,7 @@ bool ClangProject::save(Serializer &serializer)
     return true;
 }
 
-bool ClangProject::restore(Deserializer &deserializer)
+bool IndexerClang::restore(Deserializer &deserializer)
 {
     if (!Server::loadFileIds())
         return false;
@@ -1314,7 +1314,7 @@ bool ClangProject::restore(Deserializer &deserializer)
     SourceInformationMap sources;
     deserializer >> sources >> incs >> depends >> reverseDepends >> names
                  >> usrs >> decls >> defs >> refs >> virtuals >> umap >> unitCount;
-    setSourceInfos(sources);
+    mProject->setSourceInfos(sources);
     for (uint32_t i=0; i<unitCount; ++i) {
         uint32_t fileId;
         uint64_t parsed;
@@ -1327,14 +1327,14 @@ bool ClangProject::restore(Deserializer &deserializer)
             //         << static_cast<uint64_t>(it->lastModifiedMs()) << "vs" << static_cast<uint64_t>(parsed);
             if (it->lastModifiedMs() > parsed) { // should this be >= ???
                 // error() << "reparsing" << source << "because" << it->lastModified() << ">" << parsed;
-                index(sources.value(source), Restore);
+                index(sources.value(source), Project::Restore);
                 break;
             } else {
                 // create the unit and set parsed
                 ClangUnit *&unit = units[fileId];
                 if (!unit) {
                     unit = new ClangUnit(this);
-                    unit->jobFinished.connectAsync(this, &ClangProject::onJobFinished);
+                    unit->jobFinished.connectAsync(this, &IndexerClang::onJobFinished);
                 }
                 if (!unit->indexed)
                     unit->indexed = parsed;
@@ -1368,7 +1368,7 @@ static inline Project::Cursor cursorForInclude(const Location& location, const M
     return cursor;
 }
 
-Project::Cursor ClangProject::cursor(const Location &location) const
+Project::Cursor IndexerClang::cursor(const Location &location) const
 {
     MutexLocker locker(&mutex);
     Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(location);
@@ -1394,13 +1394,13 @@ Project::Cursor ClangProject::cursor(const Location &location) const
     //error() << "found loc, asked for" << location << "resolved to" << usr->first
     //        << "refers to" << usr->second.loc << "and kind" << usr->second.kind;
 
-    Cursor cursor;
+    Project::Cursor cursor;
     cursor.location = usr->first;
     cursor.kind = usr->second.kind;
 
     const uint32_t targetUsr = usr->second.usr;
 
-    if (cursor.kind == Cursor::Reference) {
+    if (cursor.kind == Project::Cursor::Reference) {
         // reference, target should be definition (if possible)
         UsrSet::const_iterator target = defs.find(targetUsr);
         if (target == defs.end()) {
@@ -1433,16 +1433,16 @@ Project::Cursor ClangProject::cursor(const Location &location) const
     return cursor;
 }
 
-inline char ClangProject::locationType(const Location& location) const
+inline char IndexerClang::locationType(const Location& location) const
 {
     //Map<Location, CursorInfo> usrs;    // location->usr
     const Map<Location, CursorInfo>::const_iterator info = usrs.find(location);
     if (info == usrs.end())
         return '\0';
-    return Cursor::kindToChar(info->second.kind);
+    return Project::Cursor::kindToChar(info->second.kind);
 }
 
-void ClangProject::writeReferences(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned int keyFlags) const
+void IndexerClang::writeReferences(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned int keyFlags) const
 {
     const bool pass = pathSet.isEmpty();
     const UsrSet::const_iterator ref = refs.find(usr);
@@ -1457,7 +1457,7 @@ void ClangProject::writeReferences(const uint32_t usr, const Set<uint32_t>& path
     }
 }
 
-void ClangProject::writeDeclarations(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned int keyFlags) const
+void IndexerClang::writeDeclarations(const uint32_t usr, const Set<uint32_t>& pathSet, Connection* conn, unsigned int keyFlags) const
 {
     const bool pass = pathSet.isEmpty();
     const UsrSet* usrs[] = { &decls, &defs, 0 };
@@ -1487,7 +1487,7 @@ static inline void makePathSet(const List<Path>& pathFilter, Set<uint32_t>& resu
     }
 }
 
-void ClangProject::references(const Location& location, unsigned queryFlags,
+void IndexerClang::references(const Location& location, unsigned queryFlags,
                                const List<Path> &pathFilter, Connection *conn) const
 {
     Set<uint32_t> pathSet;
@@ -1549,7 +1549,7 @@ void ClangProject::references(const Location& location, unsigned queryFlags,
     conn->write("`");
 }
 
-void ClangProject::status(const String &query, Connection *conn, unsigned queryFlags) const
+void IndexerClang::status(const String &query, Connection *conn, unsigned queryFlags) const
 {
     MutexLocker lock(&mutex);
     if (query.isEmpty() || query.contains("symbolnames", String::CaseInsensitive)) {
@@ -1593,31 +1593,31 @@ void ClangProject::status(const String &query, Connection *conn, unsigned queryF
 
 }
 
-void ClangProject::dump(const SourceInformation &sourceInformation, Connection *conn) const
+void IndexerClang::dump(const SourceInformation &sourceInformation, Connection *conn) const
 {
 }
 
-void ClangProject::diagnose(const SourceInformation &sourceInformation)
+void IndexerClang::diagnose(const SourceInformation &sourceInformation)
 {
     const uint32_t fileId = Location::insertFile(sourceInformation.sourceFile);
     ClangUnit *&unit = units[fileId];
     if (!unit) {
         unit = new ClangUnit(this);
-        unit->jobFinished.connectAsync(this, &ClangProject::onJobFinished);
+        unit->jobFinished.connectAsync(this, &IndexerClang::onJobFinished);
     }
 
     MutexLocker locker(&mutex);
     unit->diagnose(sourceInformation);
 }
 
-void ClangProject::index(const SourceInformation &sourceInformation, Type type)
+void IndexerClang::index(const SourceInformation &sourceInformation, Project::Type type)
 {
     const uint32_t fileId = Location::insertFile(sourceInformation.sourceFile);
     ClangUnit *&unit = units[fileId];
     if (!unit) {
         unit = new ClangUnit(this);
-        unit->jobFinished.connectAsync(this, &ClangProject::onJobFinished);
-    } else if (type != Dirty && unit->indexed > sourceInformation.sourceFile.lastModifiedMs()) {
+        unit->jobFinished.connectAsync(this, &IndexerClang::onJobFinished);
+    } else if (type != Project::Dirty && unit->indexed > sourceInformation.sourceFile.lastModifiedMs()) {
         return;
     }
 
@@ -1628,7 +1628,7 @@ void ClangProject::index(const SourceInformation &sourceInformation, Type type)
     }
 }
 
-void ClangProject::remove(const Path &sourceFile)
+void IndexerClang::remove(const Path &sourceFile)
 {
     const uint32_t fileId = Location::fileId(sourceFile);
 
@@ -1655,13 +1655,13 @@ void ClangProject::remove(const Path &sourceFile)
     }
 }
 
-bool ClangProject::isIndexing() const
+bool IndexerClang::isIndexing() const
 {
     MutexLocker locker(&mutex);
     return (pendingJobs > 0);
 }
 
-Set<Path> ClangProject::dependencies(const Path &path, DependencyMode mode) const
+Set<Path> IndexerClang::dependencies(const Path &path, DependencyMode mode) const
 {
     MutexLocker locker(&mutex);
 
@@ -1686,7 +1686,7 @@ Set<Path> ClangProject::dependencies(const Path &path, DependencyMode mode) cons
     return result;
 }
 
-Set<Path> ClangProject::files(int mode) const
+Set<Path> IndexerClang::files(int mode) const
 {
     MutexLocker locker(&mutex);
 
@@ -1708,7 +1708,7 @@ Set<Path> ClangProject::files(int mode) const
     return files;
 }
 
-Set<String> ClangProject::listSymbols(const String &string, const List<Path> &pathFilter) const
+Set<String> IndexerClang::listSymbols(const String &string, const List<Path> &pathFilter) const
 {
     // this is pretty awful
     Set<uint32_t> allUsrs;
@@ -1758,7 +1758,7 @@ static inline Location firstLocation(const uint32_t usr, const UsrSet& set)
     return *locs.begin();
 }
 
-Set<Project::Cursor> ClangProject::findCursors(const String &string, const List<Path> &pathFilter) const
+Set<Project::Cursor> IndexerClang::findCursors(const String &string, const List<Path> &pathFilter) const
 {
     Set<uint32_t> pathSet;
     const bool pass = pathFilter.isEmpty();
@@ -1768,9 +1768,9 @@ Set<Project::Cursor> ClangProject::findCursors(const String &string, const List<
     MutexLocker locker(&mutex);
     Map<String, Set<uint32_t> >::const_iterator name = names.find(string);
     if (name == names.end())
-        return Set<Cursor>();
+        return Set<Project::Cursor>();
 
-    Set<Cursor> cursors;
+    Set<Project::Cursor> cursors;
 
     Set<uint32_t>::const_iterator usr = name->second.begin();
     const Set<uint32_t>::const_iterator end = name->second.end();
@@ -1782,9 +1782,9 @@ Set<Project::Cursor> ClangProject::findCursors(const String &string, const List<
                 Set<Location>::const_iterator loc = decl->second.begin();
                 const Set<Location>::const_iterator end = decl->second.end();
                 while (loc != end) {
-                    Map<Location, CursorInfo>::const_iterator info = ClangProject::usrs.find(*loc);
-                    if (info != ClangProject::usrs.end() && (pass || pathSet.contains(info->first.fileId()))) {
-                        Cursor cursor;
+                    Map<Location, CursorInfo>::const_iterator info = IndexerClang::usrs.find(*loc);
+                    if (info != IndexerClang::usrs.end() && (pass || pathSet.contains(info->first.fileId()))) {
+                        Project::Cursor cursor;
                         cursor.symbolName = name->first;
                         cursor.location = *loc;
                         cursor.target = firstLocation(*usr, usrs[i] == &decls ? defs : decls);
@@ -1803,7 +1803,7 @@ Set<Project::Cursor> ClangProject::findCursors(const String &string, const List<
     return cursors;
 }
 
-String ClangProject::fixits(const Path &path) const
+String IndexerClang::fixits(const Path &path) const
 {
     MutexLocker lock(&mutex);
     const Map<Path, Set<FixIt> >::const_iterator it = fixIts.find(path);
@@ -1823,9 +1823,9 @@ String ClangProject::fixits(const Path &path) const
     return out;
 }
 
-Set<Project::Cursor> ClangProject::cursors(const Path &path) const
+Set<Project::Cursor> IndexerClang::cursors(const Path &path) const
 {
-    Set<Cursor> cursors;
+    Set<Project::Cursor> cursors;
 
     MutexLocker lock(&mutex);
     const uint32_t fileId = Location::fileId(path);
@@ -1834,8 +1834,8 @@ Set<Project::Cursor> ClangProject::cursors(const Path &path) const
         Map<Location, CursorInfo>::const_iterator usr = usrs.lower_bound(start);
         const Map<Location, CursorInfo>::const_iterator usrEnd = usrs.end();
         while (usr != usrEnd && usr->first.fileId() == fileId) {
-            if (usr->second.kind != Cursor::Reference) {
-                Cursor cursor;
+            if (usr->second.kind != Project::Cursor::Reference) {
+                Project::Cursor cursor;
                 cursor.start = usr->second.start;
                 cursor.end = usr->second.end;
                 cursor.location = usr->first;
@@ -1858,7 +1858,7 @@ Set<Project::Cursor> ClangProject::cursors(const Path &path) const
     return cursors;
 }
 
-void ClangProject::onJobFinished(shared_ptr<ClangParseJob> job)
+void IndexerClang::onJobFinished(shared_ptr<ClangParseJob> job)
 {
     const ClangIndexInfo& info = job->mInfo;
 
@@ -1884,7 +1884,7 @@ void ClangProject::onJobFinished(shared_ptr<ClangParseJob> job)
     }
 }
 
-void ClangProject::dirty(const Set<Path>& files)
+void IndexerClang::dirty(const Set<Path>& files)
 {
     dirtyFiles = files;
 }
@@ -1902,7 +1902,7 @@ static inline void dirtyUsr(const Location& start, uint32_t usr, UsrSet& usrs)
 }
 
 // should only be called with project->mutex locked
-void ClangProject::dirtyUsrs()
+void IndexerClang::dirtyUsrs()
 {
     if (dirtyFiles.isEmpty())
         return;
@@ -1943,7 +1943,7 @@ void ClangProject::dirtyUsrs()
     }
 }
 
-void ClangProject::dirtyDeps(uint32_t fileId)
+void IndexerClang::dirtyDeps(uint32_t fileId)
 {
     {
         const Location start(fileId, 1, 1);
@@ -1976,7 +1976,7 @@ void ClangProject::dirtyDeps(uint32_t fileId)
     }
 }
 
-void ClangProject::syncJob(const shared_ptr<ClangParseJob>& job)
+void IndexerClang::syncJob(const shared_ptr<ClangParseJob>& job)
 {
     const ClangIndexInfo& info = job->mInfo;
 
@@ -2028,7 +2028,7 @@ void ClangProject::syncJob(const shared_ptr<ClangParseJob>& job)
     }
 }
 
-void ClangProject::sync(const shared_ptr<ClangParseJob>& currentJob)
+void IndexerClang::sync(const shared_ptr<ClangParseJob>& currentJob)
 {
     dirtyUsrs();
     syncJob(currentJob);
@@ -2040,10 +2040,10 @@ void ClangProject::sync(const shared_ptr<ClangParseJob>& currentJob)
         syncJobs.pop_back();
     }
 
-    startSaveTimer();
+    mProject->startSaveTimer();
 }
 
-bool ClangProject::codeCompleteAt(const Location &location, const String &source, Connection *conn)
+bool IndexerClang::codeCompleteAt(const Location &location, const String &source, Connection *conn)
 {
 #ifdef CLANG_CAN_REPARSE
     MutexLocker lock(&mutex);
@@ -2054,9 +2054,9 @@ bool ClangProject::codeCompleteAt(const Location &location, const String &source
     }
 
     shared_ptr<ClangCompletionJob> job(new ClangCompletionJob(unit, location, source));
-    job->finished().connectAsync(this, &ClangProject::onCompletionFinished);
-    job->completion().connectAsync(this, &ClangProject::onCompletion);
-    conn->destroyed().connect(this, &ClangProject::onConnectionDestroyed);
+    job->finished().connectAsync(this, &IndexerClang::onCompletionFinished);
+    job->completion().connectAsync(this, &IndexerClang::onCompletion);
+    conn->destroyed().connect(this, &IndexerClang::onConnectionDestroyed);
     mCompletions[job.get()] = conn;
     ThreadPool::instance()->start(job);
 
@@ -2067,7 +2067,7 @@ bool ClangProject::codeCompleteAt(const Location &location, const String &source
 #endif
 }
 
-void ClangProject::onConnectionDestroyed(Connection *conn)
+void IndexerClang::onConnectionDestroyed(Connection *conn)
 {
     for (Map<ClangCompletionJob*, Connection*>::iterator it = mCompletions.begin(); it != mCompletions.end(); ++it) {
         if (it->second == conn) {
@@ -2078,32 +2078,40 @@ void ClangProject::onConnectionDestroyed(Connection *conn)
     }
 }
 
-void ClangProject::onCompletionFinished(ClangCompletionJob *job)
+void IndexerClang::onCompletionFinished(ClangCompletionJob *job)
 {
     if (Connection *conn = mCompletions.take(job)) {
-        conn->destroyed().disconnect(this, &ClangProject::onConnectionDestroyed);
+        conn->destroyed().disconnect(this, &IndexerClang::onConnectionDestroyed);
         conn->finish();
     }
 }
 
-void ClangProject::onCompletion(ClangCompletionJob *job, String completion, String signature)
+void IndexerClang::onCompletion(ClangCompletionJob *job, String completion, String signature)
 {
     if (Connection *conn = mCompletions.value(job))
         conn->write(completion + ' ' + signature);
 }
 
-class ClangProjectPlugin : public RTagsPlugin
+class IndexerClangPlugin : public RTagsPlugin
 {
 public:
-    virtual shared_ptr<Project> createProject(const Path &path)
+    virtual shared_ptr<Indexer> init(shared_ptr<Project> project)
     {
-        return shared_ptr<Project>(new ClangProject(path));
+        shared_ptr<Indexer> indexer(new IndexerClang(project));
+        mIndexer = indexer;
+        return indexer;
+    }
+    virtual shared_ptr<Indexer> indexer()
+    {
+        return mIndexer.lock();
     }
     virtual String name() const { return "clang"; }
+
+private:
+    weak_ptr<Indexer> mIndexer;
 };
 
 extern "C" RTagsPlugin* createInstance()
 {
-    return new ClangProjectPlugin;
+    return new IndexerClangPlugin;
 }
-

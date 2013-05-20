@@ -2,7 +2,7 @@
 #define ClangCompletionJob_h
 
 #ifdef CLANG_CAN_REPARSE
-#include "ClangProject.h"
+#include "IndexerClang.h"
 #include "Location.h"
 #include <clang-c/Index.h>
 #include <rct/Mutex.h>

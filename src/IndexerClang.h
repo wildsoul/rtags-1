@@ -1,6 +1,7 @@
-#ifndef ProjectClang_h
-#define ProjectClang_h
+#ifndef INDEXERCLANG_H
+#define INDEXERCLANG_H
 
+#include "Indexer.h"
 #include "Project.h"
 #include "StringMap.h"
 #include <clang-c/Index.h>
@@ -68,23 +69,21 @@ class ClangCompletionJob;
 class ClangParseJob;
 struct ClangIndexInfo;
 
-class ClangProject : public Project
+class IndexerClang : public Indexer
 {
 public:
-    ClangProject(const Path &path);
-    virtual ~ClangProject();
+    IndexerClang(shared_ptr<Project> project);
+    virtual ~IndexerClang();
 
-    using Project::save;
     virtual bool save(Serializer &serializer);
     virtual bool restore(Deserializer &deserializer);
 
-    virtual Cursor cursor(const Location &location) const;
+    virtual Project::Cursor cursor(const Location &location) const;
     virtual void references(const Location& location, unsigned queryFlags,
                             const List<Path> &pathFilter, Connection *conn) const;
     virtual void status(const String &query, Connection *conn, unsigned queryFlags) const;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const;
-    using Project::index;
-    virtual void index(const SourceInformation &sourceInformation, Type type);
+    virtual void index(const SourceInformation &sourceInformation, Project::Type type);
     virtual void remove(const Path &sourceFile);
     virtual void diagnose(const SourceInformation &sourceInformation);
     virtual bool isIndexing() const;
@@ -93,8 +92,8 @@ public:
 
     virtual Set<Path> files(int mode = AllFiles) const;
     virtual Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const;
-    virtual Set<Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
-    virtual Set<Cursor> cursors(const Path &path) const;
+    virtual Set<Project::Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
+    virtual Set<Project::Cursor> cursors(const Path &path) const;
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn);
     virtual String fixits(const Path &path) const;
     virtual void dirty(const Set<Path> &files);

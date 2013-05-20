@@ -140,15 +140,15 @@ set(RPARSER_INCLUDES
     CPlusPlus/src/libs/cplusplus)
 include_directories(${RPARSER_INCLUDES})
 
-set(RPARSER_SRCS RParserProject.cpp)
-set(RPARSER_MOC_HDRS RParserProject.h)
+set(RPARSER_SRCS IndexerRParser.cpp)
+set(RPARSER_MOC_HDRS IndexerRParser.h)
 qt4_wrap_cpp(RPARSER_MOC_SRCS ${RPARSER_MOC_HDRS})
 
 add_library(rtagsrparser MODULE ${RPARSER_SRCS} ${RPARSER_MOC_SRCS})
 add_dependencies(rtagsrparser rtags rct CPlusPlus)
 target_link_libraries(rtagsrparser rtags ${QT_LIBRARIES} rct CPlusPlus)
 
-set(CLANG_SRCS ClangProject.cpp ClangCompletionJob.cpp)
+set(CLANG_SRCS IndexerClang.cpp ClangCompletionJob.cpp)
 add_library(rtagsclang MODULE ${CLANG_SRCS})
 add_dependencies(rtagsclang rtags rct)
 target_link_libraries(rtagsclang rtags rct ${CLANG_LIBS})

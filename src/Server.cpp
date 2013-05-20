@@ -4,6 +4,7 @@
 #include "CompileMessage.h"
 #include "CompletionMessage.h"
 #include "Filter.h"
+#include "Indexer.h"
 #include "LogObject.h"
 #include "Match.h"
 #include "Preprocessor.h"
@@ -130,14 +131,17 @@ shared_ptr<Project> Server::addProject(const Path &path)
     {
         shared_ptr<Project> &project = mProjects[path];
         if (!project) {
-            project = sPluginFactory.createProject(path, sOptions.indexPlugin);
-            if (!project) {
-                error("Can't load plugin");
+            project.reset(new Project(path));
+            shared_ptr<Indexer> indexer = sPluginFactory.createIndexer(sOptions.indexPlugin, project);
+            if (!indexer) {
+                error("Can't load indexer from plugin");
                 project.reset();
                 remove = true;
             }
-            if (project)
+            if (indexer) {
+                project->setIndexer(indexer);
                 return project;
+            }
         }
     }
     if (remove)
@@ -275,7 +279,7 @@ void Server::handleCompletionMessage(CompletionMessage *message, Connection *con
         conn->finish();
         return;
     }
-    if (!project->codeCompleteAt(loc, message->contents(), conn))
+    if (!project->indexer()->codeCompleteAt(loc, message->contents(), conn))
         conn->finish();
     // not calling finish, could be async
 }
@@ -396,9 +400,9 @@ void Server::followLocation(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    Project::Cursor cursor = project->cursor(loc);
+    Project::Cursor cursor = project->indexer()->cursor(loc);
     if (query.flags() & QueryMessage::DeclarationOnly && cursor.isDefinition() && cursor.target.isValid())
-        cursor = project->cursor(cursor.target);
+        cursor = project->indexer()->cursor(cursor.target);
 
     if (cursor.location.isValid() && !isFiltered(cursor.location, query))
         conn->write(cursor.target.toString(query.flags()).constData());
@@ -408,7 +412,7 @@ void Server::followLocation(const QueryMessage &query, Connection *conn)
 void Server::isIndexing(const QueryMessage &, Connection *conn)
 {
     for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
-        if (it->second->isIndexing()) {
+        if (it->second->indexer()->isIndexing()) {
             conn->write("1");
             conn->finish();
             return;
@@ -575,7 +579,7 @@ void Server::dumpFile(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    project->dump(c, conn);
+    project->indexer()->dump(c, conn);
     conn->finish(); // this might block the main thread too long
 }
 
@@ -593,7 +597,7 @@ void Server::cursorInfo(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    Project::Cursor cursor = project->cursor(loc);
+    Project::Cursor cursor = project->indexer()->cursor(loc);
     if (cursor.location.isValid())
         conn->write(project->toString(cursor, query.flags()));
     conn->finish();
@@ -610,7 +614,7 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
 
     const Path srcRoot = project->path();
 
-    Set<Path> dependencies = project->dependencies(path, Project::DependsOnArg);
+    Set<Path> dependencies = project->indexer()->dependencies(path, Indexer::DependsOnArg);
     dependencies.remove(path);
     if (!dependencies.isEmpty()) {
         conn->write<64>("%s is depended on by:", path.constData());
@@ -618,7 +622,7 @@ void Server::dependencies(const QueryMessage &query, Connection *conn)
             conn->write<64>("  %s", it->constData());
         }
     }
-    dependencies = project->dependencies(path, Project::ArgDependsOn);
+    dependencies = project->indexer()->dependencies(path, Indexer::ArgDependsOn);
     if (!dependencies.isEmpty()) {
         conn->write<64>("%s depends on:", path.constData());
         for (Set<Path>::const_iterator it = dependencies.begin(); it != dependencies.end(); ++it) {
@@ -638,7 +642,7 @@ void Server::fixIts(const QueryMessage &query, Connection *conn)
         return;
     }
 
-    const String out = project->fixits(path);
+    const String out = project->indexer()->fixits(path);
     if (!out.isEmpty())
         conn->write(out);
 
@@ -659,7 +663,7 @@ void Server::referencesForLocation(const QueryMessage &query, Connection *conn)
         conn->finish();
         return;
     }
-    project->references(loc, query.flags(), query.pathFilters(), conn);
+    project->indexer()->references(loc, query.flags(), query.pathFilters(), conn);
     conn->finish();
 }
 
@@ -671,9 +675,9 @@ void Server::referencesForName(const QueryMessage& query, Connection *conn)
         conn->finish();
         return;
     }
-    const Set<Project::Cursor> cursors = project->findCursors(query.query(), query.pathFilters());
+    const Set<Project::Cursor> cursors = project->indexer()->findCursors(query.query(), query.pathFilters());
     for (Set<Project::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
-        project->references(it->location, query.flags(), query.pathFilters(), conn);
+        project->indexer()->references(it->location, query.flags(), query.pathFilters(), conn);
     }
     conn->finish();
 }
@@ -703,7 +707,7 @@ void Server::findSymbols(const QueryMessage &query, Connection *conn)
         conn->finish();
         return;
     }
-    List<Project::Cursor> cursors = project->findCursors(query.query(), query.pathFilters()).toList();
+    List<Project::Cursor> cursors = project->indexer()->findCursors(query.query(), query.pathFilters()).toList();
     if (!cursors.isEmpty()) {
         List<Node> nodes(cursors.size());
         for (int i=0; i<cursors.size(); ++i)
@@ -728,7 +732,7 @@ void Server::listSymbols(const QueryMessage &query, Connection *conn)
 
     Set<String> strings;
     if (query.type() == QueryMessage::LocalSymbols) {
-        Set<Project::Cursor> cursors = project->cursors(query.query());
+        Set<Project::Cursor> cursors = project->indexer()->cursors(query.query());
         for (Set<Project::Cursor>::const_iterator it = cursors.begin(); it != cursors.end(); ++it) {
             switch (it->kind) {
             case Project::Cursor::Reference:
@@ -741,7 +745,7 @@ void Server::listSymbols(const QueryMessage &query, Connection *conn)
             }
         }
     } else {
-        strings = project->listSymbols(query.query(), query.pathFilters());
+        strings = project->indexer()->listSymbols(query.query(), query.pathFilters());
     }
 
     const bool elispList = query.flags() & QueryMessage::ElispList;
@@ -782,7 +786,7 @@ void Server::status(const QueryMessage &query, Connection *conn)
         conn->finish();
         return;
     }
-    project->status(query.query(), conn, query.flags());
+    project->indexer()->status(query.query(), conn, query.flags());
     conn->finish();
 }
 
@@ -1155,7 +1159,7 @@ void Server::timerEvent(TimerEvent *e)
     if (e->userData() == UnloadTimer) {
         shared_ptr<Project> cur = mCurrentProject.lock();
         for (ProjectsMap::const_iterator it = mProjects.begin(); it != mProjects.end(); ++it) {
-            if (it->second->isValid() && it->second != cur && !it->second->isIndexing()) {
+            if (it->second->isValid() && it->second != cur && !it->second->indexer()->isIndexing()) {
                 it->second->unload();
             }
         }
