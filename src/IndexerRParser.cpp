@@ -1256,7 +1256,7 @@ Set<Project::Cursor> IndexerRParser::findCursors(const String &string, const Lis
             }
 
             if (path->endsWith(string)) { // file name, add custom target for the file
-                const uint32_t fileId = Location::fileId(*path);
+                const uint32_t fileId = Location::insertFile(*path);
                 Project::Cursor fileCursor;
                 fileCursor.kind = Project::Cursor::File;
                 fileCursor.location = fileCursor.target = Location(fileId, 1, 1);
