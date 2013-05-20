@@ -59,14 +59,15 @@ static inline String symbolName(const CPlusPlus::Symbol* symbol)
 class RParserJob
 {
 public:
-    RParserJob(const SourceInformation& i)
-        : info(i)
+    RParserJob(const SourceInformation& i, Project::Type t)
+        : info(i), type(t)
     {
     }
 
     Path fileName() const { return info.sourceFile; }
 
     SourceInformation info;
+    Project::Type type;
 };
 
 class ReallyFindScopeAt: protected CPlusPlus::SymbolVisitor
@@ -777,7 +778,8 @@ void RParserProject::run()
                   job->fileName().toTilde().constData(), localFiles);
             if (jobs.isEmpty()) {
                 error() << "Parsed" << taken << "files in" << timer.elapsed() << "ms";
-                startSaveTimer();
+                if (job->type != Project::Restore)
+                    startSaveTimer();
             }
         }
 
@@ -975,10 +977,10 @@ int RParserProject::symbolCount(const Path& file)
     return doc->globalSymbolCount();
 }
 
-void RParserProject::index(const SourceInformation &sourceInformation, Type)
+void RParserProject::index(const SourceInformation &sourceInformation, Type type)
 {
     QMutexLocker locker(&mutex);
-    jobs.enqueue(new RParserJob(sourceInformation));
+    jobs.enqueue(new RParserJob(sourceInformation, type));
     state = Indexing; // ### a bit of a hack
     jobsAvailable.wakeOne();
     //waitForState(GreaterOrEqual, CollectingNames);
