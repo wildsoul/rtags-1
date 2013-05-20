@@ -97,12 +97,34 @@ public:
     {
     }
 
+    struct DiagnosticInfo
+    {
+        Set<Path> previousIncludes, includes;
+        Map<Path, Set<FixIt> > fixIts;
+
+        void addPath(const Path& path)
+        {
+            includes.insert(path);
+            previousIncludes.remove(path);
+        }
+    };
+    static const DiagnosticInfo& info(const Path& sourceFile) { return jobInfos[sourceFile]; }
+
+    signalslot::Signal1<const Path&>& jobFinished() { return finished; }
+
 protected:
     virtual void run();
 
 private:
+    static void diagnostic(CXClientData client_data, CXDiagnosticSet diags, void* /*reserved*/);
+
+private:
+    static Map<String, DiagnosticInfo> jobInfos;
     SourceInformation information;
+    signalslot::Signal1<const Path&> finished;
 };
+
+Map<String, ClangDiagnoseJob::DiagnosticInfo> ClangDiagnoseJob::jobInfos;
 
 class ClangParseJob : public ThreadPool::Job
 {
@@ -116,13 +138,6 @@ public:
     // needs to be called with mUnit->mutex locked
     bool done() { return mDone; }
 
-    static int abortQuery(CXClientData client_data, void* /*reserved*/);
-    static void diagnostic(CXClientData client_data, CXDiagnosticSet diags, void* /*reserved*/);
-    static CXIdxClientFile enteredMainFile(CXClientData client_data, CXFile mainFile, void* /*reserved*/);
-    static CXIdxClientFile includedFile(CXClientData client_data, const CXIdxIncludedFileInfo* incl);
-    static void indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl);
-    static void indexEntityReference(CXClientData client_data, const CXIdxEntityRefInfo* ref);
-
 protected:
     virtual void run();
 
@@ -132,6 +147,13 @@ private:
     static void indexTranslationUnit(ClangIndexInfo* info, const CXTranslationUnit& unit);
 
     static void sendEmptyDiags(ClangIndexInfo* info);
+
+    static int abortQuery(CXClientData client_data, void* /*reserved*/);
+    static void diagnostic(CXClientData client_data, CXDiagnosticSet diags, void* /*reserved*/);
+    static CXIdxClientFile enteredMainFile(CXClientData client_data, CXFile mainFile, void* /*reserved*/);
+    static CXIdxClientFile includedFile(CXClientData client_data, const CXIdxIncludedFileInfo* incl);
+    static void indexDeclaration(CXClientData client_data, const CXIdxDeclInfo* decl);
+    static void indexEntityReference(CXClientData client_data, const CXIdxEntityRefInfo* ref);
 
 private:
     ClangUnit* mUnit;
@@ -1020,6 +1042,177 @@ static inline bool hasInclusions(CXTranslationUnit unit)
     return has;
 }
 
+void ClangDiagnoseJob::diagnostic(CXClientData client_data, CXDiagnosticSet diags, void* /*reserved*/)
+{
+    DiagnosticInfo* info = static_cast<DiagnosticInfo*>(client_data);
+
+    const unsigned diagnosticCount = clang_getNumDiagnosticsInSet(diags);
+    const unsigned options = Server::options().options;
+
+    Map<Path, Map<unsigned, XmlEntry> > xmlEntries;
+    const bool xmlEnabled = testLog(RTags::CompilationErrorXml);
+
+    for (unsigned i=0; i<diagnosticCount; ++i) {
+        CXDiagnostic diagnostic = clang_getDiagnosticInSet(diags, i);
+        int logLevel = INT_MAX;
+        const CXDiagnosticSeverity severity = clang_getDiagnosticSeverity(diagnostic);
+        switch (severity) {
+        case CXDiagnostic_Fatal:
+        case CXDiagnostic_Error:
+            logLevel = Error;
+            break;
+        case CXDiagnostic_Warning:
+            logLevel = Warning;
+            break;
+        case CXDiagnostic_Note:
+            logLevel = Debug;
+            break;
+        case CXDiagnostic_Ignored:
+            break;
+        }
+
+        const CXSourceLocation diagLoc = clang_getDiagnosticLocation(diagnostic);
+        CXString cxstr = clang_getDiagnosticSpelling(diagnostic);
+        const String msg(clang_getCString(cxstr));
+        clang_disposeString(cxstr);
+        if (xmlEnabled) {
+            const CXDiagnosticSeverity sev = clang_getDiagnosticSeverity(diagnostic);
+            XmlEntry::Type type = XmlEntry::None;
+            switch (sev) {
+            case CXDiagnostic_Warning:
+                type = XmlEntry::Warning;
+                break;
+            case CXDiagnostic_Error:
+            case CXDiagnostic_Fatal:
+                type = XmlEntry::Error;
+                break;
+            default:
+                break;
+            }
+            if (type != XmlEntry::None) {
+                const unsigned rangeCount = clang_getDiagnosticNumRanges(diagnostic);
+                bool rangeOk = rangeCount;
+                for (unsigned rangePos = 0; rangePos < rangeCount; ++rangePos) {
+                    const CXSourceRange range = clang_getDiagnosticRange(diagnostic, rangePos);
+                    const CXSourceLocation start = clang_getRangeStart(range);
+                    const CXSourceLocation end = clang_getRangeEnd(range);
+
+                    unsigned line, column, startOffset, endOffset;
+                    CXFile file;
+                    clang_getSpellingLocation(start, &file, &line, &column, &startOffset);
+                    Path p = ::path(file);
+                    clang_getSpellingLocation(end, 0, 0, 0, &endOffset);
+                    if (!rangePos && !startOffset && !endOffset) {
+                        rangeOk = false;
+                        // huh, range invalid? fall back to diag location
+                        break;
+                    } else {
+                        info->addPath(p);
+                        xmlEntries[p][startOffset] = XmlEntry(type, msg, line, column, endOffset);
+                    }
+                }
+                if (!rangeOk) {
+                    unsigned line, column, offset;
+                    CXFile file;
+                    clang_getSpellingLocation(diagLoc, &file, &line, &column, &offset);
+                    Path p = ::path(file);
+                    info->addPath(p);
+                    xmlEntries[p][offset] = XmlEntry(type, msg, line, column);
+                }
+            }
+            if (testLog(logLevel) || testLog(RTags::CompilationError)) {
+                if (testLog(logLevel))
+                    logDirect(logLevel, msg.constData());
+                if (testLog(RTags::CompilationError))
+                    logDirect(RTags::CompilationError, msg.constData());
+            }
+
+            const unsigned fixItCount = clang_getDiagnosticNumFixIts(diagnostic);
+            RegExp rx;
+            if (options & Server::IgnorePrintfFixits) {
+                rx = "^%[A-Za-z0-9]\\+$";
+            }
+            for (unsigned f=0; f<fixItCount; ++f) {
+                CXSourceRange range;
+                const CXString diagnosticString = clang_getDiagnosticFixIt(diagnostic, f, &range);
+                unsigned startOffset, line, column, endOffset;
+                CXFile file;
+                clang_getSpellingLocation(clang_getRangeStart(range), &file, &line, &column, &startOffset);
+                clang_getSpellingLocation(clang_getRangeEnd(range), 0, 0, 0, &endOffset);
+
+                const Path p = ::path(file);
+                const char *string = clang_getCString(diagnosticString);
+                if (options & Server::IgnorePrintfFixits && rx.indexIn(string) == 0) {
+                    error("Ignored fixit for %s: Replace %d-%d with [%s]", p.constData(),
+                          startOffset, endOffset, string);
+                    continue;
+                }
+
+                // error("Fixit for %s: Replace %d-%d with [%s]", p.constData(), startOffset, endOffset, string);
+
+                if (xmlEnabled) {
+                    info->addPath(p);
+
+                    XmlEntry& entry = xmlEntries[p][startOffset];
+                    entry.type = XmlEntry::Fixit;
+                    if (entry.message.isEmpty()) {
+                        entry.message = String::format<64>("did you mean '%s'?", string);
+                        entry.line = line;
+                        entry.column = column;
+                    }
+                    entry.endOffset = endOffset;
+                }
+                if (testLog(logLevel) || testLog(RTags::CompilationError)) {
+                    const String msg = String::format<128>("Fixit for %s: Replace %d-%d with [%s]", p.constData(),
+                                                           startOffset, endOffset, string);
+                    if (testLog(logLevel))
+                        logDirect(logLevel, msg.constData());
+                    if (testLog(RTags::CompilationError))
+                        logDirect(RTags::CompilationError, msg.constData());
+                }
+                info->fixIts[p].insert(FixIt(startOffset, endOffset, string));
+            }
+        }
+
+        clang_disposeDiagnostic(diagnostic);
+    }
+    if (xmlEnabled) {
+        logDirect(RTags::CompilationErrorXml, "<?xml version=\"1.0\" encoding=\"utf-8\"?><checkstyle>");
+        if (!xmlEntries.isEmpty()) {
+            Map<Path, Map<unsigned, XmlEntry> >::const_iterator entry = xmlEntries.begin();
+            const Map<Path, Map<unsigned, XmlEntry> >::const_iterator end = xmlEntries.end();
+
+            const char* severities[] = { "none", "warning", "error", "fixit" };
+
+            while (entry != end) {
+                log(RTags::CompilationErrorXml, "<file name=\"%s\">", entry->first.constData());
+                const Map<unsigned, XmlEntry>& map = entry->second;
+                Map<unsigned, XmlEntry>::const_iterator it = map.begin();
+                const Map<unsigned, XmlEntry>::const_iterator end = map.end();
+                while (it != end) {
+                    const XmlEntry& entry = it->second;
+                    log(RTags::CompilationErrorXml, "<error line=\"%d\" column=\"%d\" startOffset=\"%d\" %sseverity=\"%s\" message=\"%s\"/>",
+                        entry.line, entry.column, it->first,
+                        (entry.endOffset == -1 ? "" : String::format<32>("endOffset=\"%d\" ", entry.endOffset).constData()),
+                        severities[entry.type], xmlEscape(entry.message).constData());
+                    ++it;
+                }
+                logDirect(RTags::CompilationErrorXml, "</file>");
+                ++entry;
+            }
+        }
+
+        const Set<Path>& files = info->previousIncludes;
+        for (Set<Path>::const_iterator it = files.begin(); it != files.end(); ++it) {
+            if (!xmlEntries.contains(*it)) {
+                log(RTags::CompilationErrorXml, "<file name=\"%s\"/>", it->constData());
+            }
+        }
+
+        logDirect(RTags::CompilationErrorXml, "</checkstyle>");
+    }
+}
+
 void ClangDiagnoseJob::run()
 {
     CXIndex idx = clang_createIndex(0, 1);
@@ -1048,11 +1241,18 @@ void ClangDiagnoseJob::run()
 
         IndexerCallbacks callbacks;
         memset(&callbacks, 0, sizeof(IndexerCallbacks));
-        callbacks.diagnostic = ClangParseJob::diagnostic;
-        const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
+        callbacks.diagnostic = diagnostic;
+        const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols;
 
-        clang_indexSourceFile(action, 0, &callbacks, sizeof(IndexerCallbacks), opts,
+        DiagnosticInfo& info = jobInfos[information.sourceFile];
+
+        info.fixIts.clear();
+        clang_indexSourceFile(action, &info, &callbacks, sizeof(IndexerCallbacks), opts,
                               information.sourceFile.nullTerminated(), clangArgs, args.size(), 0, 0, 0, 0);
+        info.previousIncludes = info.includes;
+        info.includes.clear();
+
+        finished(information.sourceFile);
 
         ++build;
     }
@@ -1648,6 +1848,7 @@ void IndexerClang::dump(const SourceInformation &sourceInformation, Connection *
 void IndexerClang::diagnose(const SourceInformation &sourceInformation)
 {
     shared_ptr<ClangDiagnoseJob> job(new ClangDiagnoseJob(sourceInformation));
+    job->jobFinished().connect(this, &IndexerClang::onDiagnoseFinished);
     ThreadPool::instance()->start(job);
 }
 
@@ -2125,6 +2326,12 @@ void IndexerClang::onCompletionFinished(ClangCompletionJob *job)
         conn->destroyed().disconnect(this, &IndexerClang::onConnectionDestroyed);
         conn->finish();
     }
+}
+
+void IndexerClang::onDiagnoseFinished(const Path& sourceFile)
+{
+    const ClangDiagnoseJob::DiagnosticInfo& info = ClangDiagnoseJob::info(sourceFile);
+    fixIts.unite(info.fixIts);
 }
 
 void IndexerClang::onCompletion(ClangCompletionJob *job, String completion, String signature)
