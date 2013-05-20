@@ -130,7 +130,7 @@ shared_ptr<Project> Server::addProject(const Path &path)
     {
         shared_ptr<Project> &project = mProjects[path];
         if (!project) {
-            project = sPluginFactory.createProject(path);
+            project = sPluginFactory.createProject(path, sOptions.indexPlugin);
             if (!project) {
                 error("Can't load plugin");
                 project.reset();

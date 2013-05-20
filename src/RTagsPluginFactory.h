@@ -1,7 +1,7 @@
 #ifndef RTagsPluginFactory_h
 #define RTagsPluginFactory_h
 
-#include <rct/List.h>
+#include <rct/Map.h>
 #include <rct/Path.h>
 #include <rct/Plugin.h>
 #include <rct/Tr1.h>
@@ -16,8 +16,11 @@ public:
     }
     void cleanup()
     {
-        for (int i=0; i<mPlugins.size(); ++i) {
-            delete mPlugins.at(i);
+        Map<String, Plugin<RTagsPlugin> *>::const_iterator plugin = mPlugins.begin();
+        const Map<String, Plugin<RTagsPlugin> *>::const_iterator end = mPlugins.end();
+        while (plugin != end) {
+            delete plugin->second;
+            ++plugin;
         }
         mPlugins.clear();
     }
@@ -31,26 +34,37 @@ public:
             return false;
         }
 
-        mPlugins.append(p);
+        const String name = p->instance()->name();
+        if (mPlugins.contains(name)) {
+            ::error() << "Already got a plugin by name" << name;
+            return false;
+        }
+        mPlugins[name] = p;
         return true;
     }
 
     String error() const { return mError; }
 
-    shared_ptr<Project> createProject(const Path &path)
+    shared_ptr<Project> createProject(const Path &path, const String& pluginName)
     {
-        shared_ptr<Project> ret;
-        for (int i=0; i<mPlugins.size(); ++i) {
-            assert(mPlugins.at(i)->instance());
-            ret = mPlugins.at(i)->instance()->createProject(path);
-            if (ret)
-                break;
-        }
-        return ret;
+        Map<String, Plugin<RTagsPlugin> *>::const_iterator plugin = mPlugins.find(pluginName);
+        if (plugin == mPlugins.end())
+            return shared_ptr<Project>();
+        assert(plugin->second->instance());
+        return plugin->second->instance()->createProject(path);
+    }
+
+    RTagsPlugin* plugin(const String& pluginName) const
+    {
+        Map<String, Plugin<RTagsPlugin> *>::const_iterator plugin = mPlugins.find(pluginName);
+        if (plugin == mPlugins.end())
+            return 0;
+        assert(plugin->second->instance());
+        return plugin->second->instance();
     }
 
 private:
-    List<Plugin<RTagsPlugin> *> mPlugins;
+    Map<String, Plugin<RTagsPlugin> *> mPlugins;
     String mError;
 };
 

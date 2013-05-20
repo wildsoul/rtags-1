@@ -46,6 +46,7 @@ public:
         unsigned options;
         int threadPoolSize, threadPoolStackSize;
         List<String> defaultArguments, excludeFilters;
+        String indexPlugin, diagnosticPlugin;
     };
     bool init(const Options &options);
     Path currentSourceFile() const { return mCurrentSourceFile; }

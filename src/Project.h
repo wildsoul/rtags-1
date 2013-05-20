@@ -116,6 +116,7 @@ public:
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const = 0;
     virtual void index(const SourceInformation &sourceInformation, Type type) = 0;
     virtual void remove(const Path &sourceFile) = 0;
+    virtual void diagnose(const SourceInformation &sourceInformation) { }
     virtual bool isIndexing() const = 0;
     virtual bool restore(Deserializer &/* deserializer */) { return true; }
     virtual bool save(Serializer &/* serializer */) { return true; }

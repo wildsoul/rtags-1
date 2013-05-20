@@ -16,8 +16,11 @@ class ClangParseJob;
 
 struct ClangIndexInfo
 {
+    enum IndexType { Index, Diagnose };
+
     ClangProject* project;
     uint32_t fileId;
+    IndexType indexType;
 
     Map<Location, uint32_t> incs;
     DependSet depends, reverseDepends;
@@ -71,7 +74,8 @@ public:
     ClangUnit(ClangProject* project);
     ~ClangUnit();
 
-    bool reindex(const SourceInformation& info);
+    bool reindex(const SourceInformation& info, ClangIndexInfo::IndexType type);
+    void diagnose(const SourceInformation& info);
 
     CXIndex index() { return project->cidx; }
     CXIndexAction action() { return project->caction; }
@@ -89,7 +93,7 @@ public:
 class ClangParseJob : public ThreadPool::Job
 {
 public:
-    ClangParseJob(ClangUnit* unit, bool reparse);
+    ClangParseJob(ClangUnit* unit, bool reparse, ClangIndexInfo::IndexType type);
     ~ClangParseJob();
 
     void restart(bool reparse);
@@ -139,9 +143,10 @@ ClangUnit::~ClangUnit()
     }
 }
 
-ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse)
+ClangParseJob::ClangParseJob(ClangUnit* unit, bool reparse, ClangIndexInfo::IndexType type)
     : mUnit(unit), mReparse(reparse), mDone(false), mRestarted(false)
 {
+    mInfo.indexType = type;
     mInfo.stopped = false;
     mInfo.hasInclusions = false;
     mInfo.project = mUnit->project;
@@ -1062,12 +1067,14 @@ void ClangParseJob::run()
                     } else {
                         IndexerCallbacks callbacks;
                         memset(&callbacks, 0, sizeof(IndexerCallbacks));
-                        callbacks.abortQuery = abortQuery;
                         callbacks.diagnostic = diagnostic;
-                        callbacks.enteredMainFile = enteredMainFile;
-                        callbacks.ppIncludedFile = includedFile;
-                        callbacks.indexDeclaration = indexDeclaration;
-                        callbacks.indexEntityReference = indexEntityReference;
+                        if (mInfo.indexType == ClangIndexInfo::Index) {
+                            callbacks.abortQuery = abortQuery;
+                            callbacks.enteredMainFile = enteredMainFile;
+                            callbacks.ppIncludedFile = includedFile;
+                            callbacks.indexDeclaration = indexDeclaration;
+                            callbacks.indexEntityReference = indexEntityReference;
+                        }
                         const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
 
                         const int indexFailed = clang_indexTranslationUnit(mUnit->action(), &mInfo, &callbacks, sizeof(IndexerCallbacks), opts, unit);
@@ -1095,8 +1102,8 @@ void ClangParseJob::run()
                             mReparse = false;
                         } else {
                             // need to index the global members of the TU
-                            indexTranslationUnit(&mInfo, unit);
-
+                            if (mInfo.indexType == ClangIndexInfo::Index)
+                                indexTranslationUnit(&mInfo, unit);
                             mInfo.hasInclusions = hasInclusions(unit);
                         }
 
@@ -1142,12 +1149,14 @@ void ClangParseJob::run()
 
                 IndexerCallbacks callbacks;
                 memset(&callbacks, 0, sizeof(IndexerCallbacks));
-                callbacks.abortQuery = abortQuery;
                 callbacks.diagnostic = diagnostic;
-                callbacks.enteredMainFile = enteredMainFile;
-                callbacks.ppIncludedFile = includedFile;
-                callbacks.indexDeclaration = indexDeclaration;
-                callbacks.indexEntityReference = indexEntityReference;
+                if (mInfo.indexType == ClangIndexInfo::Index) {
+                    callbacks.abortQuery = abortQuery;
+                    callbacks.enteredMainFile = enteredMainFile;
+                    callbacks.ppIncludedFile = includedFile;
+                    callbacks.indexDeclaration = indexDeclaration;
+                    callbacks.indexEntityReference = indexEntityReference;
+                }
                 const unsigned opts = CXIndexOpt_IndexFunctionLocalSymbols | CXIndexOpt_IndexImplicitTemplateInstantiations;
                 const unsigned tuOpts =
                     CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_PrecompiledPreamble | CXTranslationUnit_CacheCompletionResults;
@@ -1183,7 +1192,8 @@ void ClangParseJob::run()
                     mInfo.clear();
                 } else {
                     // need to index the global members of the TU
-                    indexTranslationUnit(&mInfo, unit);
+                    if (mInfo.indexType == ClangIndexInfo::Index)
+                        indexTranslationUnit(&mInfo, unit);
                 }
 
                 if (unit) {
@@ -1231,7 +1241,7 @@ void ClangParseJob::run()
     }
 }
 
-bool ClangUnit::reindex(const SourceInformation& info)
+bool ClangUnit::reindex(const SourceInformation& info, ClangIndexInfo::IndexType type)
 {
     MutexLocker locker(&mutex);
 
@@ -1250,9 +1260,15 @@ bool ClangUnit::reindex(const SourceInformation& info)
 
     if (!reparse)
         sourceInformation = info;
-    job.reset(new ClangParseJob(this, reparse));
+    job.reset(new ClangParseJob(this, reparse, type));
     ThreadPool::instance()->start(job);
     return true;
+}
+
+void ClangUnit::diagnose(const SourceInformation& info)
+{
+    // ### should check if we already have a unit cached here
+    reindex(info, ClangIndexInfo::Diagnose);
 }
 
 LockingStringMap ClangProject::umap;
@@ -1581,6 +1597,19 @@ void ClangProject::dump(const SourceInformation &sourceInformation, Connection *
 {
 }
 
+void ClangProject::diagnose(const SourceInformation &sourceInformation)
+{
+    const uint32_t fileId = Location::insertFile(sourceInformation.sourceFile);
+    ClangUnit *&unit = units[fileId];
+    if (!unit) {
+        unit = new ClangUnit(this);
+        unit->jobFinished.connectAsync(this, &ClangProject::onJobFinished);
+    }
+
+    MutexLocker locker(&mutex);
+    unit->diagnose(sourceInformation);
+}
+
 void ClangProject::index(const SourceInformation &sourceInformation, Type type)
 {
     const uint32_t fileId = Location::insertFile(sourceInformation.sourceFile);
@@ -1593,7 +1622,7 @@ void ClangProject::index(const SourceInformation &sourceInformation, Type type)
     }
 
     MutexLocker locker(&mutex);
-    if (unit->reindex(sourceInformation)) {
+    if (unit->reindex(sourceInformation, ClangIndexInfo::Index)) {
         if (!pendingJobs++)
             timer.restart();
     }
@@ -2070,6 +2099,7 @@ public:
     {
         return shared_ptr<Project>(new ClangProject(path));
     }
+    virtual String name() const { return "clang"; }
 };
 
 extern "C" RTagsPlugin* createInstance()

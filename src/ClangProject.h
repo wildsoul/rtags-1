@@ -86,6 +86,7 @@ public:
     using Project::index;
     virtual void index(const SourceInformation &sourceInformation, Type type);
     virtual void remove(const Path &sourceFile);
+    virtual void diagnose(const SourceInformation &sourceInformation);
     virtual bool isIndexing() const;
 
     virtual Set<Path> dependencies(const Path &path, DependencyMode mode) const;

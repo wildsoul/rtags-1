@@ -1350,6 +1350,7 @@ public:
     {
         return shared_ptr<Project>(new RParserProject(path));
     }
+    virtual String name() const { return "rparser"; }
 };
 
 extern "C" RTagsPlugin* createInstance()

@@ -95,6 +95,8 @@ int main(int argc, char** argv)
         { "disable-plugin", required_argument, 0, 'p' },
         { "thread-pool-stack-size", required_argument, 0, 'T' },
         { "thread-pool-size", required_argument, 0, 'j' },
+        { "index-plugin", required_argument, 0, 'X' },
+        { "diagnostic-plugin", required_argument, 0, 't' },
         { 0, 0, 0, 0 }
     };
     const String shortOptions = Rct::shortOptions(opts);
@@ -185,6 +187,8 @@ int main(int argc, char** argv)
     options.options = Server::Wall;
     options.excludeFilters = String(EXCLUDEFILTER_DEFAULT).split(';');
     options.dataDir = String::format<128>("%s.rtags", Path::home().constData());
+    options.indexPlugin = "rparser";
+    options.diagnosticPlugin = "clang";
 
     const char *logFile = 0;
     unsigned logFlags = 0;
@@ -237,6 +241,12 @@ int main(int argc, char** argv)
             break;
         case 's':
             enableSigHandler = true;
+            break;
+        case 'X':
+            options.indexPlugin = optarg;
+            break;
+        case 't':
+            options.diagnosticPlugin = optarg;
             break;
         case 'r': {
             const int large = atoi(optarg);

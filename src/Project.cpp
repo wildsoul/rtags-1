@@ -178,6 +178,14 @@ void Project::indexFile(const SourceInformation &sourceInformation, Type type)
         mWatcher.watch(dir);
 
     index(sourceInformation, type);
+    /*
+    if (Server::options().indexPlugin != Server::options().diagnosticPlugin) {
+        const RTagsPluginFactory& factory = Server::factory();
+        RTagsPlugin* plugin = factory.plugin(Server::options().diagnosticPlugin);
+        if (plugin)
+            plugin->diagnose(sourceInformation);
+    }
+    */
     mSourceIndexed(static_pointer_cast<Project>(shared_from_this()), sourceInformation);
 
     static const char *names[] = { "index", "dirty", "dump", "restore" };
