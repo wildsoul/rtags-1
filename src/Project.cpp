@@ -179,14 +179,22 @@ void Project::indexFile(const SourceInformation &sourceInformation, Type type)
         mWatcher.watch(dir);
 
     mIndexer->index(sourceInformation, type);
-    /*
-    if (Server::options().indexPlugin != Server::options().diagnosticPlugin) {
+    if (type == Dirty && Server::options().indexPlugin != Server::options().diagnosticPlugin) {
         const RTagsPluginFactory& factory = Server::factory();
         RTagsPlugin* plugin = factory.plugin(Server::options().diagnosticPlugin);
-        if (plugin)
-            plugin->diagnose(sourceInformation);
+        if (plugin) {
+            shared_ptr<Indexer> indexer = plugin->indexer();
+            if (!indexer)
+                indexer = plugin->init(static_pointer_cast<Project>(shared_from_this()));
+            if (indexer) {
+                indexer->diagnose(sourceInformation);
+            } else {
+                error() << "got plugin but no indexer for diagnose";
+            }
+        } else {
+            error() << "no plugin for diagnose, wanted" << Server::options().diagnosticPlugin;
+        }
     }
-    */
     mSourceIndexed(static_pointer_cast<Project>(shared_from_this()), sourceInformation);
 
     static const char *names[] = { "index", "dirty", "dump", "restore" };
