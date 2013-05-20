@@ -342,7 +342,7 @@ static inline QList<CPlusPlus::Usage> findUsages(QPointer<CppModelManager> manag
     while (snap != end) {
         CPlusPlus::Document::Ptr doc = snap.value();
         const CPlusPlus::Control* control = doc->control();
-        if (control->hasSymbol(symbol)) {
+        if (control->findIdentifier(symbolId->chars(), symbolId->size())) {
             CPlusPlus::LookupContext lookup(doc, snapshot);
             CPlusPlus::FindUsages find(lookup);
             find(symbol);
