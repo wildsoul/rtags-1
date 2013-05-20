@@ -46,6 +46,10 @@ public:
     RParserProject(const Path &path);
     virtual ~RParserProject();
 
+    using Project::save;
+    virtual bool save(Serializer &serializer);
+    virtual bool restore(Deserializer &deserializer);
+
     virtual Cursor cursor(const Location &location) const;
     virtual void status(const String &query, Connection *conn, unsigned queryFlags) const;
     virtual void dump(const SourceInformation &sourceInformation, Connection *conn) const;

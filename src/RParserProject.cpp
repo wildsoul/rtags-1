@@ -1,6 +1,7 @@
 #include "RParserProject.h"
 #include "QueryMessage.h"
 #include "RTagsPlugin.h"
+#include "Server.h"
 #include "SourceInformation.h"
 #include <rct/Connection.h>
 #include <rct/Log.h>
@@ -776,6 +777,7 @@ void RParserProject::run()
                   job->fileName().toTilde().constData(), localFiles);
             if (jobs.isEmpty()) {
                 error() << "Parsed" << taken << "files in" << timer.elapsed() << "ms";
+                startSaveTimer();
             }
         }
 
@@ -1306,6 +1308,33 @@ void RParserProject::remove(const Path &sourceFile)
             doc->releaseSourceAndAST();
     }
     manager->removeFromSnapshot(qfile);
+}
+
+bool RParserProject::save(Serializer &serializer)
+{
+    if (!Server::saveFileIds())
+        return false;
+    serializer << sourceInfos();
+    return true;
+}
+
+bool RParserProject::restore(Deserializer &deserializer)
+{
+    if (!Server::loadFileIds())
+        return false;
+
+    SourceInformationMap sources;
+    deserializer >> sources;
+    setSourceInfos(sources);
+
+    SourceInformationMap::const_iterator source = sources.begin();
+    const SourceInformationMap::const_iterator end = sources.end();
+    while (source != end) {
+        index(source->second, Restore);
+        ++source;
+    }
+
+    return true;
 }
 
 class RParserProjectPlugin : public RTagsPlugin
