@@ -742,11 +742,16 @@ void RParserProject::run()
         }
 
         Set<Path> indexed;
+        int taken = 0;
+        int localFiles;
+
+        StopWatch timer;
 
         assert(!jobs.isEmpty());
         changeState(Indexing);
         while (!jobs.isEmpty()) {
             RParserJob* job = jobs.dequeue();
+            ++taken;
             locker.unlock();
             processJob(job);
             locker.relock();
@@ -755,12 +760,22 @@ void RParserProject::run()
             assert(doc);
             assert(!job->fileName().isEmpty());
             indexed.insert(job->fileName());
+            localFiles = 1;
             QList<CPlusPlus::Document::Include> includes = doc->includes();
             foreach(const CPlusPlus::Document::Include& include, includes) {
                 // ### this really shouldn't happen but it does
                 if (include.fileName().isEmpty())
                     continue;
+                ++localFiles;
                 indexed.insert(fromQString(include.fileName()));
+            }
+
+            error("[%3d%%] %d/%d %s %s, Files: %d",
+                  static_cast<int>(round(taken / static_cast<double>(jobs.size() + taken) * 100.0)),
+                  taken, jobs.size() + taken, String::formatTime(time(0), String::Time).constData(),
+                  job->fileName().toTilde().constData(), localFiles);
+            if (jobs.isEmpty()) {
+                error() << "Parsed" << taken << "files in" << timer.elapsed() << "ms";
             }
         }
 
