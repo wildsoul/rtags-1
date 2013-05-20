@@ -1118,11 +1118,21 @@ Set<Path> RParserProject::files(int mode) const
 {
     Set<Path> result;
 
-    QMutexLocker locker(&mutex);
-    waitForState(GreaterOrEqual, CollectingNames);
-
     const bool wantHeaders = (mode & HeaderFiles);
     const bool wantSources = (mode & SourceFiles);
+    if (wantSources && !wantHeaders) {
+        const SourceInformationMap& sources = sourceInfos();
+        SourceInformationMap::const_iterator source = sources.begin();
+        const SourceInformationMap::const_iterator end = sources.end();
+        while (source != end) {
+            result.insert(source->first);
+            ++source;
+        }
+        return result;
+    }
+
+    QMutexLocker locker(&mutex);
+    waitForState(GreaterOrEqual, CollectingNames);
 
     const CPlusPlus::Snapshot& snapshot = manager->snapshot();
     CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
@@ -1328,13 +1338,6 @@ bool RParserProject::restore(Deserializer &deserializer)
     SourceInformationMap sources;
     deserializer >> sources;
     setSourceInfos(sources);
-
-    SourceInformationMap::const_iterator source = sources.begin();
-    const SourceInformationMap::const_iterator end = sources.end();
-    while (source != end) {
-        index(source->second, Restore);
-        ++source;
-    }
 
     return true;
 }
