@@ -913,7 +913,8 @@ void RParserProject::processJob(RParserJob* job)
 
 void RParserProject::dirty(const Set<Path>& files)
 {
-#warning implement me
+    QMutexLocker locker(&mutex);
+    dirtyFiles(files);
 }
 
 inline void RParserProject::dirtyFiles(const Set<Path>& files)
