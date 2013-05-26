@@ -18,9 +18,96 @@
 #include <typeinfo>
 #include <cxxabi.h>
 
-
 using namespace CppTools;
 using namespace CppTools::Internal;
+
+class RParserJob;
+class RParserUnit;
+
+class RParserThread : public QThread
+{
+public:
+    RParserThread();
+    ~RParserThread();
+
+    static RParserThread* instance();
+
+    void setProject(const shared_ptr<Project>& project);
+    void enqueue(RParserJob* job);
+
+    enum State { Starting,
+                 Indexing,
+                 CollectingNames,
+                 Idle };
+
+    enum WaitMode { GreaterOrEqual, Equal };
+    class WaitForState
+    {
+    public:
+        WaitForState(WaitMode mode, State state);
+        ~WaitForState();
+
+    private:
+        QMutexLocker locker;
+    };
+
+    enum FindSymbolMode { Swap, Declaration, Definition };
+    CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& srcLoc,
+                                  FindSymbolMode mode, const QByteArray& src,
+                                  CPlusPlus::LookupContext& ctx, Location& loc) const;
+
+    // IndexerRParser APIs
+    void dump(const SourceInformation& sourceInformation, Connection* conn) const;
+    void dirty(const Set<Path>& files);
+    Project::Cursor cursor(const Location& location) const;
+    void references(const Location& location, unsigned flags, const List<Path>& pathFilters, Connection* conn) const;
+    Set<Path> files(int mode) const;
+    Set<Path> dependencies(const Path& path, Indexer::DependencyMode mode) const;
+    Set<String> listSymbols(const String &string, const List<Path> &pathFilter) const;
+    Set<Project::Cursor> findCursors(const String &string, const List<Path> &pathFilter) const;
+    Set<Project::Cursor> cursors(const Path &path) const;
+    bool isIndexing() const;
+    void remove(const Path& sourceFile);
+
+protected:
+    void run();
+
+private:
+    void changeState(State st);
+    void waitForState(WaitMode m, State st) const;
+    void processJob(RParserJob* job);
+    RParserUnit* findUnit(const Path& path);
+    void collectNames(const Set<Path>& files);
+    void dirtyFiles(const Set<Path>& files);
+    struct RParserName
+    {
+        Set<Path> paths;
+        Set<String> names;
+        void merge(const RParserName& other);
+    };
+    void mergeNames(const Map<String, RParserName>& lnames);
+
+private:
+    QQueue<RParserJob*> jobs;
+    mutable QMutex mutex;
+    mutable QWaitCondition wait;
+    QWaitCondition jobsAvailable;
+    State state;
+    QPointer<CppTools::Internal::CppModelManager> manager;
+    DocumentParser* parser;
+    Map<QString, QString> headerToSource;
+    Map<Path, RParserUnit*> units;
+    shared_ptr<Project> project;
+    Map<String, RParserName> names;
+    int appargc;
+    QApplication* app;
+
+    static RParserThread* inst;
+
+    friend class WaitForState;
+    friend class DocumentParser;
+    friend class FindSymbols;
+};
 
 static CPlusPlus::Overview overview;
 
@@ -177,15 +264,15 @@ public:
     void operator()(CPlusPlus::Symbol* symbol);
 
     Set<CPlusPlus::Symbol*> symbols() { return syms; }
-    Map<String, IndexerRParser::RParserName> symbolNames() { return names; };
+    Map<String, RParserThread::RParserName> symbolNames() { return names; };
 
 private:
     Mode mode;
     Set<CPlusPlus::Symbol*> syms;
-    Map<String, IndexerRParser::RParserName> names;
+    Map<String, RParserThread::RParserName> names;
 };
 
-void IndexerRParser::RParserName::merge(const RParserName& other)
+void RParserThread::RParserName::merge(const RParserName& other)
 {
     paths += other.paths;
     names += other.names;
@@ -214,7 +301,7 @@ bool FindSymbols::preVisit(CPlusPlus::Symbol* symbol)
     if (mode == Cursors) {
         syms.insert(symbol);
     } else {
-        IndexerRParser::RParserName cur;
+        RParserThread::RParserName cur;
         cur.paths.insert(Path(symbol->fileName()));
 
         QVector<int> seps;
@@ -302,7 +389,7 @@ static inline CPlusPlus::Symbol *canonicalSymbol(CPlusPlus::Scope *scope, const 
 }
 
 DocumentParser::DocumentParser(QPointer<CppModelManager> mgr,
-                               IndexerRParser* parser,
+                               RParserThread* parser,
                                QObject* parent)
     : QObject(parent), symbolCount(0), manager(mgr), rparser(parser)
 {
@@ -477,6 +564,51 @@ void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
     //error("bound %s with mgr %p", qPrintable(doc->fileName()), manager.data());
 }
 
+class DumpAST : public CPlusPlus::ASTVisitor
+{
+public:
+    DumpAST(CPlusPlus::TranslationUnit *unit, Connection *conn)
+        : CPlusPlus::ASTVisitor(unit), mDepth(0), mConn(conn)
+    {}
+
+protected:
+    virtual bool preVisit(CPlusPlus::AST *ast)
+    {
+        const char *id = typeid(*ast).name();
+        char *cppId = abi::__cxa_demangle(id, 0, 0, 0);
+        id = cppId;
+        String fill(mDepth * 2, ' ');
+        String context;
+        for (unsigned idx = ast->firstToken(); idx<ast->lastToken(); ++idx) {
+            const char *str = spell(idx);
+            if (!context.isEmpty()) {
+                char last = context.last();
+                if (last == ',') {
+                    context += ' ';
+                } else if (isalnum(last) && isalnum(*str)) {
+                    context += ' ';
+                } else if (*str == '{' || *str == '}') {
+                    context += ' ';
+                }
+            }
+            context.append(str);
+        }
+
+        mConn->write<128>("%s%s: %s", fill.constData(), id, context.constData());
+        free(cppId);
+        ++mDepth;
+        return true;
+    }
+
+    void postVisit(CPlusPlus::AST *)
+    {
+        --mDepth;
+    }
+private:
+    int mDepth;
+    Connection *mConn;
+};
+
 class RParserUnit
 {
 public:
@@ -572,14 +704,6 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
     }
 }
 
-RParserUnit* IndexerRParser::findUnit(const Path& path)
-{
-    Map<Path, RParserUnit*>::const_iterator unit = units.find(path);
-    if (unit == units.end())
-        return 0;
-    return unit->second;
-}
-
 static inline Project::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
 {
     if (sym->asEnum()) {
@@ -649,12 +773,12 @@ static inline Project::Cursor makeCursor(const CPlusPlus::Symbol* sym,
     return cursor;
 }
 
-CPlusPlus::Symbol* IndexerRParser::findSymbol(CPlusPlus::Document::Ptr doc,
-                                              const Location& srcLoc,
-                                              FindSymbolMode mode,
-                                              const QByteArray& src,
-                                              CPlusPlus::LookupContext& lookup,
-                                              Location& loc) const
+CPlusPlus::Symbol* RParserThread::findSymbol(CPlusPlus::Document::Ptr doc,
+                                             const Location& srcLoc,
+                                             FindSymbolMode mode,
+                                             const QByteArray& src,
+                                             CPlusPlus::LookupContext& lookup,
+                                             Location& loc) const
 {
     const unsigned line = srcLoc.line();
     const unsigned column = srcLoc.column();
@@ -811,14 +935,26 @@ CPlusPlus::Symbol* IndexerRParser::findSymbol(CPlusPlus::Document::Ptr doc,
     return sym;
 }
 
-IndexerRParser::IndexerRParser(shared_ptr<Project> project)
-    : Indexer(project), state(Starting), parser(0), appargc(0), app(new QApplication(appargc, 0))
+RParserThread::WaitForState::WaitForState(WaitMode mode, State state)
+    : locker(&RParserThread::instance()->mutex)
+{
+    RParserThread::instance()->waitForState(mode, state);
+}
+
+RParserThread::WaitForState::~WaitForState()
+{
+}
+
+RParserThread* RParserThread::inst = 0;
+
+RParserThread::RParserThread()
+    : QThread(), state(Starting), parser(0), appargc(0), app(new QApplication(appargc, 0))
 {
     start();
     moveToThread(this);
 }
 
-IndexerRParser::~IndexerRParser()
+RParserThread::~RParserThread()
 {
     Map<Path, RParserUnit*>::const_iterator unit = units.begin();
     const Map<Path, RParserUnit*>::const_iterator end = units.end();
@@ -830,91 +966,15 @@ IndexerRParser::~IndexerRParser()
     delete app;
 }
 
-void IndexerRParser::run()
-{
-    manager = new CppModelManager;
-    parser = new DocumentParser(manager, this);
-    QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
-                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
-
-    QMutexLocker locker(&mutex);
-    assert(state == Starting || state == Indexing);
-    if (jobs.isEmpty())
-        changeState(Idle);
-    locker.unlock();
-
-    for (;;) {
-        locker.relock();
-        while (jobs.isEmpty()) {
-            assert(state == Idle);
-            jobsAvailable.wait(&mutex);
-        }
-
-        Set<Path> indexed;
-        int taken = 0;
-        int localFiles;
-
-        StopWatch timer;
-
-        assert(!jobs.isEmpty());
-        changeState(Indexing);
-        while (!jobs.isEmpty()) {
-            RParserJob* job = jobs.dequeue();
-            ++taken;
-            locker.unlock();
-            processJob(job);
-            locker.relock();
-
-            CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(job->fileName()));
-            assert(doc);
-            assert(!job->fileName().isEmpty());
-            indexed.insert(job->fileName());
-            localFiles = 1;
-            QList<CPlusPlus::Document::Include> includes = doc->includes();
-            foreach(const CPlusPlus::Document::Include& include, includes) {
-                // ### this really shouldn't happen but it does
-                if (include.fileName().isEmpty())
-                    continue;
-                ++localFiles;
-                indexed.insert(fromQString(include.fileName()));
-            }
-
-            error("[%3d%%] %d/%d %s %s, Files: %d",
-                  static_cast<int>(round(taken / static_cast<double>(jobs.size() + taken) * 100.0)),
-                  taken, jobs.size() + taken, String::formatTime(time(0), String::Time).constData(),
-                  job->fileName().toTilde().constData(), localFiles);
-            if (jobs.isEmpty()) {
-                error() << "Parsed" << taken << "files in" << timer.elapsed() << "ms";
-                if (job->type != Project::Restore)
-                    mProject->startSaveTimer();
-            }
-        }
-
-        changeState(CollectingNames);
-        assert(jobs.isEmpty());
-        locker.unlock();
-        collectNames(indexed);
-        locker.relock();
-
-        if (!jobs.isEmpty()) {
-            locker.unlock();
-            continue;
-        }
-
-        changeState(Idle);
-        locker.unlock();
-    }
-}
-
-static inline const char* stateName(IndexerRParser::State st)
+static inline const char* stateName(RParserThread::State st)
 {
     struct states {
-        IndexerRParser::State state;
+        RParserThread::State state;
         const char* name;
-    } static s[] = { { IndexerRParser::Starting, "starting" },
-                     { IndexerRParser::Indexing, "indexing" },
-                     { IndexerRParser::CollectingNames, "collectingnames" },
-                     { IndexerRParser::Idle, "idle" } };
+    } static s[] = { { RParserThread::Starting, "starting" },
+                     { RParserThread::Indexing, "indexing" },
+                     { RParserThread::CollectingNames, "collectingnames" },
+                     { RParserThread::Idle, "idle" } };
     for (unsigned int i = 0; i < sizeof(s); ++i) {
         if (s[i].state == st)
             return s[i].name;
@@ -923,7 +983,7 @@ static inline const char* stateName(IndexerRParser::State st)
 }
 
 // needs to be called with mutex locked
-void IndexerRParser::changeState(State st)
+void RParserThread::changeState(State st)
 {
     if (state == st)
         return;
@@ -933,7 +993,7 @@ void IndexerRParser::changeState(State st)
 }
 
 // needs to be called with mutex locked
-void IndexerRParser::waitForState(WaitMode m, State st) const
+void RParserThread::waitForState(WaitMode m, State st) const
 {
     for (;;) {
         if (m == GreaterOrEqual && state >= st)
@@ -944,58 +1004,31 @@ void IndexerRParser::waitForState(WaitMode m, State st) const
     }
 }
 
-void IndexerRParser::status(const String &query, Connection *conn, unsigned queryFlags) const
+void RParserThread::setProject(const shared_ptr<Project>& proj)
 {
+    QMutexLocker locker(&mutex);
+    project = proj;
 }
 
-class DumpAST : public CPlusPlus::ASTVisitor
+void RParserThread::enqueue(RParserJob* job)
 {
-public:
-    DumpAST(CPlusPlus::TranslationUnit *unit, Connection *conn)
-        : CPlusPlus::ASTVisitor(unit), mDepth(0), mConn(conn)
-    {}
+    QMutexLocker locker(&mutex);
+    jobs.enqueue(job);
+    state = Indexing; // ### a bit of a hack
+    jobsAvailable.wakeOne();
+}
 
-protected:
-    virtual bool preVisit(CPlusPlus::AST *ast)
-    {
-        const char *id = typeid(*ast).name();
-        char *cppId = abi::__cxa_demangle(id, 0, 0, 0);
-        id = cppId;
-        String fill(mDepth * 2, ' ');
-        String context;
-        for (unsigned idx = ast->firstToken(); idx<ast->lastToken(); ++idx) {
-            const char *str = spell(idx);
-            if (!context.isEmpty()) {
-                char last = context.last();
-                if (last == ',') {
-                    context += ' ';
-                } else if (isalnum(last) && isalnum(*str)) {
-                    context += ' ';
-                } else if (*str == '{' || *str == '}') {
-                    context += ' ';
-                }
-            }
-            context.append(str);
-        }
-
-        mConn->write<128>("%s%s: %s", fill.constData(), id, context.constData());
-        free(cppId);
-        ++mDepth;
-        return true;
-    }
-
-    void postVisit(CPlusPlus::AST *)
-    {
-        --mDepth;
-    }
-private:
-    int mDepth;
-    Connection *mConn;
-};
-
-
-void IndexerRParser::dump(const SourceInformation &sourceInformation, Connection *conn) const
+RParserThread* RParserThread::instance()
 {
+    if (!inst)
+        inst = new RParserThread;
+    return inst;
+}
+
+void RParserThread::dump(const SourceInformation& sourceInformation, Connection* conn) const
+{
+    WaitForState wait(GreaterOrEqual, CollectingNames);
+
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(sourceInformation.sourceFile));
     if (!doc) {
         conn->write<64>("Don't seem to have %s indexed", sourceInformation.sourceFile.constData());
@@ -1005,100 +1038,15 @@ void IndexerRParser::dump(const SourceInformation &sourceInformation, Connection
     dump.accept(doc->translationUnit()->ast());
 }
 
-void IndexerRParser::processJob(RParserJob* job)
-{
-    const Path& fileName = job->info.sourceFile;
-    //error() << "  indexing" << fileName;
-    RParserUnit* unit = findUnit(fileName);
-    if (!unit) {
-        unit = new RParserUnit;
-        unit->info = job->info;
-        units[fileName] = unit;
-    }
-    unit->reindex(manager);
-}
-
-void IndexerRParser::dirty(const Set<Path>& files)
+void RParserThread::dirty(const Set<Path>& files)
 {
     QMutexLocker locker(&mutex);
     dirtyFiles(files);
 }
 
-inline void IndexerRParser::dirtyFiles(const Set<Path>& files)
+Project::Cursor RParserThread::cursor(const Location& location) const
 {
-    Map<String, RParserName>::iterator name = names.begin();
-    while (name != names.end()) {
-        if ((name->second.paths - files).isEmpty())
-            names.erase(name++);
-        else
-            ++name;
-    }
-}
-
-void IndexerRParser::mergeNames(const Map<String, RParserName>& lnames)
-{
-    Map<String, RParserName>::const_iterator name = lnames.begin();
-    const Map<String, RParserName>::const_iterator end = lnames.end();
-    while (name != end) {
-        names[name->first].merge(name->second);
-        ++name;
-    }
-}
-
-void IndexerRParser::collectNames(const Set<Path>& files)
-{
-    dirtyFiles(files);
-
-    Set<Path>::const_iterator file = files.begin();
-    const Set<Path>::const_iterator end = files.end();
-    while (file != end) {
-        CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(*file));
-        if (!doc) {
-            error() << "No document for" << *file << "in collectNames";
-            ++file;
-            continue;
-        }
-
-        CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
-        if (globalNamespace) {
-            FindSymbols find(FindSymbols::ListSymbols);
-            find(globalNamespace);
-            mergeNames(find.symbolNames());
-        }
-
-        const String fileName(file->fileName());
-        RParserName rname;
-        rname.names.insert(fileName);
-        rname.paths.insert(*file);
-        names[fileName].merge(rname);
-
-        ++file;
-    }
-}
-
-int IndexerRParser::symbolCount(const Path& file)
-{
-    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(file));
-    if (!doc)
-        return -1;
-    // ### do something better here
-    return doc->globalSymbolCount();
-}
-
-void IndexerRParser::index(const SourceInformation &sourceInformation, Project::Type type)
-{
-    QMutexLocker locker(&mutex);
-    jobs.enqueue(new RParserJob(sourceInformation, type));
-    state = Indexing; // ### a bit of a hack
-    jobsAvailable.wakeOne();
-    //waitForState(GreaterOrEqual, CollectingNames);
-    //return symbolCount(sourceInformation.sourceFile);
-}
-
-Project::Cursor IndexerRParser::cursor(const Location &location) const
-{
-    QMutexLocker locker(&mutex);
-    waitForState(GreaterOrEqual, CollectingNames);
+    WaitForState wait(GreaterOrEqual, CollectingNames);
 
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
     if (!doc)
@@ -1147,11 +1095,9 @@ Project::Cursor IndexerRParser::cursor(const Location &location) const
     return cursor;
 }
 
-void IndexerRParser::references(const Location& location, unsigned flags,
-                                 const List<Path> &pathFilters, Connection *conn) const
+void RParserThread::references(const Location& location, unsigned flags, const List<Path>& pathFilters, Connection* conn) const
 {
-    QMutexLocker locker(&mutex);
-    waitForState(GreaterOrEqual, CollectingNames);
+    WaitForState wait(GreaterOrEqual, CollectingNames);
 
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
     if (!doc)
@@ -1222,14 +1168,14 @@ void IndexerRParser::references(const Location& location, unsigned flags,
     conn->write("`");
 }
 
-Set<Path> IndexerRParser::files(int mode) const
+Set<Path> RParserThread::files(int mode) const
 {
     Set<Path> result;
 
-    const bool wantHeaders = (mode & HeaderFiles);
-    const bool wantSources = (mode & SourceFiles);
+    const bool wantHeaders = (mode & Indexer::HeaderFiles);
+    const bool wantSources = (mode & Indexer::SourceFiles);
     if (wantSources && !wantHeaders) {
-        const SourceInformationMap& sources = mProject->sourceInfos();
+        const SourceInformationMap& sources = project->sourceInfos();
         SourceInformationMap::const_iterator source = sources.begin();
         const SourceInformationMap::const_iterator end = sources.end();
         while (source != end) {
@@ -1239,8 +1185,7 @@ Set<Path> IndexerRParser::files(int mode) const
         return result;
     }
 
-    QMutexLocker locker(&mutex);
-    waitForState(GreaterOrEqual, CollectingNames);
+    WaitForState wait(GreaterOrEqual, CollectingNames);
 
     const CPlusPlus::Snapshot& snapshot = manager->snapshot();
     CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
@@ -1263,24 +1208,23 @@ Set<Path> IndexerRParser::files(int mode) const
     return result;
 }
 
-Set<Path> IndexerRParser::dependencies(const Path &path, DependencyMode mode) const
+Set<Path> RParserThread::dependencies(const Path& path, Indexer::DependencyMode mode) const
 {
     Set<Path> result;
 
-    QMutexLocker locker(&mutex);
-    waitForState(GreaterOrEqual, CollectingNames);
+    WaitForState wait(GreaterOrEqual, CollectingNames);
 
     // ### perhaps keep this around
     CPlusPlus::DependencyTable table;
     table.build(manager->snapshot());
 
-    if (mode == DependsOnArg) {
+    if (mode == Indexer::DependsOnArg) {
         const QStringList deps = table.filesDependingOn(QString::fromStdString(path));
         foreach(const QString dep, deps) {
             result.insert(fromQString(dep));
         }
     } else {
-        assert(mode == ArgDependsOn);
+        assert(mode == Indexer::ArgDependsOn);
         const QString qpath = QString::fromStdString(path);
 
         const QHash<QString, QStringList>& t = table.dependencyTable();
@@ -1296,10 +1240,9 @@ Set<Path> IndexerRParser::dependencies(const Path &path, DependencyMode mode) co
     return result;
 }
 
-Set<String> IndexerRParser::listSymbols(const String &string, const List<Path> &pathFilter) const
+Set<String> RParserThread::listSymbols(const String &string, const List<Path> &pathFilter) const
 {
-    QMutexLocker locker(&mutex);
-    waitForState(GreaterOrEqual, Idle);
+    WaitForState wait(GreaterOrEqual, Idle);
 
     Set<String> ret;
     Set<Path> paths = pathFilter.toSet();
@@ -1315,10 +1258,9 @@ Set<String> IndexerRParser::listSymbols(const String &string, const List<Path> &
     return ret;
 }
 
-Set<Project::Cursor> IndexerRParser::findCursors(const String &string, const List<Path> &pathFilter) const
+Set<Project::Cursor> RParserThread::findCursors(const String &string, const List<Path> &pathFilter) const
 {
-    QMutexLocker locker(&mutex);
-    waitForState(GreaterOrEqual, Idle);
+    WaitForState wait(GreaterOrEqual, Idle);
 
     Set<Path> cand, paths = pathFilter.toSet();
     {
@@ -1373,10 +1315,9 @@ Set<Project::Cursor> IndexerRParser::findCursors(const String &string, const Lis
     return cursors;
 }
 
-Set<Project::Cursor> IndexerRParser::cursors(const Path &path) const
+Set<Project::Cursor> RParserThread::cursors(const Path &path) const
 {
-    QMutexLocker locker(&mutex);
-    waitForState(GreaterOrEqual, CollectingNames);
+    WaitForState wait(GreaterOrEqual, CollectingNames);
 
     CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(path));
     if (!doc)
@@ -1399,6 +1340,244 @@ Set<Project::Cursor> IndexerRParser::cursors(const Path &path) const
     return cursors;
 }
 
+bool RParserThread::isIndexing() const
+{
+    QMutexLocker locker(&mutex);
+    return state == Indexing;
+}
+
+void RParserThread::remove(const Path& sourceFile)
+{
+    WaitForState wait(GreaterOrEqual, Idle);
+    const QString qfile = QString::fromStdString(sourceFile);
+    {
+        CPlusPlus::Document::Ptr doc = manager->document(qfile);
+        if (doc)
+            doc->releaseSourceAndAST();
+    }
+    manager->removeFromSnapshot(qfile);
+}
+
+RParserUnit* RParserThread::findUnit(const Path& path)
+{
+    Map<Path, RParserUnit*>::const_iterator unit = units.find(path);
+    if (unit == units.end())
+        return 0;
+    return unit->second;
+}
+
+void RParserThread::processJob(RParserJob* job)
+{
+    const Path& fileName = job->info.sourceFile;
+    //error() << "  indexing" << fileName;
+    RParserUnit* unit = findUnit(fileName);
+    if (!unit) {
+        unit = new RParserUnit;
+        unit->info = job->info;
+        units[fileName] = unit;
+    }
+    unit->reindex(manager);
+}
+
+inline void RParserThread::dirtyFiles(const Set<Path>& files)
+{
+    Map<String, RParserName>::iterator name = names.begin();
+    while (name != names.end()) {
+        if ((name->second.paths - files).isEmpty())
+            names.erase(name++);
+        else
+            ++name;
+    }
+}
+
+void RParserThread::mergeNames(const Map<String, RParserName>& lnames)
+{
+    Map<String, RParserName>::const_iterator name = lnames.begin();
+    const Map<String, RParserName>::const_iterator end = lnames.end();
+    while (name != end) {
+        names[name->first].merge(name->second);
+        ++name;
+    }
+}
+
+void RParserThread::collectNames(const Set<Path>& files)
+{
+    dirtyFiles(files);
+
+    Set<Path>::const_iterator file = files.begin();
+    const Set<Path>::const_iterator end = files.end();
+    while (file != end) {
+        CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(*file));
+        if (!doc) {
+            error() << "No document for" << *file << "in collectNames";
+            ++file;
+            continue;
+        }
+
+        CPlusPlus::Namespace* globalNamespace = doc->globalNamespace();
+        if (globalNamespace) {
+            FindSymbols find(FindSymbols::ListSymbols);
+            find(globalNamespace);
+            mergeNames(find.symbolNames());
+        }
+
+        const String fileName(file->fileName());
+        RParserName rname;
+        rname.names.insert(fileName);
+        rname.paths.insert(*file);
+        names[fileName].merge(rname);
+
+        ++file;
+    }
+}
+
+void RParserThread::run()
+{
+    manager = new CppModelManager;
+    parser = new DocumentParser(manager, this);
+    QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
+                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
+
+    QMutexLocker locker(&mutex);
+    assert(state == Starting || state == Indexing);
+    if (jobs.isEmpty())
+        changeState(Idle);
+    locker.unlock();
+
+    for (;;) {
+        locker.relock();
+        while (jobs.isEmpty()) {
+            assert(state == Idle);
+            jobsAvailable.wait(&mutex);
+        }
+
+        Set<Path> indexed;
+        int taken = 0;
+        int localFiles;
+
+        StopWatch timer;
+
+        assert(!jobs.isEmpty());
+        changeState(Indexing);
+        while (!jobs.isEmpty()) {
+            RParserJob* job = jobs.dequeue();
+            ++taken;
+            locker.unlock();
+            processJob(job);
+            locker.relock();
+
+            CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(job->fileName()));
+            assert(doc);
+            assert(!job->fileName().isEmpty());
+            indexed.insert(job->fileName());
+            localFiles = 1;
+            QList<CPlusPlus::Document::Include> includes = doc->includes();
+            foreach(const CPlusPlus::Document::Include& include, includes) {
+                // ### this really shouldn't happen but it does
+                if (include.fileName().isEmpty())
+                    continue;
+                ++localFiles;
+                indexed.insert(fromQString(include.fileName()));
+            }
+
+            error("[%3d%%] %d/%d %s %s, Files: %d",
+                  static_cast<int>(round(taken / static_cast<double>(jobs.size() + taken) * 100.0)),
+                  taken, jobs.size() + taken, String::formatTime(time(0), String::Time).constData(),
+                  job->fileName().toTilde().constData(), localFiles);
+            if (jobs.isEmpty()) {
+                error() << "Parsed" << taken << "files in" << timer.elapsed() << "ms";
+                if (job->type != Project::Restore)
+                    project->startSaveTimer();
+            }
+        }
+
+        changeState(CollectingNames);
+        assert(jobs.isEmpty());
+        locker.unlock();
+        collectNames(indexed);
+        locker.relock();
+
+        if (!jobs.isEmpty()) {
+            locker.unlock();
+            continue;
+        }
+
+        changeState(Idle);
+        locker.unlock();
+    }
+}
+
+IndexerRParser::IndexerRParser(shared_ptr<Project> project)
+    : Indexer(project)
+{
+    RParserThread::instance()->setProject(project);
+}
+
+IndexerRParser::~IndexerRParser()
+{
+}
+
+void IndexerRParser::status(const String &query, Connection *conn, unsigned queryFlags) const
+{
+}
+
+void IndexerRParser::dump(const SourceInformation &sourceInformation, Connection *conn) const
+{
+    RParserThread::instance()->dump(sourceInformation, conn);
+}
+
+void IndexerRParser::dirty(const Set<Path>& files)
+{
+    RParserThread::instance()->dirty(files);
+}
+
+void IndexerRParser::index(const SourceInformation &sourceInformation, Project::Type type)
+{
+    RParserThread* thread = RParserThread::instance();
+    thread->enqueue(new RParserJob(sourceInformation, type));
+}
+
+void IndexerRParser::activate()
+{
+    RParserThread::instance()->setProject(mProject);
+}
+
+Project::Cursor IndexerRParser::cursor(const Location &location) const
+{
+    return RParserThread::instance()->cursor(location);
+}
+
+void IndexerRParser::references(const Location& location, unsigned flags,
+                                 const List<Path> &pathFilters, Connection *conn) const
+{
+    RParserThread::instance()->references(location, flags, pathFilters, conn);
+}
+
+Set<Path> IndexerRParser::files(int mode) const
+{
+    return RParserThread::instance()->files(mode);
+}
+
+Set<Path> IndexerRParser::dependencies(const Path &path, DependencyMode mode) const
+{
+    return RParserThread::instance()->dependencies(path, mode);
+}
+
+Set<String> IndexerRParser::listSymbols(const String &string, const List<Path> &pathFilter) const
+{
+    return RParserThread::instance()->listSymbols(string, pathFilter);
+}
+
+Set<Project::Cursor> IndexerRParser::findCursors(const String &string, const List<Path> &pathFilter) const
+{
+    return RParserThread::instance()->findCursors(string, pathFilter);
+}
+
+Set<Project::Cursor> IndexerRParser::cursors(const Path &path) const
+{
+    return RParserThread::instance()->cursors(path);
+}
+
 bool IndexerRParser::codeCompleteAt(const Location &location, const String &source,
                                      Connection *conn)
 {
@@ -1413,21 +1592,12 @@ String IndexerRParser::fixits(const Path &/*path*/) const
 
 bool IndexerRParser::isIndexing() const
 {
-    QMutexLocker locker(&mutex);
-    return state == Indexing;
+    return RParserThread::instance()->isIndexing();
 }
 
 void IndexerRParser::remove(const Path &sourceFile)
 {
-    QMutexLocker locker(&mutex);
-    waitForState(GreaterOrEqual, Idle);
-    const QString qfile = QString::fromStdString(sourceFile);
-    {
-        CPlusPlus::Document::Ptr doc = manager->document(qfile);
-        if (doc)
-            doc->releaseSourceAndAST();
-    }
-    manager->removeFromSnapshot(qfile);
+    RParserThread::instance()->remove(sourceFile);
 }
 
 bool IndexerRParser::save(Serializer &serializer)

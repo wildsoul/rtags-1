@@ -31,6 +31,8 @@ void Project::init()
     assert(!isValid());
     mFileManager.reset(new FileManager);
     mFileManager->init(static_pointer_cast<Project>(shared_from_this()));
+    assert(mIndexer);
+    mIndexer->activate();
 }
 
 bool Project::save()

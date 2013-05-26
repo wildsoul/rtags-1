@@ -44,6 +44,7 @@ public:
     virtual bool codeCompleteAt(const Location &location, const String &source, Connection *conn) = 0;
     virtual String fixits(const Path &path) const = 0;
     virtual void dirty(const Set<Path> &files) = 0;
+    virtual void activate() { }
 
 protected:
     shared_ptr<Project> mProject;

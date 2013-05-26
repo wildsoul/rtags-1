@@ -16,14 +16,14 @@
 #include <QWaitCondition>
 #include <QQueue>
 
-class IndexerRParser;
+class RParserThread;
 
 class DocumentParser : public QObject
 {
     Q_OBJECT
 public:
     DocumentParser(QPointer<CppTools::Internal::CppModelManager> mgr,
-                   IndexerRParser* parser,
+                   RParserThread* parser,
                    QObject* parent = 0);
     ~DocumentParser();
 
@@ -35,12 +35,9 @@ private slots:
 public:
     int symbolCount;
     QPointer<CppTools::Internal::CppModelManager> manager;
-    IndexerRParser* rparser;
+    RParserThread* rparser;
 };
 
-class DocumentParser;
-class RParserUnit;
-class RParserJob;
 class IndexerRParser : public QThread, public Indexer
 {
 public:
@@ -65,57 +62,7 @@ public:
     virtual bool isIndexing() const;
     virtual void remove(const Path &sourceFile);
     virtual void dirty(const Set<Path>& files);
-
-    enum State { Starting,
-                 Indexing,
-                 CollectingNames,
-                 Idle };
-
-protected:
-    void run();
-
-private:
-    void changeState(State st);
-    enum WaitMode { GreaterOrEqual, Equal };
-    void waitForState(WaitMode m, State st) const;
-
-    void processJob(RParserJob* job);
-    void collectNames(const Set<Path>& files);
-    int symbolCount(const Path& file);
-
-    RParserUnit* findUnit(const Path& path);
-    enum FindSymbolMode { Swap, Declaration, Definition };
-    CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& srcLoc,
-                                  FindSymbolMode mode, const QByteArray& src,
-                                  CPlusPlus::LookupContext& ctx, Location& loc) const;
-    void dirtyFiles(const Set<Path>& files);
-
-    mutable QMutex mutex;
-    mutable QWaitCondition wait;
-    QWaitCondition jobsAvailable;
-    State state;
-    QQueue<RParserJob*> jobs;
-    Map<Path, RParserUnit*> units;
-
-    struct RParserName
-    {
-        Set<Path> paths;
-        Set<String> names;
-        void merge(const RParserName& other);
-    };
-    void mergeNames(const Map<String, RParserName>& lnames);
-
-    Map<String, RParserName> names;
-    Map<QString, QString> headerToSource;
-    DocumentParser* parser;
-    QPointer<CppTools::Internal::CppModelManager> manager;
-
-    int appargc;
-    QApplication* app;
-
-    friend class DocumentParser;
-    friend class RParserUnit;
-    friend class FindSymbols;
+    virtual void activate();
 };
 
 #endif
