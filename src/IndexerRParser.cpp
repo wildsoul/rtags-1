@@ -769,10 +769,13 @@ CPlusPlus::Symbol* IndexerRParser::findSymbol(CPlusPlus::Document::Ptr doc,
                 }
             } else if (mode != Definition) {
                 QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
-                if (!decls.isEmpty()) {
-                    // ### take the first one I guess?
-                    debug("swapping, taking the first decl");
-                    sym = decls.first();
+                // take the first non-forward decl
+                foreach(CPlusPlus::Declaration* decl, decls) {
+                    if (decl->isForwardClassDeclaration())
+                        continue;
+                    debug("swapping, taking the decl");
+                    sym = decl;
+                    break;
                 }
             }
         }
