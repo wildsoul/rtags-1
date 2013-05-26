@@ -478,9 +478,10 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
     const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
     while (snap != end) {
         CPlusPlus::Document::Ptr doc = snap.value();
+        debug("looking in %s", qPrintable(doc->fileName()));
         const CPlusPlus::Control* control = doc->control();
         if (control->findIdentifier(symbolId->chars(), symbolId->size())) {
-            debug("found in %s?", qPrintable(doc->fileName()));
+            debug("found?");
             CPlusPlus::LookupContext lookup(doc, snapshot);
             CPlusPlus::ClassOrNamespace* ns = lookup.globalNamespace();
             foreach (const CPlusPlus::Name* name, scope) {
@@ -792,8 +793,10 @@ CPlusPlus::Symbol* RParserThread::findSymbol(CPlusPlus::Document::Ptr doc,
         if (!scope)
             scope = doc->globalNamespace();
 
+        debug("looking in %s", qPrintable(doc->fileName()));
         CPlusPlus::ASTPath path(doc);
         QList<CPlusPlus::AST*> asts = path(line, column);
+        debug("ast path size %d", asts.size());
         while (!asts.isEmpty()) {
             CPlusPlus::AST* ast = asts.takeLast();
 
@@ -1011,8 +1014,10 @@ void RParserThread::setProject(const shared_ptr<Project>& proj)
     delete manager.data();
     manager = new CppModelManager;
     parser = new DocumentParser(manager, this);
+    manager.data()->moveToThread(this);
+    parser->moveToThread(this);
     QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
-                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
+                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)), Qt::DirectConnection);
 
     // create and enqueue jobs
     const Map<Path, RParserUnit*>& unitsMap = units[project->path()];
