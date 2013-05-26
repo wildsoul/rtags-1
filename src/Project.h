@@ -25,6 +25,7 @@ public:
     bool save();
     void startSaveTimer();
     void unload();
+    void activate();
 
     shared_ptr<FileManager> fileManager() const { return mFileManager; }
 

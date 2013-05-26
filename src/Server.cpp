@@ -140,6 +140,7 @@ shared_ptr<Project> Server::addProject(const Path &path)
             }
             if (indexer) {
                 project->setIndexer(indexer);
+                setCurrentProject(project);
                 return project;
             }
         }
@@ -949,6 +950,7 @@ shared_ptr<Project> Server::setCurrentProject(const shared_ptr<Project> &project
             error() << "error opening" << (sOptions.dataDir + ".currentProject") << "for write";
         }
 
+        project->activate();
         if (!project->isValid())
             loadProject(project);
         return project;

@@ -32,6 +32,7 @@ public:
 
     static RParserThread* instance();
 
+    void init(const shared_ptr<Project>& project);
     void setProject(const shared_ptr<Project>& project);
     void enqueue(RParserJob* job);
 
@@ -96,7 +97,7 @@ private:
     QPointer<CppTools::Internal::CppModelManager> manager;
     DocumentParser* parser;
     Map<QString, QString> headerToSource;
-    Map<Path, RParserUnit*> units;
+    Map<Path, Map<Path, RParserUnit*> > units;
     shared_ptr<Project> project;
     Map<String, RParserName> names;
     int appargc;
@@ -956,11 +957,16 @@ RParserThread::RParserThread()
 
 RParserThread::~RParserThread()
 {
-    Map<Path, RParserUnit*>::const_iterator unit = units.begin();
-    const Map<Path, RParserUnit*>::const_iterator end = units.end();
-    while (unit != end) {
-        delete unit->second;
-        ++unit;
+    Map<Path, Map<Path, RParserUnit*> >::const_iterator unitsMap = units.begin();
+    const Map<Path, Map<Path, RParserUnit*> >::const_iterator unitsEnd = units.begin();
+    while (unitsMap != unitsEnd) {
+        Map<Path, RParserUnit*>::const_iterator unit = unitsMap->second.begin();
+        const Map<Path, RParserUnit*>::const_iterator end = unitsMap->second.end();
+        while (unit != end) {
+            delete unit->second;
+            ++unit;
+        }
+        ++unitsMap;
     }
     delete parser;
     delete app;
@@ -1004,10 +1010,43 @@ void RParserThread::waitForState(WaitMode m, State st) const
     }
 }
 
-void RParserThread::setProject(const shared_ptr<Project>& proj)
+void RParserThread::init(const shared_ptr<Project>& proj)
 {
     QMutexLocker locker(&mutex);
+    if (!project)
+        project = proj;
+}
+
+void RParserThread::setProject(const shared_ptr<Project>& proj)
+{
+    if (proj == project)
+        return;
+
+    WaitForState wait(GreaterOrEqual, Idle);
     project = proj;
+
+    qDeleteAll(jobs);
+    jobs.clear();
+
+    names.clear();
+
+    // delete the manager and recreate with new units
+    delete parser;
+    delete manager.data();
+    manager = new CppModelManager;
+    parser = new DocumentParser(manager, this);
+    QObject::connect(manager.data(), SIGNAL(documentUpdated(CPlusPlus::Document::Ptr)),
+                     parser, SLOT(onDocumentUpdated(CPlusPlus::Document::Ptr)));
+
+    // create and enqueue jobs
+    const Map<Path, RParserUnit*>& unitsMap = units[project->path()];
+    Map<Path, RParserUnit*>::const_iterator it = unitsMap.begin();
+    const Map<Path, RParserUnit*>::const_iterator end = unitsMap.end();
+    while (it != end) {
+        jobs.enqueue(new RParserJob(it->second->info, Project::Restore));
+        ++it;
+    }
+    jobsAvailable.wakeOne();
 }
 
 void RParserThread::enqueue(RParserJob* job)
@@ -1360,8 +1399,9 @@ void RParserThread::remove(const Path& sourceFile)
 
 RParserUnit* RParserThread::findUnit(const Path& path)
 {
-    Map<Path, RParserUnit*>::const_iterator unit = units.find(path);
-    if (unit == units.end())
+    const Map<Path, RParserUnit*>& unitsMap = units[project->path()];
+    Map<Path, RParserUnit*>::const_iterator unit = unitsMap.find(path);
+    if (unit == unitsMap.end())
         return 0;
     return unit->second;
 }
@@ -1374,7 +1414,7 @@ void RParserThread::processJob(RParserJob* job)
     if (!unit) {
         unit = new RParserUnit;
         unit->info = job->info;
-        units[fileName] = unit;
+        units[project->path()][fileName] = unit;
     }
     unit->reindex(manager);
 }
@@ -1489,6 +1529,7 @@ void RParserThread::run()
                 if (job->type != Project::Restore)
                     project->startSaveTimer();
             }
+            delete job;
         }
 
         changeState(CollectingNames);
@@ -1510,7 +1551,7 @@ void RParserThread::run()
 IndexerRParser::IndexerRParser(shared_ptr<Project> project)
     : Indexer(project)
 {
-    RParserThread::instance()->setProject(project);
+    RParserThread::instance()->init(project);
 }
 
 IndexerRParser::~IndexerRParser()
