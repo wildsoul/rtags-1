@@ -94,7 +94,7 @@ private:
     mutable QWaitCondition wait;
     QWaitCondition jobsAvailable;
     State state;
-    QPointer<CppTools::Internal::CppModelManager> manager;
+    QPointer<CppModelManager> manager;
     DocumentParser* parser;
     Map<QString, QString> headerToSource;
     Map<Path, Map<Path, RParserUnit*> > units;
@@ -412,18 +412,107 @@ QByteArray DocumentParser::debugScope(CPlusPlus::Scope* scope, const QByteArray&
     return src.mid(scope->startOffset(), scope->endOffset() - scope->startOffset());
 }
 
-static inline QList<CPlusPlus::Usage> findUsages(QPointer<CppModelManager> manager,
-                                                 CPlusPlus::Symbol* symbol)
+static inline Project::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
+{
+    if (sym->asEnum()) {
+        //error("enum");
+        return Project::Cursor::Enum;
+    } else if (sym->asFunction()) {
+        //error("function");
+        return Project::Cursor::MemberFunctionDeclaration;
+    } else if (sym->asNamespace()) {
+        //error("namespace");
+        return Project::Cursor::Namespace;
+    } else if (sym->asTemplate()) {
+        //error("template");
+    } else if (sym->asNamespaceAlias()) {
+        //error("namespaceAlias");
+    } else if (sym->asForwardClassDeclaration()) {
+        //error("forward class");
+        return Project::Cursor::Class;
+    } else if (sym->asClass()) {
+        //error("class");
+        return Project::Cursor::Class;
+    } else if (sym->asUsingNamespaceDirective()) {
+        //error("using 1");
+    } else if (sym->asUsingDeclaration()) {
+        //error("using 2");
+    } else if (sym->asDeclaration()) {
+        //error("decl");
+        return Project::Cursor::Variable; // ### ???
+    } else if (sym->asArgument()) {
+        //error("arg");
+        return Project::Cursor::Variable;
+    } else if (sym->asTypenameArgument()) {
+        //error("typename");
+    } else if (sym->asBaseClass()) {
+        //error("baseclass");
+    } else if (sym->asQtPropertyDeclaration()) {
+    } else if (sym->asQtEnum()){
+    } else if (sym->asObjCBaseClass()) {
+    } else if (sym->asObjCBaseProtocol()) {
+    } else if (sym->asObjCClass()) {
+    } else if (sym->asObjCForwardClassDeclaration()) {
+    } else if (sym->asObjCProtocol()) {
+    } else if (sym->asObjCForwardProtocolDeclaration()) {
+    } else if (sym->asObjCMethod()) {
+    } else if (sym->asObjCPropertyDeclaration()) {
+    }
+    return Project::Cursor::Invalid;
+}
+
+static inline void writeUsage(const CPlusPlus::Usage& usage, const CPlusPlus::Document::Ptr& doc,
+                              unsigned flags, const Set<Path>& pathFilter, Connection* conn)
+{
+    const bool wantContext = !(flags & QueryMessage::NoContext);
+    const bool wantVirtuals = flags & QueryMessage::FindVirtuals;
+    const bool wantAll = flags & QueryMessage::AllReferences;
+
+    Project::Cursor::Kind kind = Project::Cursor::Reference;
+    if (doc) {
+        CPlusPlus::Symbol* refsym = doc->lastVisibleSymbolAt(usage.line, usage.col + 1);
+        if (refsym
+            && refsym->line() == static_cast<unsigned>(usage.line)
+            && refsym->column() == static_cast<unsigned>(usage.col + 1)) {
+            if (wantVirtuals && !wantAll) {
+                if (CPlusPlus::Function *funTy = refsym->type()->asFunctionType()) {
+                    if (funTy->isVirtual() || funTy->isPureVirtual())
+                        kind = Project::Cursor::MemberFunctionDeclaration;
+                    else
+                        return;
+                } else {
+                    return;
+                }
+            } else if (wantAll) {
+                kind = symbolKind(refsym);
+            } else {
+                return;
+            }
+        }
+    }
+    if (kind == Project::Cursor::Reference && (wantVirtuals && !wantAll))
+        return;
+    //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
+    if (wantContext) {
+        conn->write<256>("%s:%d:%d %c\t%s", qPrintable(usage.path), usage.line, usage.col + 1,
+                         Project::Cursor::kindToChar(kind), qPrintable(usage.lineText));
+    } else {
+        conn->write<256>("%s:%d:%d", qPrintable(usage.path), usage.line, usage.col + 1);
+    }
+}
+
+static inline void writeUsages(const QPointer<CppModelManager>& manager, CPlusPlus::Symbol* symbol,
+                               unsigned flags, const List<Path>& pathFilter, Connection* conn)
 {
     const CPlusPlus::Identifier *symbolId = symbol->identifier();
     if (!symbolId) {
         error("no symbol id in findUsages");
-        return QList<CPlusPlus::Usage>();
+        return;
     }
 
     const CPlusPlus::Snapshot& snapshot = manager->snapshot();
-
-    QList<CPlusPlus::Usage> usages;
+    const Set<Path> paths = pathFilter.toSet();
+    const bool pass = paths.isEmpty();
 
     // ### Use QFuture for this?
 
@@ -436,12 +525,15 @@ static inline QList<CPlusPlus::Usage> findUsages(QPointer<CppModelManager> manag
             CPlusPlus::LookupContext lookup(doc, snapshot);
             CPlusPlus::FindUsages find(lookup);
             find(symbol);
-            usages.append(find.usages());
+            foreach(const CPlusPlus::Usage& usage, find.usages()) {
+                if (!pass && !paths.contains(fromQString(usage.path)))
+                    continue;
+                const CPlusPlus::Document::Ptr doc = manager->document(usage.path);
+                writeUsage(usage, doc, flags, paths, conn);
+            }
         }
         ++snap;
     }
-
-    return usages;
 }
 
 static inline void debugSymbol(const CPlusPlus::Symbol* sym)
@@ -680,55 +772,6 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
         preprocessor.resetEnvironment();
         ++build;
     }
-}
-
-static inline Project::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
-{
-    if (sym->asEnum()) {
-        //error("enum");
-        return Project::Cursor::Enum;
-    } else if (sym->asFunction()) {
-        //error("function");
-        return Project::Cursor::MemberFunctionDeclaration;
-    } else if (sym->asNamespace()) {
-        //error("namespace");
-        return Project::Cursor::Namespace;
-    } else if (sym->asTemplate()) {
-        //error("template");
-    } else if (sym->asNamespaceAlias()) {
-        //error("namespaceAlias");
-    } else if (sym->asForwardClassDeclaration()) {
-        //error("forward class");
-        return Project::Cursor::Class;
-    } else if (sym->asClass()) {
-        //error("class");
-        return Project::Cursor::Class;
-    } else if (sym->asUsingNamespaceDirective()) {
-        //error("using 1");
-    } else if (sym->asUsingDeclaration()) {
-        //error("using 2");
-    } else if (sym->asDeclaration()) {
-        //error("decl");
-        return Project::Cursor::Variable; // ### ???
-    } else if (sym->asArgument()) {
-        //error("arg");
-        return Project::Cursor::Variable;
-    } else if (sym->asTypenameArgument()) {
-        //error("typename");
-    } else if (sym->asBaseClass()) {
-        //error("baseclass");
-    } else if (sym->asQtPropertyDeclaration()) {
-    } else if (sym->asQtEnum()){
-    } else if (sym->asObjCBaseClass()) {
-    } else if (sym->asObjCBaseProtocol()) {
-    } else if (sym->asObjCClass()) {
-    } else if (sym->asObjCForwardClassDeclaration()) {
-    } else if (sym->asObjCProtocol()) {
-    } else if (sym->asObjCForwardProtocolDeclaration()) {
-    } else if (sym->asObjCMethod()) {
-    } else if (sym->asObjCPropertyDeclaration()) {
-    }
-    return Project::Cursor::Invalid;
 }
 
 static inline Location makeLocation(CPlusPlus::Symbol* sym)
@@ -1136,56 +1179,10 @@ void RParserThread::references(const Location& location, unsigned flags, const L
 
     CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
     CPlusPlus::Symbol* sym = findSymbol(doc, location, Declaration, src, lookup, cursor.location);
-    if (!sym) {
+    if (!sym)
         return;
-    }
 
-    QList<CPlusPlus::Usage> usages = findUsages(manager, sym);
-    const bool wantContext = !(flags & QueryMessage::NoContext);
-    const bool wantVirtuals = flags & QueryMessage::FindVirtuals;
-    const bool wantAll = flags & QueryMessage::AllReferences;
-
-    const Set<Path> paths = pathFilters.toSet();
-    const bool pass = paths.isEmpty();
-
-    foreach(const CPlusPlus::Usage& usage, usages) {
-        if (!pass && !paths.contains(fromQString(usage.path)))
-            continue;
-
-        CPlusPlus::Document::Ptr doc = manager->document(usage.path);
-        Project::Cursor::Kind kind = Project::Cursor::Reference;
-        if (doc) {
-            CPlusPlus::Symbol* refsym = doc->lastVisibleSymbolAt(usage.line, usage.col + 1);
-            if (refsym
-                && refsym->line() == static_cast<unsigned>(usage.line)
-                && refsym->column() == static_cast<unsigned>(usage.col + 1)) {
-                if (wantVirtuals && !wantAll) {
-                    if (CPlusPlus::Function *funTy = refsym->type()->asFunctionType()) {
-                        if (funTy->isVirtual() || funTy->isPureVirtual())
-                            kind = Project::Cursor::MemberFunctionDeclaration;
-                        else
-                            continue;
-                    } else {
-                        continue;
-                    }
-                } else if (wantAll) {
-                    kind = symbolKind(refsym);
-                } else {
-                    continue;
-                }
-            }
-        }
-        if (kind == Project::Cursor::Reference && (wantVirtuals && !wantAll))
-            continue;
-        //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
-        if (wantContext) {
-            conn->write<256>("%s:%d:%d %c\t%s", qPrintable(usage.path), usage.line, usage.col + 1,
-                             Project::Cursor::kindToChar(kind), qPrintable(usage.lineText));
-        } else {
-            conn->write<256>("%s:%d:%d", qPrintable(usage.path), usage.line, usage.col + 1);
-        }
-    }
-    conn->write("`");
+    writeUsages(manager, sym, flags, pathFilters, conn);
 }
 
 Set<Path> RParserThread::files(int mode) const
