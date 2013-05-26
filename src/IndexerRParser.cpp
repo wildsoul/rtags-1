@@ -144,6 +144,15 @@ static inline String symbolName(const CPlusPlus::Symbol* symbol)
     return symbolName;
 }
 
+static inline void debugSymbol(const CPlusPlus::Symbol* sym)
+{
+    if (!sym) {
+        error("no symbol");
+        return;
+    }
+    error("symbol %s:%u:%u", sym->fileName(), sym->line(), sym->column());
+}
+
 class RParserJob
 {
 public:
@@ -156,6 +165,74 @@ public:
 
     SourceInformation info;
     Project::Type type;
+};
+
+class FindScopeCandidates : protected CPlusPlus::SymbolVisitor
+{
+public:
+    FindScopeCandidates(CPlusPlus::Document::Ptr d, CPlusPlus::Symbol* f)
+        : doc(d), find(f)
+    {
+    }
+
+    QList<QList<const CPlusPlus::Name*> > operator()(CPlusPlus::Symbol* symbol)
+    {
+        accept(symbol);
+        return candidates;
+    }
+
+protected:
+    bool after(CPlusPlus::Symbol* symbol) const
+    {
+        return (symbol->line() > find->line() || (symbol->line() == find->line() && symbol->column() > find->column()));
+    }
+
+    bool contains(CPlusPlus::Scope* scope) const
+    {
+        unsigned line, column;
+        CPlusPlus::TranslationUnit* unit = doc->translationUnit();
+        unit->getPosition(scope->startOffset(), &line, &column);
+        if (find->line() < line || (find->line() == line && find->column() < column))
+            return false;
+        unit->getPosition(scope->endOffset(), &line, &column);
+        if (find->line() > line || (find->line() == line && find->column() > column))
+            return false;
+        return true;
+    }
+
+    virtual bool visit(CPlusPlus::UsingNamespaceDirective *nsd)
+    {
+        if (after(nsd))
+            return false;
+        candidates.append(CPlusPlus::LookupContext::fullyQualifiedName(nsd));
+        return true;
+    }
+
+    virtual bool visit(CPlusPlus::Namespace *ns)
+    {
+        const CPlusPlus::Namespace* global = doc->globalNamespace();
+        if (ns == global)
+            return true;
+        // check if the symbol we're looking for is inside this namespace scope
+        if (!contains(ns))
+            return false;
+
+        QList<const CPlusPlus::Name*> current;
+        do {
+            current.prepend(ns->name());
+            ns = ns->enclosingNamespace();
+            if (ns == global)
+                break;
+        } while (ns);
+        candidates.append(current);
+        return true;
+    }
+
+private:
+    CPlusPlus::Document::Ptr doc;
+    CPlusPlus::Symbol* find;
+
+    QList<QList<const CPlusPlus::Name*> > candidates;
 };
 
 class ReallyFindScopeAt: protected CPlusPlus::SymbolVisitor
@@ -536,16 +613,8 @@ static inline void writeUsages(const QPointer<CppModelManager>& manager, CPlusPl
     }
 }
 
-static inline void debugSymbol(const CPlusPlus::Symbol* sym)
-{
-    if (!sym) {
-        error("no symbol");
-        return;
-    }
-    error("symbol %s:%u:%u", sym->fileName(), sym->line(), sym->column());
-}
-
 static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> manager,
+                                                      CPlusPlus::Document::Ptr doc,
                                                       CPlusPlus::Symbol* symbol)
 {
     const CPlusPlus::Identifier *symbolId = symbol->identifier();
@@ -559,10 +628,18 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
     if (qname.isEmpty())
         return 0;
 
+    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+
     QList<const CPlusPlus::Name*> scope = qname;
     scope.removeLast();
 
-    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+    QList<QList<const CPlusPlus::Name*> > candidates;
+    if (scope.isEmpty()) {
+        // no scope, get candidate scopes
+        FindScopeCandidates scopes(doc, symbol);
+        candidates = scopes(doc->globalNamespace());
+        debug("candidates size %d", candidates.size());
+    }
 
     // ### Use QFuture for this?
 
@@ -575,15 +652,36 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
         if (control->findIdentifier(symbolId->chars(), symbolId->size())) {
             debug("found?");
             CPlusPlus::LookupContext lookup(doc, snapshot);
-            CPlusPlus::ClassOrNamespace* ns = lookup.globalNamespace();
-            foreach (const CPlusPlus::Name* name, scope) {
-                ns = ns->lookupType(name);
-                if (!ns)
-                    return 0;
+            CPlusPlus::ClassOrNamespace* ns = 0;
+            if (!scope.isEmpty()) {
+                ns = lookup.globalNamespace();
+                foreach (const CPlusPlus::Name* name, scope) {
+                    ns = ns->lookupType(name);
+                    if (!ns)
+                        return 0;
+                }
+                CPlusPlus::Symbol* newsym = ns->lookupInScope(qname);
+                if (newsym && !newsym->isForwardClassDeclaration())
+                    return newsym;
+            } else {
+                // try the candidates
+                foreach(const QList<const CPlusPlus::Name*>& candidate, candidates) {
+                    debug("checking candidate %s", qPrintable(overview.prettyName(candidate)));
+                    ns = lookup.globalNamespace();
+                    foreach (const CPlusPlus::Name* name, candidate) {
+                        ns = ns->lookupType(name);
+                        if (!ns)
+                            break;
+                    }
+                    if (ns) {
+                        debug("candidate ok, checking if symbol exists");
+                        const QList<const CPlusPlus::Name*> nname = candidate + qname;
+                        CPlusPlus::Symbol* newsym = ns->lookupInScope(nname);
+                        if (newsym && !newsym->isForwardClassDeclaration())
+                            return newsym;
+                    }
+                }
             }
-            CPlusPlus::Symbol* newsym = ns->lookupInScope(qname);
-            if (newsym && !newsym->isForwardClassDeclaration())
-                return newsym;
         }
         ++snap;
     }
@@ -946,7 +1044,7 @@ CPlusPlus::Symbol* RParserThread::findSymbol(CPlusPlus::Document::Ptr doc,
                 debug("swapping");
                 sym = cls;
             } else {
-                CPlusPlus::Symbol* newsym = findSymbolReferenced(manager, sym);
+                CPlusPlus::Symbol* newsym = findSymbolReferenced(manager, doc, sym);
                 if (newsym) {
                     debug("swapping with ref");
                     sym = newsym;
