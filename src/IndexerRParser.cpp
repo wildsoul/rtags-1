@@ -356,6 +356,84 @@ static inline QList<CPlusPlus::Usage> findUsages(QPointer<CppModelManager> manag
     return usages;
 }
 
+static inline void debugSymbol(const CPlusPlus::Symbol* sym)
+{
+    if (!sym) {
+        error("no symbol");
+        return;
+    }
+    error("symbol %s:%u:%u", sym->fileName(), sym->line(), sym->column());
+}
+
+static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> manager,
+                                                      CPlusPlus::Symbol* symbol)
+{
+    const CPlusPlus::Identifier *symbolId = symbol->identifier();
+    if (!symbolId) {
+        error("no symbol id in findSymbolReferenced");
+        return 0;
+    }
+
+    const QList<const CPlusPlus::Name*> qname = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
+
+    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+
+    // ### Use QFuture for this?
+
+    CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
+    const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
+    while (snap != end) {
+        CPlusPlus::Document::Ptr doc = snap.value();
+        const CPlusPlus::Control* control = doc->control();
+        if (control->findIdentifier(symbolId->chars(), symbolId->size())) {
+            //CPlusPlus::ClassOrNamespace* global = lookup.globalNamespace();
+            CPlusPlus::Namespace* global = doc->globalNamespace();
+            CPlusPlus::Symbol* newsym = global->find(symbolId);
+            if (newsym) {
+                QList<const CPlusPlus::Name*> nname = CPlusPlus::LookupContext::fullyQualifiedName(newsym);
+                if (CPlusPlus::compareFullyQualifiedName(qname, nname)) {
+                    return newsym;
+                } else {
+                    // if we're a function, find our declarations
+                    if (CPlusPlus::Function* function = newsym->type()->asFunctionType()) {
+                        CPlusPlus::LookupContext lookup(doc, snapshot);
+                        CppTools::SymbolFinder finder;
+                        QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, function);
+                        foreach(CPlusPlus::Declaration* decl, decls) {
+                            nname = CPlusPlus::LookupContext::fullyQualifiedName(decl);
+                            if (CPlusPlus::compareFullyQualifiedName(qname, nname)) {
+                                return decl;
+                            }
+                            // check our parent scopes
+                            CPlusPlus::Symbol* scope = decl->enclosingScope();
+                            while (scope) {
+                                nname = CPlusPlus::LookupContext::fullyQualifiedName(scope);
+                                if (CPlusPlus::compareFullyQualifiedName(qname, nname)) {
+                                    return scope;
+                                }
+                                scope = scope->enclosingScope();
+                            }
+                        }
+                    } else {
+                        // check our parent scopes
+                        CPlusPlus::Symbol* scope = newsym->enclosingScope();
+                        while (scope) {
+                            nname = CPlusPlus::LookupContext::fullyQualifiedName(scope);
+                            if (CPlusPlus::compareFullyQualifiedName(qname, nname)) {
+                                return scope;
+                            }
+                            scope = scope->enclosingScope();
+                        }
+                    }
+                }
+            }
+        }
+        ++snap;
+    }
+
+    return 0;
+}
+
 void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
 {
     // seems I need to keep this around
@@ -572,11 +650,11 @@ static inline Project::Cursor makeCursor(const CPlusPlus::Symbol* sym,
 }
 
 CPlusPlus::Symbol* IndexerRParser::findSymbol(CPlusPlus::Document::Ptr doc,
-                                               const Location& srcLoc,
-                                               FindSymbolMode mode,
-                                               const QByteArray& src,
-                                               CPlusPlus::LookupContext& lookup,
-                                               Location& loc) const
+                                              const Location& srcLoc,
+                                              FindSymbolMode mode,
+                                              const QByteArray& src,
+                                              CPlusPlus::LookupContext& lookup,
+                                              Location& loc) const
 {
     const unsigned line = srcLoc.line();
     const unsigned column = srcLoc.column();
@@ -676,6 +754,7 @@ CPlusPlus::Symbol* IndexerRParser::findSymbol(CPlusPlus::Document::Ptr doc,
         return 0;
 
     if (CPlusPlus::Function* func = sym->type()->asFunctionType()) {
+        debug("function type");
         // if we find a definition that's different from the declaration then replace
         CppTools::SymbolFinder finder;
         CPlusPlus::Symbol* definition = finder.findMatchingDefinition(sym, manager->snapshot(), true);
@@ -684,24 +763,45 @@ CPlusPlus::Symbol* IndexerRParser::findSymbol(CPlusPlus::Document::Ptr doc,
         }
         if (definition) {
             if (sym != definition) {
-                if (mode == Definition || mode == Swap)
+                if (mode == Definition || mode == Swap) {
+                    debug("swapping, taking the def");
                     sym = definition;
+                }
             } else if (mode != Definition) {
                 QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, func);
                 if (!decls.isEmpty()) {
                     // ### take the first one I guess?
+                    debug("swapping, taking the first decl");
                     sym = decls.first();
                 }
             }
         }
     } else {
-        // check if we are a forward class declaration
-        if (CPlusPlus::ForwardClassDeclaration* fwd = sym->asForwardClassDeclaration()) {
-            // we are, try to find our real declaration
+        if (sym->type()->asClassType())
+            debug("class type");
+        if (sym->type()->asForwardClassDeclarationType())
+            debug("fwd class type");
+        bool wants = false;
+        if (sym->asBaseClass())
+            wants = true;
+        else if (sym->asClass())
+            wants = true;
+        else if (sym->asForwardClassDeclaration())
+            wants = true;
+        if (wants) {
+            debug("wants");
             CppTools::SymbolFinder finder;
-            CPlusPlus::Class* cls = finder.findMatchingClassDeclaration(fwd, manager->snapshot());
-            if (cls)
+            CPlusPlus::Class* cls = finder.findMatchingClassDeclaration(sym, manager->snapshot());
+            if (cls) {
+                debug("swapping");
                 sym = cls;
+            } else {
+                CPlusPlus::Symbol* newsym = findSymbolReferenced(manager, sym);
+                if (newsym) {
+                    debug("swapping with ref");
+                    sym = newsym;
+                }
+            }
         }
     }
 
