@@ -462,7 +462,13 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
         return 0;
     }
 
-    const QList<const CPlusPlus::Name*> qname = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
+    debug("looking for symbol %s (%s)", symbolId->chars(), rtagsQualifiedName(symbol, All).constData());
+    QList<const CPlusPlus::Name*> qname = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
+    if (qname.isEmpty())
+        return 0;
+
+    QList<const CPlusPlus::Name*> scope = qname;
+    scope.removeLast();
 
     const CPlusPlus::Snapshot& snapshot = manager->snapshot();
 
@@ -474,47 +480,17 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
         CPlusPlus::Document::Ptr doc = snap.value();
         const CPlusPlus::Control* control = doc->control();
         if (control->findIdentifier(symbolId->chars(), symbolId->size())) {
-            //CPlusPlus::ClassOrNamespace* global = lookup.globalNamespace();
-            CPlusPlus::Namespace* global = doc->globalNamespace();
-            CPlusPlus::Symbol* newsym = global->find(symbolId);
-            if (newsym) {
-                QList<const CPlusPlus::Name*> nname = CPlusPlus::LookupContext::fullyQualifiedName(newsym);
-                if (CPlusPlus::compareFullyQualifiedName(qname, nname)) {
-                    return newsym;
-                } else {
-                    // if we're a function, find our declarations
-                    if (CPlusPlus::Function* function = newsym->type()->asFunctionType()) {
-                        CPlusPlus::LookupContext lookup(doc, snapshot);
-                        CppTools::SymbolFinder finder;
-                        QList<CPlusPlus::Declaration*> decls = finder.findMatchingDeclaration(lookup, function);
-                        foreach(CPlusPlus::Declaration* decl, decls) {
-                            nname = CPlusPlus::LookupContext::fullyQualifiedName(decl);
-                            if (CPlusPlus::compareFullyQualifiedName(qname, nname)) {
-                                return decl;
-                            }
-                            // check our parent scopes
-                            CPlusPlus::Symbol* scope = decl->enclosingScope();
-                            while (scope) {
-                                nname = CPlusPlus::LookupContext::fullyQualifiedName(scope);
-                                if (CPlusPlus::compareFullyQualifiedName(qname, nname)) {
-                                    return scope;
-                                }
-                                scope = scope->enclosingScope();
-                            }
-                        }
-                    } else {
-                        // check our parent scopes
-                        CPlusPlus::Symbol* scope = newsym->enclosingScope();
-                        while (scope) {
-                            nname = CPlusPlus::LookupContext::fullyQualifiedName(scope);
-                            if (CPlusPlus::compareFullyQualifiedName(qname, nname)) {
-                                return scope;
-                            }
-                            scope = scope->enclosingScope();
-                        }
-                    }
-                }
+            debug("found in %s?", qPrintable(doc->fileName()));
+            CPlusPlus::LookupContext lookup(doc, snapshot);
+            CPlusPlus::ClassOrNamespace* ns = lookup.globalNamespace();
+            foreach (const CPlusPlus::Name* name, scope) {
+                ns = ns->lookupType(name);
+                if (!ns)
+                    return 0;
             }
+            CPlusPlus::Symbol* newsym = ns->lookupInScope(qname);
+            if (newsym && !newsym->isForwardClassDeclaration())
+                return newsym;
         }
         ++snap;
     }
