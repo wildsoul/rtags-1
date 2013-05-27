@@ -688,22 +688,28 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
             debug("found?");
             CPlusPlus::LookupContext lookup(doc, snapshot);
             CPlusPlus::ClassOrNamespace* ns = lookup.globalNamespace();
+            assert(ns);
             foreach (const CPlusPlus::Name* name, scope) {
                 ns = ns->lookupType(name);
-                if (!ns && candidates.isEmpty())
-                    return 0;
+                if (!ns) {
+                    if (candidates.isEmpty())
+                        return 0;
+                    break;
+                }
             }
             if (ns) {
                 CPlusPlus::Symbol* newsym = ns->lookupInScope(qname);
-                if (newsym && !newsym->isForwardClassDeclaration())
-                    return newsym;
+                if (newsym) {
+                    if (!newsym->isForwardClassDeclaration())
+                        return newsym;
+                    continue;
+                }
             }
 
             if (!candidates.isEmpty()) {
                 // try the candidates
                 foreach(const QList<const CPlusPlus::Name*>& candidate, candidates) {
-                    QList<const CPlusPlus::Name*> candidateScope = candidate + qname;
-                    candidateScope.removeLast();
+                    const QList<const CPlusPlus::Name*> candidateScope = candidate + scope;
 
                     debug("checking candidate %s", qPrintable(overview.prettyName(candidateScope)));
                     ns = lookup.globalNamespace();
@@ -728,7 +734,8 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
 }
 
 static inline void writeBaseUsages(const QPointer<CppModelManager>& manager, const CPlusPlus::Document::Ptr& doc,
-                                   CPlusPlus::Function* fun, const Set<Path>& pathFilter, bool wantContext, Connection* conn)
+                                   CPlusPlus::Function* fun, const Set<Path>& pathFilter, bool wantContext,
+                                   Set<Path>& processed, Connection* conn)
 {
     CPlusPlus::Class* cls = fun->enclosingClass();
     if (!cls)
@@ -744,26 +751,30 @@ static inline void writeBaseUsages(const QPointer<CppModelManager>& manager, con
             continue;
         }
 
-        const bool filtered = pathFilter.contains(Path::resolved(real->fileName()));
+        const Path path = Path::resolved(real->fileName());
+        if (processed.contains(path))
+            continue;
+        const bool filtered = pathFilter.contains(path);
         QList<CPlusPlus::Function*> funcs = find(real);
         foreach(CPlusPlus::Function* newfun, funcs) {
             if (!filtered) {
                 if (wantContext) {
-                    conn->write<256>("%s:%d:%d %c\t%s", newfun->fileName(), newfun->line(), newfun->column(),
+                    conn->write<256>("%s:%d:%d %c\t%s", path.constData(), newfun->line(), newfun->column(),
                                      Project::Cursor::kindToChar(Project::Cursor::MemberFunctionDeclaration),
-                                     contextForLine(real->fileName(), newfun->line()).constData());
+                                     contextForLine(path.constData(), newfun->line()).constData());
                 } else {
-                    conn->write<256>("%s:%d:%d", newfun->fileName(), newfun->line(), newfun->column());
+                    conn->write<256>("%s:%d:%d", path.constData(), newfun->line(), newfun->column());
                 }
             }
-            writeBaseUsages(manager, doc, newfun, pathFilter, wantContext, conn);
+            writeBaseUsages(manager, doc, newfun, pathFilter, wantContext, processed, conn);
         }
+        processed.insert(path);
     }
 }
 
 static inline void writeUsage(const QPointer<CppModelManager>& manager, const CPlusPlus::Usage& usage,
                               const CPlusPlus::Document::Ptr& doc, unsigned flags,
-                              const Set<Path>& pathFilter, Connection* conn)
+                              const Set<Path>& pathFilter, Set<Path>& processed, Connection* conn)
 {
     const bool wantContext = !(flags & QueryMessage::NoContext);
     const bool wantVirtuals = flags & QueryMessage::FindVirtuals;
@@ -780,7 +791,7 @@ static inline void writeUsage(const QPointer<CppModelManager>& manager, const CP
                     if (funTy->isVirtual() || funTy->isPureVirtual()) {
                         kind = Project::Cursor::MemberFunctionDeclaration;
                         // we'll need to see in our base classes since we won't get a Usage for those
-                        writeBaseUsages(manager, doc, funTy, pathFilter, wantContext, conn);
+                        writeBaseUsages(manager, doc, funTy, pathFilter, wantContext, processed, conn);
                     } else if (!wantAll) {
                         return;
                     }
@@ -810,6 +821,8 @@ static inline void writeUsage(const QPointer<CppModelManager>& manager, const CP
 static inline void writeUsages(const QPointer<CppModelManager>& manager, CPlusPlus::Symbol* symbol,
                                unsigned flags, const List<Path>& pathFilter, Connection* conn)
 {
+    Set<Path> processed;
+
     const CPlusPlus::Identifier *symbolId = symbol->identifier();
     if (!symbolId) {
         error("no symbol id in findUsages");
@@ -832,11 +845,13 @@ static inline void writeUsages(const QPointer<CppModelManager>& manager, CPlusPl
             CPlusPlus::FindUsages find(lookup);
             find(symbol);
             foreach(const CPlusPlus::Usage& usage, find.usages()) {
-                if (!pass && !paths.contains(fromQString(usage.path)))
+                const Path path = Path::resolved(fromQString(usage.path));
+                if (!pass && !paths.contains(path))
                     continue;
+                processed.insert(path);
                 const CPlusPlus::Document::Ptr doc = manager->document(usage.path);
-                debug("usage at %s:%u:%u", qPrintable(usage.path), usage.line, usage.col + 1);
-                writeUsage(manager, usage, doc, flags, paths, conn);
+                debug("usage at %s:%u:%u", path.constData(), usage.line, usage.col + 1);
+                writeUsage(manager, usage, doc, flags, paths, processed, conn);
             }
         }
         ++snap;
