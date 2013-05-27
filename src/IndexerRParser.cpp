@@ -734,13 +734,9 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
 }
 
 static inline void writeBaseUsages(const QPointer<CppModelManager>& manager, const CPlusPlus::Document::Ptr& doc,
-                                   CPlusPlus::Function* fun, const Set<Path>& pathFilter, bool wantContext,
-                                   Set<Path>& processed, Connection* conn)
+                                   CPlusPlus::Class* cls, CPlusPlus::Function* fun, const Set<Path>& pathFilter,
+                                   bool wantContext, Set<Path>& processed, Connection* conn)
 {
-    CPlusPlus::Class* cls = fun->enclosingClass();
-    if (!cls)
-        return;
-
     FindBaseVirtuals find(fun);
     const unsigned baseCount = cls->baseClassCount();
     for (unsigned i = 0; i < baseCount; ++i) {
@@ -766,8 +762,9 @@ static inline void writeBaseUsages(const QPointer<CppModelManager>& manager, con
                     conn->write<256>("%s:%d:%d", path.constData(), newfun->line(), newfun->column());
                 }
             }
-            writeBaseUsages(manager, doc, newfun, pathFilter, wantContext, processed, conn);
         }
+        if (CPlusPlus::Class* newcls = real->asClass())
+            writeBaseUsages(manager, doc, newcls, fun, pathFilter, wantContext, processed, conn);
         processed.insert(path);
     }
 }
@@ -791,7 +788,9 @@ static inline void writeUsage(const QPointer<CppModelManager>& manager, const CP
                     if (funTy->isVirtual() || funTy->isPureVirtual()) {
                         kind = Project::Cursor::MemberFunctionDeclaration;
                         // we'll need to see in our base classes since we won't get a Usage for those
-                        writeBaseUsages(manager, doc, funTy, pathFilter, wantContext, processed, conn);
+                        CPlusPlus::Class* cls = funTy->enclosingClass();
+                        if (cls)
+                            writeBaseUsages(manager, doc, cls, funTy, pathFilter, wantContext, processed, conn);
                     } else if (!wantAll) {
                         return;
                     }
