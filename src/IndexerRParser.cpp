@@ -330,6 +330,93 @@ protected:
     { return process(symbol); }
 };
 
+class FindBaseVirtuals : protected CPlusPlus::SymbolVisitor
+{
+public:
+    FindBaseVirtuals(CPlusPlus::Function* f)
+        : find(f)
+    {
+    }
+
+    QList<CPlusPlus::Function*> operator()(CPlusPlus::Symbol *symbol)
+    {
+        funcs.clear();
+        accept(symbol);
+        return funcs;
+    }
+
+protected:
+    void check(CPlusPlus::Function* func)
+    {
+        if (func->isVirtual() || func->isPureVirtual()) {
+            // possible, check if it's the same function as the one we want
+            if (!(func->unqualifiedName() && func->unqualifiedName()->isEqualTo(find->unqualifiedName())))
+                return;
+            else if (func->argumentCount() == find->argumentCount()) {
+                const unsigned argc = find->argumentCount();
+                unsigned argIt = 0;
+                for (; argIt < argc; ++argIt) {
+                    CPlusPlus::Symbol *arg = func->argumentAt(argIt);
+                    CPlusPlus::Symbol *otherArg = find->argumentAt(argIt);
+                    if (!arg->type().isEqualTo(otherArg->type()))
+                        return;
+                }
+
+                if (argIt == argc
+                    && func->isConst() == find->type().isConst()
+                    && func->isVolatile() == find->type().isVolatile()) {
+                    funcs.append(func);
+                }
+            }
+        }
+    }
+
+    using CPlusPlus::SymbolVisitor::visit;
+
+    virtual bool visit(CPlusPlus::UsingNamespaceDirective *) { return false; }
+    virtual bool visit(CPlusPlus::UsingDeclaration *) { return false; }
+    virtual bool visit(CPlusPlus::NamespaceAlias *) { return false; }
+    virtual bool visit(CPlusPlus::Argument *) { return false; }
+    virtual bool visit(CPlusPlus::TypenameArgument *) { return false; }
+    virtual bool visit(CPlusPlus::ForwardClassDeclaration *) { return false; }
+    virtual bool visit(CPlusPlus::Enum *symbol) { return false; }
+    virtual bool visit(CPlusPlus::BaseClass *) { return true; }
+    virtual bool visit(CPlusPlus::Class *symbol) { return true; }
+    virtual bool visit(CPlusPlus::Declaration *decl)
+    {
+        CPlusPlus::Function* func = decl->type()->asFunctionType();
+        if (func)
+            check(func);
+        return false;
+    }
+    virtual bool visit(CPlusPlus::Function *symbol)
+    {
+        check(symbol);
+        return false;
+    }
+
+    virtual bool visit(CPlusPlus::Namespace *symbol) { return false; }
+    virtual bool visit(CPlusPlus::Block *symbol) { return false; }
+
+    // Objective-C
+    virtual bool visit(CPlusPlus::ObjCBaseClass *) { return false; }
+    virtual bool visit(CPlusPlus::ObjCBaseProtocol *) { return false; }
+    virtual bool visit(CPlusPlus::ObjCForwardClassDeclaration *) { return false; }
+    virtual bool visit(CPlusPlus::ObjCForwardProtocolDeclaration *) { return false; }
+    virtual bool visit(CPlusPlus::ObjCPropertyDeclaration *) { return false; }
+    virtual bool visit(CPlusPlus::ObjCClass *symbol) { return true; }
+    virtual bool visit(CPlusPlus::ObjCProtocol *symbol) { return false; }
+    virtual bool visit(CPlusPlus::ObjCMethod *symbol)
+    {
+        // ### ????
+        return false;
+    }
+
+private:
+    CPlusPlus::Function* find;
+    QList<CPlusPlus::Function*> funcs;
+};
+
 class FindSymbols : public CPlusPlus::SymbolVisitor
 {
 public:
@@ -538,8 +625,112 @@ static inline Project::Cursor::Kind symbolKind(const CPlusPlus::Symbol* sym)
     return Project::Cursor::Invalid;
 }
 
-static inline void writeUsage(const CPlusPlus::Usage& usage, const CPlusPlus::Document::Ptr& doc,
-                              unsigned flags, const Set<Path>& pathFilter, Connection* conn)
+static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> manager,
+                                                      CPlusPlus::Document::Ptr doc,
+                                                      CPlusPlus::Symbol* symbol)
+{
+    const CPlusPlus::Identifier *symbolId = symbol->identifier();
+    if (!symbolId) {
+        error("no symbol id in findSymbolReferenced");
+        return 0;
+    }
+
+    debug("looking for symbol %s (%s)", symbolId->chars(), rtagsQualifiedName(symbol, All).constData());
+    QList<const CPlusPlus::Name*> qname = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
+    if (qname.isEmpty())
+        return 0;
+
+    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
+
+    QList<const CPlusPlus::Name*> scope = qname;
+    scope.removeLast();
+
+    QList<QList<const CPlusPlus::Name*> > candidates;
+    if (scope.isEmpty()) {
+        // no scope, see if there are any candidate scopes
+        FindScopeCandidates scopes(doc, symbol);
+        candidates = scopes(doc->globalNamespace());
+        debug("candidates size %d", candidates.size());
+    }
+
+    // ### Use QFuture for this?
+
+    CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
+    const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
+    while (snap != end) {
+        CPlusPlus::Document::Ptr doc = snap.value();
+        debug("looking in %s", qPrintable(doc->fileName()));
+        const CPlusPlus::Control* control = doc->control();
+        if (control->findIdentifier(symbolId->chars(), symbolId->size())) {
+            debug("found?");
+            CPlusPlus::LookupContext lookup(doc, snapshot);
+            CPlusPlus::ClassOrNamespace* ns = lookup.globalNamespace();
+            foreach (const CPlusPlus::Name* name, scope) {
+                ns = ns->lookupType(name);
+                if (!ns)
+                    return 0;
+            }
+            CPlusPlus::Symbol* newsym = ns->lookupInScope(qname);
+            if (newsym && !newsym->isForwardClassDeclaration())
+                return newsym;
+
+            if (!newsym) {
+                // try the candidates
+                foreach(const QList<const CPlusPlus::Name*>& candidate, candidates) {
+                    debug("checking candidate %s", qPrintable(overview.prettyName(candidate)));
+                    ns = lookup.globalNamespace();
+                    foreach (const CPlusPlus::Name* name, candidate) {
+                        ns = ns->lookupType(name);
+                        if (!ns)
+                            break;
+                    }
+                    if (ns) {
+                        debug("candidate ok, checking if symbol exists");
+                        const QList<const CPlusPlus::Name*> nname = candidate + qname;
+                        CPlusPlus::Symbol* newsym = ns->lookupInScope(nname);
+                        if (newsym && !newsym->isForwardClassDeclaration())
+                            return newsym;
+                    }
+                }
+            }
+        }
+        ++snap;
+    }
+
+    return 0;
+}
+
+static inline void writeBaseUsages(const QPointer<CppModelManager>& manager, const CPlusPlus::Document::Ptr& doc,
+                                   CPlusPlus::Function* fun, const Set<Path>& pathFilter, Connection* conn)
+{
+    CPlusPlus::Class* cls = fun->enclosingClass();
+    if (!cls)
+        return;
+
+    FindBaseVirtuals find(fun);
+    const unsigned baseCount = cls->baseClassCount();
+    for (unsigned i = 0; i < baseCount; ++i) {
+        CPlusPlus::BaseClass* base = cls->baseClassAt(i);
+        CPlusPlus::Symbol* real = findSymbolReferenced(manager, doc, base);
+        if (!real) {
+            // boo
+            continue;
+        }
+
+        const bool filtered = pathFilter.contains(Path::resolved(real->fileName()));
+        QList<CPlusPlus::Function*> funcs = find(real);
+        foreach(CPlusPlus::Function* newfun, funcs) {
+            if (!filtered)
+                conn->write<256>("%s:%d:%d %c\t%s", newfun->fileName(), newfun->line(), newfun->column(),
+                                 Project::Cursor::kindToChar(Project::Cursor::MemberFunctionDeclaration), "");
+            writeBaseUsages(manager, doc, newfun, pathFilter, conn);
+        }
+    }
+}
+
+static inline void writeUsage(const QPointer<CppModelManager>& manager, const CPlusPlus::Usage& usage,
+                              const CPlusPlus::Document::Ptr& doc, unsigned flags,
+                              const Set<Path>& pathFilter, Connection* conn)
 {
     const bool wantContext = !(flags & QueryMessage::NoContext);
     const bool wantVirtuals = flags & QueryMessage::FindVirtuals;
@@ -551,17 +742,22 @@ static inline void writeUsage(const CPlusPlus::Usage& usage, const CPlusPlus::Do
         if (refsym
             && refsym->line() == static_cast<unsigned>(usage.line)
             && refsym->column() == static_cast<unsigned>(usage.col + 1)) {
-            if (wantVirtuals && !wantAll) {
+            if (wantVirtuals || wantAll) {
                 if (CPlusPlus::Function *funTy = refsym->type()->asFunctionType()) {
-                    if (funTy->isVirtual() || funTy->isPureVirtual())
+                    if (funTy->isVirtual() || funTy->isPureVirtual()) {
                         kind = Project::Cursor::MemberFunctionDeclaration;
-                    else
+                        // we'll need to see in our base classes since we won't get a Usage for those
+                        writeBaseUsages(manager, doc, funTy, pathFilter, conn);
+                    } else if (!wantAll) {
                         return;
-                } else {
+                    }
+                }
+                if (wantAll) {
+                    if (kind == Project::Cursor::Reference)
+                        kind = symbolKind(refsym);
+                } else if (kind == Project::Cursor::Reference) {
                     return;
                 }
-            } else if (wantAll) {
-                kind = symbolKind(refsym);
             } else {
                 return;
             }
@@ -606,87 +802,12 @@ static inline void writeUsages(const QPointer<CppModelManager>& manager, CPlusPl
                 if (!pass && !paths.contains(fromQString(usage.path)))
                     continue;
                 const CPlusPlus::Document::Ptr doc = manager->document(usage.path);
-                writeUsage(usage, doc, flags, paths, conn);
+                debug("usage at %s:%u:%u", qPrintable(usage.path), usage.line, usage.col + 1);
+                writeUsage(manager, usage, doc, flags, paths, conn);
             }
         }
         ++snap;
     }
-}
-
-static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> manager,
-                                                      CPlusPlus::Document::Ptr doc,
-                                                      CPlusPlus::Symbol* symbol)
-{
-    const CPlusPlus::Identifier *symbolId = symbol->identifier();
-    if (!symbolId) {
-        error("no symbol id in findSymbolReferenced");
-        return 0;
-    }
-
-    debug("looking for symbol %s (%s)", symbolId->chars(), rtagsQualifiedName(symbol, All).constData());
-    QList<const CPlusPlus::Name*> qname = CPlusPlus::LookupContext::fullyQualifiedName(symbol);
-    if (qname.isEmpty())
-        return 0;
-
-    const CPlusPlus::Snapshot& snapshot = manager->snapshot();
-
-    QList<const CPlusPlus::Name*> scope = qname;
-    scope.removeLast();
-
-    QList<QList<const CPlusPlus::Name*> > candidates;
-    if (scope.isEmpty()) {
-        // no scope, get candidate scopes
-        FindScopeCandidates scopes(doc, symbol);
-        candidates = scopes(doc->globalNamespace());
-        debug("candidates size %d", candidates.size());
-    }
-
-    // ### Use QFuture for this?
-
-    CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
-    const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
-    while (snap != end) {
-        CPlusPlus::Document::Ptr doc = snap.value();
-        debug("looking in %s", qPrintable(doc->fileName()));
-        const CPlusPlus::Control* control = doc->control();
-        if (control->findIdentifier(symbolId->chars(), symbolId->size())) {
-            debug("found?");
-            CPlusPlus::LookupContext lookup(doc, snapshot);
-            CPlusPlus::ClassOrNamespace* ns = 0;
-            if (!scope.isEmpty()) {
-                ns = lookup.globalNamespace();
-                foreach (const CPlusPlus::Name* name, scope) {
-                    ns = ns->lookupType(name);
-                    if (!ns)
-                        return 0;
-                }
-                CPlusPlus::Symbol* newsym = ns->lookupInScope(qname);
-                if (newsym && !newsym->isForwardClassDeclaration())
-                    return newsym;
-            } else {
-                // try the candidates
-                foreach(const QList<const CPlusPlus::Name*>& candidate, candidates) {
-                    debug("checking candidate %s", qPrintable(overview.prettyName(candidate)));
-                    ns = lookup.globalNamespace();
-                    foreach (const CPlusPlus::Name* name, candidate) {
-                        ns = ns->lookupType(name);
-                        if (!ns)
-                            break;
-                    }
-                    if (ns) {
-                        debug("candidate ok, checking if symbol exists");
-                        const QList<const CPlusPlus::Name*> nname = candidate + qname;
-                        CPlusPlus::Symbol* newsym = ns->lookupInScope(nname);
-                        if (newsym && !newsym->isForwardClassDeclaration())
-                            return newsym;
-                    }
-                }
-            }
-        }
-        ++snap;
-    }
-
-    return 0;
 }
 
 void DocumentParser::onDocumentUpdated(CPlusPlus::Document::Ptr doc)
