@@ -44,7 +44,7 @@ static inline String contextForLine(const char* filename, unsigned line)
         switch (*cur++) {
         case '\n':
             if (line == lineno) {
-                return String(start, cur - start - 1);
+                return String(start, cur - start - 1).trimmed();
             }
             start = cur;
             ++lineno;
