@@ -116,8 +116,6 @@
                     (set-buffer buf)))))
           (next-line))
         ))
-  (if (= (point-at-bol) (point-max))
-      (delete-char -1))
   (setq buffer-read-only readonly)
   (rtags-mode))
 
@@ -1663,8 +1661,7 @@ References to references will be treated as references to the referenced symbol"
       (when (and wasempty hasline)
         (when (buffer-file-name)
           (error "Set buffer with file %s read only " (buffer-file-name)))
-        (rtags-handle-completion-buffer nil t)
-        )))
+        (rtags-handle-completion-buffer nil t))))
   )
 
 (defun rtags-async-rc-sentinel (process state)
