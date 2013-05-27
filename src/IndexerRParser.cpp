@@ -671,13 +671,10 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
     QList<const CPlusPlus::Name*> scope = qname;
     scope.removeLast();
 
-    QList<QList<const CPlusPlus::Name*> > candidates;
-    if (scope.isEmpty()) {
-        // no scope, see if there are any candidate scopes
-        FindScopeCandidates scopes(doc, symbol);
-        candidates = scopes(doc->globalNamespace());
-        debug("candidates size %d", candidates.size());
-    }
+    // find candidate scopes
+    FindScopeCandidates scopes(doc, symbol);
+    QList<QList<const CPlusPlus::Name*> > candidates = scopes(doc->globalNamespace());
+    debug("candidates size %d", candidates.size());
 
     // ### Use QFuture for this?
 
@@ -693,27 +690,31 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
             CPlusPlus::ClassOrNamespace* ns = lookup.globalNamespace();
             foreach (const CPlusPlus::Name* name, scope) {
                 ns = ns->lookupType(name);
-                if (!ns)
+                if (!ns && candidates.isEmpty())
                     return 0;
             }
-            CPlusPlus::Symbol* newsym = ns->lookupInScope(qname);
-            if (newsym && !newsym->isForwardClassDeclaration())
-                return newsym;
+            if (ns) {
+                CPlusPlus::Symbol* newsym = ns->lookupInScope(qname);
+                if (newsym && !newsym->isForwardClassDeclaration())
+                    return newsym;
+            }
 
-            if (!newsym) {
+            if (!candidates.isEmpty()) {
                 // try the candidates
                 foreach(const QList<const CPlusPlus::Name*>& candidate, candidates) {
-                    debug("checking candidate %s", qPrintable(overview.prettyName(candidate)));
+                    QList<const CPlusPlus::Name*> candidateScope = candidate + qname;
+                    candidateScope.removeLast();
+
+                    debug("checking candidate %s", qPrintable(overview.prettyName(candidateScope)));
                     ns = lookup.globalNamespace();
-                    foreach (const CPlusPlus::Name* name, candidate) {
+                    foreach (const CPlusPlus::Name* name, candidateScope) {
                         ns = ns->lookupType(name);
                         if (!ns)
                             break;
                     }
                     if (ns) {
                         debug("candidate ok, checking if symbol exists");
-                        const QList<const CPlusPlus::Name*> nname = candidate + qname;
-                        CPlusPlus::Symbol* newsym = ns->lookupInScope(nname);
+                        CPlusPlus::Symbol* newsym = ns->lookupInScope(candidate + qname);
                         if (newsym && !newsym->isForwardClassDeclaration())
                             return newsym;
                     }
