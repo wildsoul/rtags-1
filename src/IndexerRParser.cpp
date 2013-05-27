@@ -24,6 +24,38 @@ using namespace CppTools::Internal;
 class RParserJob;
 class RParserUnit;
 
+static inline String fromQString(const QString& str)
+{
+    const QByteArray& utf8 = str.toUtf8();
+    return String(utf8.constData(), utf8.size());
+}
+
+static inline String contextForLine(const char* filename, unsigned line)
+{
+    const Path p = Path::resolved(filename);
+    if (!p.isFile())
+        return String();
+    const String contents = p.readAll();
+    const char* start = contents.constData();
+    const char* end = contents.constData() + contents.size();
+    const char* cur = start;
+    unsigned lineno = 1;
+    while (cur < end) {
+        switch (*cur++) {
+        case '\n':
+            if (line == lineno) {
+                return String(start, cur - start - 1);
+            }
+            start = cur;
+            ++lineno;
+            break;
+        case '\0':
+            return String();
+        }
+    }
+    return String();
+}
+
 class RParserThread : public QThread
 {
 public:
@@ -111,12 +143,6 @@ private:
 };
 
 static CPlusPlus::Overview overview;
-
-static inline String fromQString(const QString& str)
-{
-    const QByteArray& utf8 = str.toUtf8();
-    return String(utf8.constData(), utf8.size());
-}
 
 static inline String symbolName(const CPlusPlus::Symbol* symbol)
 {
@@ -701,7 +727,7 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
 }
 
 static inline void writeBaseUsages(const QPointer<CppModelManager>& manager, const CPlusPlus::Document::Ptr& doc,
-                                   CPlusPlus::Function* fun, const Set<Path>& pathFilter, Connection* conn)
+                                   CPlusPlus::Function* fun, const Set<Path>& pathFilter, bool wantContext, Connection* conn)
 {
     CPlusPlus::Class* cls = fun->enclosingClass();
     if (!cls)
@@ -720,10 +746,16 @@ static inline void writeBaseUsages(const QPointer<CppModelManager>& manager, con
         const bool filtered = pathFilter.contains(Path::resolved(real->fileName()));
         QList<CPlusPlus::Function*> funcs = find(real);
         foreach(CPlusPlus::Function* newfun, funcs) {
-            if (!filtered)
-                conn->write<256>("%s:%d:%d %c\t%s", newfun->fileName(), newfun->line(), newfun->column(),
-                                 Project::Cursor::kindToChar(Project::Cursor::MemberFunctionDeclaration), "");
-            writeBaseUsages(manager, doc, newfun, pathFilter, conn);
+            if (!filtered) {
+                if (wantContext) {
+                    conn->write<256>("%s:%d:%d %c\t%s", newfun->fileName(), newfun->line(), newfun->column(),
+                                     Project::Cursor::kindToChar(Project::Cursor::MemberFunctionDeclaration),
+                                     contextForLine(real->fileName(), newfun->line()).constData());
+                } else {
+                    conn->write<256>("%s:%d:%d", newfun->fileName(), newfun->line(), newfun->column());
+                }
+            }
+            writeBaseUsages(manager, doc, newfun, pathFilter, wantContext, conn);
         }
     }
 }
@@ -747,7 +779,7 @@ static inline void writeUsage(const QPointer<CppModelManager>& manager, const CP
                     if (funTy->isVirtual() || funTy->isPureVirtual()) {
                         kind = Project::Cursor::MemberFunctionDeclaration;
                         // we'll need to see in our base classes since we won't get a Usage for those
-                        writeBaseUsages(manager, doc, funTy, pathFilter, conn);
+                        writeBaseUsages(manager, doc, funTy, pathFilter, wantContext, conn);
                     } else if (!wantAll) {
                         return;
                     }
@@ -768,7 +800,7 @@ static inline void writeUsage(const QPointer<CppModelManager>& manager, const CP
     //error() << "adding ref" << fromQString(usage.path) << usage.line << usage.col;
     if (wantContext) {
         conn->write<256>("%s:%d:%d %c\t%s", qPrintable(usage.path), usage.line, usage.col + 1,
-                         Project::Cursor::kindToChar(kind), qPrintable(usage.lineText));
+                         Project::Cursor::kindToChar(kind), contextForLine(qPrintable(usage.path), usage.line).constData());
     } else {
         conn->write<256>("%s:%d:%d", qPrintable(usage.path), usage.line, usage.col + 1);
     }
