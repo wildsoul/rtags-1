@@ -87,7 +87,7 @@ public:
     enum FindSymbolMode { Swap, Declaration, Definition };
     CPlusPlus::Symbol* findSymbol(CPlusPlus::Document::Ptr doc, const Location& srcLoc,
                                   FindSymbolMode mode, const QByteArray& src,
-                                  CPlusPlus::LookupContext& ctx, Location& loc) const;
+                                  CPlusPlus::LookupContext& ctx, Location* loc = 0) const;
 
     // IndexerRParser APIs
     void dump(const SourceInformation& sourceInformation, Connection* conn) const;
@@ -996,8 +996,9 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
 {
     CppPreprocessor preprocessor(manager);
 
-    const QString srcFile = QString::fromStdString(info.sourceFile);
-    const QString srcPath = QString::fromStdString(info.sourceFile.parentDir());
+    const Path sourceFile = info.sourceFile.resolved();
+    const QString srcFile = QString::fromStdString(sourceFile);
+    const QString srcPath = QString::fromStdString(sourceFile.parentDir());
     QList<CPlusPlus::Document::Include> includes;
     {
         CPlusPlus::Document::Ptr doc = manager->document(srcFile);
@@ -1024,7 +1025,7 @@ void RParserUnit::reindex(QPointer<CppModelManager> manager)
     List<SourceInformation::Build>::const_iterator build = info.builds.begin();
     const List<SourceInformation::Build>::const_iterator end = info.builds.end();
     while (build != end) {
-        //error() << "reindexing" << info.sourceFile << build->includePaths << build->defines;
+        //error() << "reindexing" << sourceFile << build->includePaths << build->defines;
         preprocessor.removeFromCache(srcFile);
         if (hasIncludes) {
             foreach(const CPlusPlus::Document::Include& include, includes) {
@@ -1065,7 +1066,7 @@ CPlusPlus::Symbol* RParserThread::findSymbol(CPlusPlus::Document::Ptr doc,
                                              FindSymbolMode mode,
                                              const QByteArray& src,
                                              CPlusPlus::LookupContext& lookup,
-                                             Location& loc) const
+                                             Location* loc) const
 {
     const unsigned line = srcLoc.line();
     const unsigned column = srcLoc.column();
@@ -1082,7 +1083,8 @@ CPlusPlus::Symbol* RParserThread::findSymbol(CPlusPlus::Document::Ptr doc,
                     candidate->column() + id->size() >= column) {
                     // yes
                     sym = candidate;
-                    loc = makeLocation(sym);
+                    if (loc)
+                        *loc = makeLocation(sym);
                     debug("found outright");
                 }
             }
@@ -1155,9 +1157,10 @@ CPlusPlus::Symbol* RParserThread::findSymbol(CPlusPlus::Document::Ptr doc,
                 //unsigned endLine, endColumn;
                 //unit->getTokenEndPosition(ast->lastToken() - 1, &endLine, &endColumn, 0);
                 const uint32_t fileId = Location::fileId(Path::resolved(file->chars()));
-                loc = Location(fileId, startLine, startColumn);
-
-                warning() << "got it at" << loc;
+                if (loc) {
+                    *loc = Location(fileId, startLine, startColumn);
+                    warning() << "got it at" << *loc;
+                }
                 break;
             }
         }
@@ -1358,9 +1361,10 @@ void RParserThread::dump(const SourceInformation& sourceInformation, Connection*
 {
     WaitForState wait(GreaterOrEqual, CollectingNames);
 
-    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(sourceInformation.sourceFile));
+    const Path sourceFile = sourceInformation.sourceFile.resolved();
+    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(sourceFile));
     if (!doc) {
-        conn->write<64>("Don't seem to have %s indexed", sourceInformation.sourceFile.constData());
+        conn->write<64>("Don't seem to have %s indexed", sourceFile.constData());
         return;
     }
     DumpAST dump(doc->translationUnit(), conn);
@@ -1393,7 +1397,7 @@ Project::Cursor RParserThread::cursor(const Location& location) const
     }
 
     CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
-    CPlusPlus::Symbol* sym = findSymbol(doc, location, Swap, src, lookup, cursor.location);
+    CPlusPlus::Symbol* sym = findSymbol(doc, location, Swap, src, lookup, &cursor.location);
     if (!sym) {
         // look for includes
         QList<CPlusPlus::Document::Include> includes = doc->includes();
@@ -1428,23 +1432,22 @@ void RParserThread::references(const Location& location, unsigned flags, const L
 {
     WaitForState wait(GreaterOrEqual, CollectingNames);
 
-    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(location.path()));
+    const Path path = location.path().resolved();
+    CPlusPlus::Document::Ptr doc = manager->document(QString::fromStdString(path));
     if (!doc)
         return;
     const QByteArray& src = doc->utf8Source();
 
-    Project::Cursor cursor;
-
     CPlusPlus::Document::Ptr altDoc;
     {
-        Map<QString, QString>::const_iterator src = headerToSource.find(QString::fromStdString(location.path()));
+        Map<QString, QString>::const_iterator src = headerToSource.find(QString::fromStdString(path));
         if (src != headerToSource.end()) {
             altDoc = manager->document(src->second);
         }
     }
 
     CPlusPlus::LookupContext lookup(altDoc ? altDoc : doc, manager->snapshot());
-    CPlusPlus::Symbol* sym = findSymbol(doc, location, Declaration, src, lookup, cursor.location);
+    CPlusPlus::Symbol* sym = findSymbol(doc, location, Declaration, src, lookup);
     if (!sym)
         return;
 
@@ -1632,7 +1635,7 @@ bool RParserThread::isIndexing() const
 void RParserThread::remove(const Path& sourceFile)
 {
     WaitForState wait(GreaterOrEqual, Idle);
-    const QString qfile = QString::fromStdString(sourceFile);
+    const QString qfile = QString::fromStdString(sourceFile.resolved());
     {
         CPlusPlus::Document::Ptr doc = manager->document(qfile);
         if (doc)
@@ -1652,7 +1655,7 @@ RParserUnit* RParserThread::findUnit(const Path& path)
 
 void RParserThread::processJob(RParserJob* job)
 {
-    const Path& fileName = job->info.sourceFile;
+    const Path& fileName = job->info.sourceFile.resolved();
     //error() << "  indexing" << fileName;
     RParserUnit* unit = findUnit(fileName);
     if (!unit) {
