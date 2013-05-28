@@ -834,6 +834,8 @@ static inline void writeUsages(const QPointer<CppModelManager>& manager, CPlusPl
 
     // ### Use QFuture for this?
 
+    debug("looking for usage of %s:%u:%u", symbol->fileName(), symbol->line(), symbol->column());
+
     CPlusPlus::Snapshot::const_iterator snap = snapshot.begin();
     const CPlusPlus::Snapshot::const_iterator end = snapshot.end();
     while (snap != end) {
@@ -843,6 +845,7 @@ static inline void writeUsages(const QPointer<CppModelManager>& manager, CPlusPl
             CPlusPlus::LookupContext lookup(doc, snapshot);
             CPlusPlus::FindUsages find(lookup);
             find(symbol);
+            debug("found identifier in %s, %d usages", qPrintable(doc->fileName()), find.usages().size());
             foreach(const CPlusPlus::Usage& usage, find.usages()) {
                 const Path path = Path::resolved(fromQString(usage.path));
                 if (!pass && !paths.contains(path))
@@ -1224,6 +1227,8 @@ CPlusPlus::Symbol* RParserThread::findSymbol(CPlusPlus::Document::Ptr doc,
         }
     }
 
+    if (CPlusPlus::Template* templ = sym->enclosingTemplate())
+        sym = templ;
     return sym;
 }
 
