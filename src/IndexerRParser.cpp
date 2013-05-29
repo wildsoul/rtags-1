@@ -702,6 +702,7 @@ static inline CPlusPlus::Symbol* findSymbolReferenced(QPointer<CppModelManager> 
                 if (newsym) {
                     if (!newsym->isForwardClassDeclaration())
                         return newsym;
+                    ++snap;
                     continue;
                 }
             }
