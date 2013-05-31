@@ -107,7 +107,7 @@ private:
     void onConnectionDestroyed(Connection *conn);
     void onCompletionFinished(ClangCompletionJob *job);
     void onCompletion(ClangCompletionJob *job, String completion, String signature);
-    void onDiagnoseFinished(const Path& sourceFile);
+    void onDiagnoseFinished(Path sourceFile);
 
     void dirtyUsrs();
     void dirtyDeps(uint32_t fileId);

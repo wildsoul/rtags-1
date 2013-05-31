@@ -110,7 +110,7 @@ public:
     };
     static const DiagnosticInfo& info(const Path& sourceFile) { return jobInfos[sourceFile]; }
 
-    signalslot::Signal1<const Path&>& jobFinished() { return finished; }
+    signalslot::Signal1<Path>& jobFinished() { return finished; }
 
 protected:
     virtual void run();
@@ -121,7 +121,7 @@ private:
 private:
     static Map<String, DiagnosticInfo> jobInfos;
     SourceInformation information;
-    signalslot::Signal1<const Path&> finished;
+    signalslot::Signal1<Path> finished;
 };
 
 Map<String, ClangDiagnoseJob::DiagnosticInfo> ClangDiagnoseJob::jobInfos;
@@ -1848,7 +1848,7 @@ void IndexerClang::dump(const SourceInformation &sourceInformation, Connection *
 void IndexerClang::diagnose(const SourceInformation &sourceInformation)
 {
     shared_ptr<ClangDiagnoseJob> job(new ClangDiagnoseJob(sourceInformation));
-    job->jobFinished().connect(this, &IndexerClang::onDiagnoseFinished);
+    job->jobFinished().connectAsync(this, &IndexerClang::onDiagnoseFinished);
     ThreadPool::instance()->start(job);
 }
 
@@ -2328,7 +2328,7 @@ void IndexerClang::onCompletionFinished(ClangCompletionJob *job)
     }
 }
 
-void IndexerClang::onDiagnoseFinished(const Path& sourceFile)
+void IndexerClang::onDiagnoseFinished(Path sourceFile)
 {
     const ClangDiagnoseJob::DiagnosticInfo& info = ClangDiagnoseJob::info(sourceFile);
     fixIts.unite(info.fixIts);
