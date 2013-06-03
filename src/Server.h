@@ -12,7 +12,6 @@
 #include "RTagsPluginFactory.h"
 #include <rct/Connection.h>
 #include <rct/EventReceiver.h>
-#include <rct/FileSystemWatcher.h>
 #include <rct/List.h>
 #include <rct/Map.h>
 #include <rct/String.h>

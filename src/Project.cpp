@@ -27,8 +27,9 @@ enum {
 Project::Project(const Path &path)
     : mPath(path), mJobCounter(0), mFirstCachedUnit(0), mLastCachedUnit(0), mUnitCacheSize(0)
 {
-    mWatcher.modified().connect(this, &Project::onFileModified);
-    mWatcher.removed().connect(this, &Project::onFileModified);
+    mWatcher.reset(new FileSystemWatcher);
+    mWatcher->modified().connect(this, &Project::onFileModified);
+    mWatcher->removed().connect(this, &Project::onFileModified);
 }
 
 void Project::init()
@@ -83,8 +84,10 @@ bool Project::restore()
                 error() << "File busted" << it->first << Location::path(it->first);
                 continue;
             }
-            if (mWatchedPaths.insert(dir))
-                mWatcher.watch(dir);
+            if (mWatchedPaths.insert(dir)) {
+                error() << "should watch" << dir << "for" << Location::path(it->first);
+                mWatcher->watch(dir);
+            }
             for (Set<uint32_t>::const_iterator s = it->second.begin(); s != it->second.end(); ++s) {
                 reversedDependencies[*s].insert(it->first);
             }
@@ -648,7 +651,7 @@ int Project::syncDB()
         if (dir.isEmpty()) {
             error() << "Got empty parent dir for" << path << *it;
         } else if (mWatchedPaths.insert(dir)) {
-            mWatcher.watch(dir);
+            mWatcher->watch(dir);
         }
     }
     mPendingData.clear();

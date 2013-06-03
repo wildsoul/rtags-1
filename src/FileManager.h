@@ -23,7 +23,7 @@ public:
     Set<Path> jsFiles() const;
     signalslot::Signal0 &jsFilesChanged() { return mJSFilesChanged; }
 private:
-    FileSystemWatcher mWatcher;
+    shared_ptr<FileSystemWatcher> mWatcher;
     weak_ptr<Project> mProject;
     signalslot::Signal0 mJSFilesChanged;
     Set<Path> mJSFiles;

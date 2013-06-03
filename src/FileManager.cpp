@@ -5,9 +5,10 @@
 #include "Project.h"
 
 FileManager::FileManager()
+    : mWatcher(new FileSystemWatcher)
 {
-    mWatcher.added().connect(this, &FileManager::onFileAdded);
-    mWatcher.removed().connect(this, &FileManager::onFileRemoved);
+    mWatcher->added().connect(this, &FileManager::onFileAdded);
+    mWatcher->removed().connect(this, &FileManager::onFileRemoved);
 }
 
 void FileManager::init(const shared_ptr<Project> &proj)
@@ -36,7 +37,7 @@ void FileManager::onRecurseJobFinished(Set<Path> paths)
         shared_ptr<Project> project = mProject.lock();
         assert(project);
         FilesMap &map = project->files();
-        mWatcher.clear();
+        mWatcher->clear();
         for (Set<Path>::const_iterator it = paths.begin(); it != paths.end(); ++it) {
             if (it->endsWith(".js"))
                 mJSFiles.insert(*it);
@@ -48,7 +49,7 @@ void FileManager::onRecurseJobFinished(Set<Path> paths)
             assert(!parent.isEmpty());
             Set<String> &dir = map[parent];
             if (dir.isEmpty())
-                mWatcher.watch(parent);
+                mWatcher->watch(parent);
             dir.insert(it->fileName());
         }
         assert(!map.contains(""));
@@ -85,7 +86,7 @@ void FileManager::onFileAdded(const Path &path)
         if (!parent.isEmpty()) {
             Set<String> &dir = map[parent];
             if (dir.isEmpty())
-                mWatcher.watch(parent);
+                mWatcher->watch(parent);
             dir.insert(path.fileName());
             emitJS = path.endsWith(".js");
         } else {
@@ -111,7 +112,7 @@ void FileManager::onFileRemoved(const Path &path)
         Set<String> &dir = map[parent];
         dir.remove(path.fileName());
         if (dir.isEmpty()) {
-            mWatcher.unwatch(parent);
+            mWatcher->unwatch(parent);
             map.remove(parent);
         }
     }

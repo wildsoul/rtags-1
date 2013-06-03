@@ -74,8 +74,38 @@ void usage(FILE *f)
             "  --clang-stack-size|-t [arg]       Use this much stack for clang's threads (default %d).\n", defaultStackSize);
 }
 
+struct f
+{
+    void onModified(const Path &path)
+    {
+        error() << "modified" << path;
+    }
+
+    void onDeleted(const Path &path)
+    {
+        error() << "deleted" << path;
+    }
+
+    void onAdded(const Path &path)
+    {
+        error() << "added" << path;
+    }
+};
+
 int main(int argc, char** argv)
 {
+    {
+        EventLoop loop;
+        shared_ptr<FileSystemWatcher> watcher(new FileSystemWatcher);
+        watcher->watch("/tmp/fisk");
+        f ff;
+        watcher->modified().connect(&ff, &f::onModified);
+        watcher->modified().connect(&ff, &f::onAdded);
+        watcher->modified().connect(&ff, &f::onDeleted);
+        loop.run();
+        return 0;
+    }
+
     {
         size_t stacksize;
         pthread_attr_t attr;

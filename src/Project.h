@@ -64,7 +64,7 @@ public:
 
     const UsrMap &usrs() const { return mUsr; }
     UsrMap &usrs() { return mUsr; }
-    
+
     bool isIndexed(uint32_t fileId) const;
 
     void index(const SourceInformation &args, IndexerJob::Type type);
@@ -134,7 +134,7 @@ private:
 
     StopWatch mTimer;
 
-    FileSystemWatcher mWatcher;
+    shared_ptr<FileSystemWatcher> mWatcher;
     DependencyMap mDependencies;
     SourceInformationMap mSources;
 
