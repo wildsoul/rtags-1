@@ -50,6 +50,7 @@ enum OptionType {
     MatchRegexp,
     Max,
     NoContext,
+    NotifyChanged,
     PathFilter,
     PreprocessFile,
     Project,
@@ -135,6 +136,7 @@ struct Option opts[] = {
     { Dependencies, "dependencies", 0, required_argument, "Dump dependencies for source file." },
     { ReloadFileManager, "reload-file-manager", 'B', no_argument, "Reload file manager." },
     { Man, "man", 0, no_argument, "Output XML for xmltoman to generate man page for rc :-)" },
+    { NotifyChanged, "notify-changed", 0, required_argument, "Tell rdm that a file has changed. Useful for platforms with poor filesystemwatchers." },
 
     { None, 0, 0, 0, "" },
     { None, 0, 0, 0, "Command flags:" },
@@ -865,6 +867,7 @@ bool RClient::parse(int &argc, char **argv)
         case IsIndexed:
         case DumpFile:
         case Dependencies:
+        case NotifyChanged:
         case FixIts: {
             Path p = optarg;
             if (!p.exists()) {
@@ -889,6 +892,7 @@ bool RClient::parse(int &argc, char **argv)
             case FixIts: type = QueryMessage::FixIts; break;
             case IsIndexed: type = QueryMessage::IsIndexed; break;
             case DumpFile: type = QueryMessage::DumpFile; break;
+            case NotifyChanged: type = QueryMessage::NotifyChanged; break;
             default: assert(0); break;
             }
 

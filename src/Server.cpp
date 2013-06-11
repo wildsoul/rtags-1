@@ -318,6 +318,9 @@ void Server::handleQueryMessage(QueryMessage *message, Connection *conn)
     case QueryMessage::Builds:
         builds(*message, conn);
         break;
+    case QueryMessage::NotifyChanged:
+        notifyChanged(*message, conn);
+        break;
     case QueryMessage::IsIndexing:
         isIndexing(*message, conn);
         break;
@@ -733,6 +736,20 @@ void Server::preprocessFile(const QueryMessage &query, Connection *conn)
     Preprocessor* pre = new Preprocessor(c, query.buildIndex(), conn);
     pre->preprocess();
 }
+
+void Server::notifyChanged(const QueryMessage &query, Connection *conn)
+{
+    const Path path = query.query();
+    shared_ptr<Project> project = updateProjectForLocation(path);
+    if (!project || !project->isValid()) {
+        conn->write("No project");
+        conn->finish();
+        return;
+    }
+    project->onFileModified(path);
+    conn->finish();
+}
+
 
 void Server::clearProjects()
 {

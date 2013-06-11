@@ -105,6 +105,7 @@ private:
     void hasFileManager(const QueryMessage &query, Connection *conn);
     void reloadFileManager(const QueryMessage &query, Connection *conn);
     void preprocessFile(const QueryMessage &query, Connection *conn);
+    void notifyChanged(const QueryMessage &query, Connection *conn);
     void findFile(const QueryMessage &query, Connection *conn);
     void dumpFile(const QueryMessage &query, Connection *conn);
     void removeProject(const QueryMessage &query, Connection *conn);

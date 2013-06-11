@@ -98,10 +98,11 @@ int main(int argc, char** argv)
         EventLoop loop;
         shared_ptr<FileSystemWatcher> watcher(new FileSystemWatcher);
         watcher->watch("/tmp/fisk");
+        watcher->watch("/tmp/fisk2");
         f ff;
         watcher->modified().connect(&ff, &f::onModified);
-        watcher->modified().connect(&ff, &f::onAdded);
-        watcher->modified().connect(&ff, &f::onDeleted);
+        watcher->added().connect(&ff, &f::onAdded);
+        watcher->removed().connect(&ff, &f::onDeleted);
         loop.run();
         return 0;
     }

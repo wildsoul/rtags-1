@@ -89,10 +89,10 @@ public:
     void timerEvent(TimerEvent *event);
     bool isIndexing() const { MutexLocker lock(&mMutex); return !mJobs.isEmpty(); }
     void onJSFilesAdded();
+    void onFileModified(const Path &);
 private:
     bool initJobFromCache(const Path &path, const List<String> &args,
                           CXIndex &index, CXTranslationUnit &unit, List<String> *argsOut);
-    void onFileModified(const Path &);
     void addDependencies(const DependencyMap &hash, Set<uint32_t> &newFiles);
     void addFixIts(const DependencyMap &dependencies, const FixItMap &fixIts);
     int syncDB();
